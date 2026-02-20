@@ -1,0 +1,71 @@
+<element name="C" Z="6">
+  <atom unit="g/mole" value="12.01" />
+</element>
+<element name="H" Z="1">
+  <atom unit="g/mole" value="1.008" />
+</element>
+<element name="N" Z="7">
+  <atom unit="g/mole" value="14.007" />
+</element>
+<element name="O" Z="8">
+  <atom unit="g/mole" value="15.999" />
+</element>
+<element name="Si" Z="14">
+  <atom unit="g/mole" value="28.085" />
+</element>
+<element name="B" Z="5">
+  <atom unit="g/mole" value="10.811" />
+</element>
+<element name="Na" Z="11">
+  <atom unit="g/mole" value="22.990" />
+</element>
+<element name="Al" Z="13">
+  <atom unit="g/mole" value="26.982" />
+</element>
+<element name="K" Z="19">
+  <atom unit="g/mole" value="39.098" />
+</element>
+<element name="Ga" Z="31">
+  <atom unit="g/mole" value="69.723" />
+</element>
+<element name="As" Z="33">
+  <atom unit="g/mole" value="74.922" />
+</element>
+<element name="P" Z="15">
+  <atom unit="g/mole" value="30.974" />
+</element>
+
+<material name="air" state="gas">
+  <D unit="g/cm3" value="0.001225" />
+  <fraction n="0.7" ref="N" />
+  <fraction n="0.3" ref="O" />
+  <property name="RINDEX" ref="air_rindex" />
+</material>
+
+<material name="borosilicate_glass" state="solid">
+  <D unit="g/cm3" value="2.23" />
+  <fraction n="0.806" ref="Si" />
+  <fraction n="0.130" ref="B" />
+  <fraction n="0.040" ref="Na" />
+  <fraction n="0.022" ref="Al" />
+  <fraction n="0.002" ref="K" />
+  <property name="RINDEX" ref="borosilicate_rindex" />
+  <property name="ABSLENGTH" ref="borosilicate_abslength" />
+</material>
+
+<material name="uvfs" state="solid">
+  <D unit="g/cm3" value="2.20" />
+  <composite n="1" ref="Si" />
+  <composite n="2" ref="O" />
+  <property name="RINDEX" ref="uvfs_rindex" />
+  <property name="ABSLENGTH" ref="uvfs_abslength" />
+</material>
+
+<material name="gaasp" state="solid">
+  <D unit="g/cm3" value="4.138" />
+  <fraction n="0.45" ref="Ga" />
+  <fraction n="0.40" ref="As" />
+  <fraction n="0.15" ref="P" />
+  <property name="RINDEX" ref="gaasp_rindex" />
+  <property name="ABSLENGTH" ref="gaasp_abslength" />
+</material>

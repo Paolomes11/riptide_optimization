@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE gdml [
+  <!ENTITY define SYSTEM "./define.xml">
+  <!ENTITY materials SYSTEM "./materials.xml">
+  <!ENTITY solids SYSTEM "./solids.xml">
+  <!ENTITY structure SYSTEM "./structure.xml">
+]>
+<gdml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:noNamespaceSchemaLocation="http://cern.ch/service-spi/app/releases/GDML/schema/gdml.xsd">
+  
+  <define>
+    &define;
+  </define>
+
+  <materials>
+    &materials;
+  </materials>
+
+  <solids>
+    &solids;
+  </solids>
+
+  <structure>
+    &structure;
+  </structure>
+
+  <setup name="Default" version="1.0">
+    <world ref="world" />
+  </setup>
+</gdml>

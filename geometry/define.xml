@@ -1,0 +1,48 @@
+<!--
+  Definizioni di parametri e costanti per la geometria PVT-Lens-Sensor
+  
+  Questo file contiene tutti i parametri numerici utilizzati nella geometria,
+  organizzati in costanti, posizioni, rotazioni e matrici di proprietà ottiche.
+-->
+
+<!-- Costanti dimensionali principali -->
+<constant name="world_size" value="1000*mm" />
+<constant name="glass_window_diameter" value="44*mm" />
+<constant name="glass_window_thickness" value="0.1*mm" />
+<constant name="photocathode_size" value="16*mm" />
+<constant name="photocathode_thickness" value="0.01*mm" />
+
+<!-- Parametri delle lenti ottiche -->
+<constant name="lens75_r" value="38.6*mm" />     <!-- Raggio della lente 75mm -->
+<constant name="lens75_h" value="12.5*mm" />     <!-- Altezza della lente 75mm -->
+<constant name="lens60_r" value="30.9*mm" />     <!-- Raggio della lente 60mm -->
+<constant name="lens60_h" value="16.3*mm" />     <!-- Altezza della lente 60mm -->
+<constant name="lens_separation" value="69.5*mm" /> <!-- Distanza tra le due lenti -->
+
+<!-- Posizioni dei componenti lungo l'asse X -->
+<position name="lens75_x_pos" unit="mm" x="83.9" y="0" z="0" />
+<position name="lens60_x_pos" unit="mm" x="153.5" y="0" z="0" />
+<position name="glass_window_x_pos" unit="mm" x="173.9" y="0" z="0" />
+<position name="photocathode_x_pos" unit="mm" x="179.8" y="0" z="0" />
+
+<!-- Definizioni di rotazioni standard -->
+<rotation name="no_rot" unit="deg" x="0" y="0" z="0" />
+<rotation name="rot_90y" unit="deg" x="0" y="90" z="0" />
+<rotation name="rot_90x" unit="deg" x="90" y="0" z="0" />
+
+<!-- Proprietà ottiche dei materiali -->
+
+<!-- Aria (mezzo circostante) -->
+<matrix name="air_rindex" coldim="2" values="2.0*eV 1.0 4.0*eV 1.0" />
+
+<!-- Vetro borosilicato (finestra) -->
+<matrix name="borosilicate_rindex" coldim="2" values="2.0*eV 1.47 4.0*eV 1.48" />
+<matrix name="borosilicate_abslength" coldim="2" values="2.0*eV 1000*mm 4.0*eV 1000*mm" />
+
+<!-- Vetro UVFS (ultra-violet fused silica) -->
+<matrix name="uvfs_rindex" coldim="2" values="1.0*eV 1.47 10.0*eV 1.47" />
+<matrix name="uvfs_abslength" coldim="2" values="1.0*eV 1000*mm 10.0*eV 1000*mm" />
+
+<!-- GaAsP (fotocatodo) -->
+<matrix name="gaasp_rindex" coldim="2" values="2.0*eV 3.5 4.0*eV 3.8" />
+<matrix name="gaasp_abslength" coldim="2" values="2.0*eV 0.001*mm 4.0*eV 0.001*mm" />

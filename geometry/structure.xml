@@ -1,0 +1,50 @@
+<volume name="lens75_x_volume">
+  <materialref ref="uvfs" />
+  <solidref ref="lens75_x_ellipsoid" />
+</volume>
+
+<volume name="lens60_x_volume">
+  <materialref ref="uvfs" />
+  <solidref ref="lens60_x_ellipsoid" />
+</volume>
+
+<volume name="glass_window_x_volume">
+  <materialref ref="borosilicate_glass" />
+  <solidref ref="glass_window_disk" />
+</volume>
+
+<!-- Associa nome al volume -->
+<volume name="photocathode_x_volume">
+  <materialref ref="gaasp" />
+  <solidref ref="photocathode_square" />
+  <auxiliary auxtype="sd_name" auxvalue="sensitive_photocathode_x" />
+</volume>
+
+<volume name="world">
+  <materialref ref="air" />
+  <solidref ref="world" />
+
+  <physvol name="lens75_x_phys">
+    <volumeref ref="lens75_x_volume" />
+    <positionref ref="lens75_x_pos" />
+    <rotationref ref="rot_90y" />
+  </physvol>
+
+  <physvol name="lens60_x_phys">
+    <volumeref ref="lens60_x_volume" />
+    <positionref ref="lens60_x_pos" />
+    <rotationref ref="rot_90y" />
+  </physvol>
+
+  <physvol name="glass_window_x_phys">
+    <volumeref ref="glass_window_x_volume" />
+    <positionref ref="glass_window_x_pos" />
+    <rotationref ref="rot_90y" />
+  </physvol>
+
+  <physvol name="photocathode_x_phys">
+    <volumeref ref="photocathode_x_volume" />
+    <positionref ref="photocathode_x_pos" />
+    <rotationref ref="rot_90y" />
+  </physvol>
+</volume>

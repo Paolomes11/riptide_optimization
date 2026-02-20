@@ -1,0 +1,46 @@
+# Visualization with OpenGL
+# /vis/open OGL
+#/vis/viewer/set/autoRefresh true
+
+# Create and draw scene
+#/vis/scene/create
+#/vis/scene/add/volume
+#/vis/drawVolume
+
+# Draw geometry with surface style
+#/vis/viewer/set/style surface
+#/vis/viewer/set/auxiliaryEdge true
+
+# Set viewing angle
+#/vis/viewer/set/viewpointThetaPhi 30 30
+
+# Trajectories and step points
+#/vis/scene/add/trajectories smooth
+#/vis/scene/add/hits
+#/vis/scene/endOfEventAction accumulate
+
+# Particle source: optical photons
+/gps/particle opticalphoton
+/gps/energy 2.5 eV
+
+#/gps/ene/type Bbody
+#/gps/ene/temp 5700 K
+#/gps/ene/min 0.1 eV
+#/gps/ene/max 5 eV
+#/gps/ene/gradient 1
+#/gps/ene/intercept 1
+
+# Spherical volume source
+/gps/pos/type Volume
+/gps/pos/shape Sphere
+/gps/pos/centre 0. 0. 0. mm
+
+# Sphere dimensions
+/gps/pos/radius 2.5 cm
+/gps/ang/type iso
+
+# Direction of photons (collimated along +X)
+/gps/direction 1 0 0
+
+# Run
+/run/beamOn 1000

@@ -1,0 +1,11 @@
+<box name="world" x="1000" y="1000" z="1000" lunit="mm" />
+
+<ellipsoid name="lens75_x_ellipsoid" ax="38.6" by="38.6" cz="38.6" zcut1="-38.6" zcut2="-26.1"
+  lunit="mm" />
+<ellipsoid name="lens60_x_ellipsoid" ax="30.9" by="30.9" cz="30.9" zcut1="14.6" zcut2="30.9"
+  lunit="mm" />
+
+<tube name="glass_window_disk" rmin="0" rmax="22" z="0.1" deltaphi="2*pi" startphi="0"
+  aunit="rad" lunit="mm" />
+
+<box name="photocathode_square" x="16" y="16" z="0.01" lunit="mm" />
