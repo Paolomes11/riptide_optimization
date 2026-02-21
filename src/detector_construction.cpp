@@ -2,6 +2,7 @@
 #include "sensitive_detector.hpp"
 
 #include <G4LogicalVolumeStore.hh>
+#include <G4SDManager.hh>
 
 namespace riptide
 {
@@ -24,6 +25,7 @@ namespace riptide
     void DetectorConstruction::ConstructSDandField()
     {
         auto volume_store = G4LogicalVolumeStore::GetInstance();
+        auto *sd_manager = G4SDManager::GetSDMpointer();
 
         for (auto lv : *volume_store)
         {
@@ -38,7 +40,21 @@ namespace riptide
                     throw std::runtime_error("Empty sd_name value for volume");
                 }
 
-                lv->SetSensitiveDetector(new SensitivePhotocathode{it->value});
+                // Estrai l'ID del detector dal nome (es. "photocathode_x" -> 0, "photocathode_y" -> 1)
+                int detector_id = 0;
+                if (it->value.find("_x") != std::string::npos)
+                    detector_id = 0;
+                else if (it->value.find("_y") != std::string::npos)
+                    detector_id = 1;
+                else if (it->value.find("_z") != std::string::npos)
+                    detector_id = 2;
+
+                // Crea il sensitive detector
+                auto *sd = new SensitivePhotocathode{it->value, detector_id};
+                // Registra il sensitive detector con il G4SDManager
+                sd_manager->AddNewDetector(sd);
+                // Associa il sensitive detector al logical volume
+                lv->SetSensitiveDetector(sd);
             }
         }
     }
