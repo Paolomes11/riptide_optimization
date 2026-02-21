@@ -1,23 +1,23 @@
 # Visualization with OpenGL
-# /vis/open OGL
-#/vis/viewer/set/autoRefresh true
+/vis/open OGL
+/vis/viewer/set/autoRefresh true
 
 # Create and draw scene
-#/vis/scene/create
-#/vis/scene/add/volume
-#/vis/drawVolume
+/vis/scene/create
+/vis/scene/add/volume
+/vis/drawVolume
 
 # Draw geometry with surface style
-#/vis/viewer/set/style surface
-#/vis/viewer/set/auxiliaryEdge true
+/vis/viewer/set/style surface
+/vis/viewer/set/auxiliaryEdge true
 
 # Set viewing angle
-#/vis/viewer/set/viewpointThetaPhi 30 30
+/vis/viewer/set/viewpointThetaPhi 30 30
 
 # Trajectories and step points
-#/vis/scene/add/trajectories smooth
-#/vis/scene/add/hits
-#/vis/scene/endOfEventAction accumulate
+/vis/scene/add/trajectories smooth
+/vis/scene/add/hits
+/vis/scene/endOfEventAction accumulate
 
 # Particle source: optical photons
 /gps/particle opticalphoton
@@ -43,4 +43,4 @@
 /gps/direction 1 0 0
 
 # Run
-/run/beamOn 1000
+/run/beamOn 100

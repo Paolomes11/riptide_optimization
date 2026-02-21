@@ -17,7 +17,7 @@ namespace riptide
     public:
         explicit DetectorConstruction(std::filesystem::path geometry_path);
         G4VPhysicalVolume *Construct() override;
-        // void ConstructSDandField() override;
+        void ConstructSDandField() override;
     };
 
 } // namespace riptide

@@ -8,6 +8,7 @@
 
 #include <fmt/format.h>
 #include <tuple>
+#include <iostream>
 
 namespace riptide
 {

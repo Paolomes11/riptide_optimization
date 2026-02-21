@@ -30,8 +30,8 @@ int main(int argc, char **argv)
         }
 
         // Initialize visualization with the default graphics system
-        // auto visManager = new G4VisExecutive(argc, argv);
-        // visManager->Initialize();
+        auto visManager = new G4VisExecutive(argc, argv);
+        visManager->Initialize();
 
         // Get the pointer to the User Interface manager
         auto UImanager = G4UImanager::GetUIpointer();
@@ -55,7 +55,7 @@ int main(int argc, char **argv)
         }
 
         // Clean up
-        // delete visManager;
+        delete visManager;
     }
     catch (const std::exception &e)
     {

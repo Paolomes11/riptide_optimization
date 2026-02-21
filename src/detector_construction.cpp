@@ -1,5 +1,5 @@
 #include "detector_construction.hpp"
-// #include "sensitive_photocathode.hpp"
+#include "sensitive_detector.hpp"
 
 #include <G4LogicalVolumeStore.hh>
 
@@ -21,7 +21,6 @@ namespace riptide
         return m_parser.GetWorldVolume();
     }
 
-    /*
     void DetectorConstruction::ConstructSDandField()
     {
         auto volume_store = G4LogicalVolumeStore::GetInstance();
@@ -42,6 +41,6 @@ namespace riptide
                 lv->SetSensitiveDetector(new SensitivePhotocathode{it->value});
             }
         }
-    }*/
+    }
 
 }
