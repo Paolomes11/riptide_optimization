@@ -18,6 +18,16 @@ find_package(Geant4 REQUIRED ui_all vis_all)
 include(${Geant4_USE_FILE})
 
 
-add_executable(simulate main.cpp src/physics_list.cpp src/detector_construction.cpp src/action_initialization.cpp src/primary_generator_action.cpp src/sensitive_detector.cpp)
+
+add_executable(simulate
+    main.cpp
+    src/physics_list.cpp
+    src/detector_construction.cpp
+    src/action_initialization.cpp
+    src/primary_generator_action.cpp
+    src/sensitive_detector.cpp
+    src/run_action.cpp
+)
+
 target_link_libraries(simulate PRIVATE ${Geant4_LIBRARIES})
 target_include_directories(simulate PRIVATE ${CMAKE_SOURCE_DIR}/include)

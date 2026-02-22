@@ -1,5 +1,6 @@
 #include "action_initialization.hpp"
 #include "primary_generator_action.hpp"
+#include "run_action.hpp"
 
 namespace riptide
 {
@@ -14,7 +15,7 @@ namespace riptide
         // Initialize user actions for worker threads here
         // For example:
         SetUserAction(new PrimaryGeneratorAction());
-        // SetUserAction(new RunAction());
+        SetUserAction(new RunAction());
         // SetUserAction(new EventAction());
         // SetUserAction(new SteppingAction());
     }

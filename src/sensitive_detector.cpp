@@ -29,6 +29,13 @@ namespace riptide
 
         std::cout << event_id << " " << position.x() << " " << position.y() << " " << position.z() << "\n";
 
+        G4AnalysisManager *am = G4AnalysisManager::Instance();
+        am->FillNtupleIColumn(0, event_id);
+        am->FillNtupleDColumn(1, position.x());
+        am->FillNtupleDColumn(2, position.y());
+        am->FillNtupleDColumn(3, position.z());
+        am->AddNtupleRow(0);
+
         // auto energy = track->GetKineticEnergy();
         // auto direction = track->GetMomentumDirection();
         // auto volume = track->GetVolume()->GetName();
