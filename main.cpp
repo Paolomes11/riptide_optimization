@@ -22,7 +22,6 @@ int main(int argc, char **argv)
         // Initialize G4 kernel
         run_manager.Initialize();
 
-
         G4UIExecutive *ui = nullptr;
         if (argc == 1)
         {
@@ -37,21 +36,16 @@ int main(int argc, char **argv)
         auto UImanager = G4UImanager::GetUIpointer();
 
         // Process macro or start UI session
-        if (!ui)
+        if (ui)
         {
-            // batch mode
-            if (argc > 1)
-            {
-                G4String macroFile = argv[1];
-                UImanager->ApplyCommand("/control/execute " + macroFile);
-            }
+            UImanager->ApplyCommand("/control/execute run2.mac");
+            ui->SessionStart();
         }
         else
         {
-            // interactive mode
-            UImanager->ApplyCommand("/control/execute run1.mac");
-            ui->SessionStart();
-            delete ui;
+            G4String command = "/control/execute ";
+            G4String fileName = argv[1];
+            UImanager->ApplyCommand(command + fileName);
         }
 
         // Clean up

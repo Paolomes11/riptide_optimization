@@ -27,7 +27,7 @@ namespace riptide
         auto event_id = G4EventManager::GetEventManager()->GetConstCurrentEvent()->GetEventID();
         auto position = post_step->GetPosition();
 
-        std::cout << event_id << " " << position.x() << " " << position.y() << " " << position.z() << "\n";
+        // std::cout << event_id << " " << position.x() << " " << position.y() << " " << position.z() << "\n";
 
         G4AnalysisManager *am = G4AnalysisManager::Instance();
         am->FillNtupleIColumn(0, event_id);

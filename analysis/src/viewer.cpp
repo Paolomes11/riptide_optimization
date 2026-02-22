@@ -1,82 +1,64 @@
 #include <TFile.h>
 #include <TTree.h>
-#include <TH2D.h>
 #include <TCanvas.h>
+#include <TH2D.h>
+#include <TStyle.h>
 
 #include <iostream>
-#include <vector>
 
-int main(int argc, char **argv)
+int main()
 {
-    std::string filename = "output/riptide_000.root";
-    if (argc > 1)
-        filename = argv[1];
+    // Disabilita il box delle statistiche
+    gStyle->SetOptStat(0);
 
-    std::cout << "Apro file: " << filename << std::endl;
+    // Percorso del file ROOT
+    const char *filename = "output/output.root";
 
-    TFile file(filename.c_str());
-    if (file.IsZombie())
+    // Apri file
+    TFile *file = TFile::Open(filename, "READ");
+    if (!file || file->IsZombie())
     {
-        std::cerr << "Errore apertura file\n";
+        std::cerr << "Errore: impossibile aprire " << filename << std::endl;
         return 1;
     }
 
-    file.ls(); // DEBUG: mostra contenuto file
+    // Ottieni il tree
+    TTree *tree = nullptr;
+    file->GetObject("Hits", tree);
 
-    auto *tree = static_cast<TTree *>(file.Get("photon_hits"));
     if (!tree)
     {
-        std::cerr << "Ntuple 'photon_hits' non trovato\n";
+        std::cerr << "Errore: TTree 'Hits' non trovato." << std::endl;
         return 1;
     }
 
-    std::cout << "Tree trovato\n";
-    tree->Print(); // DEBUG: struttura ntuple
+    // Canvas
+    TCanvas *c1 = new TCanvas("c1", "Hits in detector", 800, 700);
 
-    std::vector<double> *hit_x = nullptr;
-    std::vector<double> *hit_y = nullptr;
+    // Abilita griglia
+    c1->SetGrid();
+    gStyle->SetGridStyle(3); // linee tratteggiate
+    gStyle->SetGridColor(kGray);
+    gStyle->SetGridWidth(1);
 
-    tree->SetBranchAddress("hit_x", &hit_x);
-    tree->SetBranchAddress("hit_y", &hit_y);
+    // Istogramma 2D (puoi regolare i range se vuoi)
+    TH2D *h2 = new TH2D(
+        "h2",
+        "Hit map; z (mm); y (mm)",
+        200, -8, 8,
+        200, -8, 8);
 
-    TH2D hist("hits", "Photon hits;X;Y", 200, -100, 100, 200, -100, 100);
+    // Riempimento istogramma (equivalente a Draw)
+    tree->Draw("m_y:m_z>>h2", "", "colz");
 
-    Long64_t nentries = tree->GetEntries();
-    std::cout << "Numero eventi nel tree: " << nentries << std::endl;
+    // Disegna
+    h2->Draw("colz");
 
-    size_t total_hits = 0;
+    c1->Update();
+    c1->SaveAs("output/hits_map.png");
 
-    for (Long64_t i = 0; i < nentries; i++)
-    {
-        tree->GetEntry(i);
+    std::cout << "Plot salvato in output/hits_map.png" << std::endl;
 
-        if (!hit_x || !hit_y)
-        {
-            std::cout << "Evento " << i << " vettori null\n";
-            continue;
-        }
-
-        if (i < 5) // DEBUG: stampa primi eventi
-        {
-            std::cout << "Evento " << i
-                      << " hits: " << hit_x->size() << std::endl;
-        }
-
-        for (size_t j = 0; j < hit_x->size(); j++)
-        {
-            hist.Fill(hit_x->at(j), hit_y->at(j));
-            total_hits++;
-        }
-    }
-
-    std::cout << "Hit totali riempiti nell'istogramma: "
-              << total_hits << std::endl;
-
-    std::cout << "Entries histogram: " << hist.GetEntries() << std::endl;
-
-    TCanvas c;
-    hist.Draw("COLZ");
-    c.SaveAs("photon_hits.png");
-
-    std::cout << "Immagine salvata: photon_hits.png\n";
+    file->Close();
+    return 0;
 }

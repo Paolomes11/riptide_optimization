@@ -17,8 +17,6 @@ string(APPEND CMAKE_CXX_FLAGS "-Wall -Wextra -Wpedantic -Wconversion -Wsign-conv
 find_package(Geant4 REQUIRED ui_all vis_all)
 include(${Geant4_USE_FILE})
 
-
-
 add_executable(simulate
     main.cpp
     src/physics_list.cpp
@@ -31,3 +29,8 @@ add_executable(simulate
 
 target_link_libraries(simulate PRIVATE ${Geant4_LIBRARIES})
 target_include_directories(simulate PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+# Crea la cartella di output se non esiste
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output)
+
+add_subdirectory(analysis)

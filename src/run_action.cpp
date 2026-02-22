@@ -13,7 +13,7 @@ RunAction::~RunAction()
 void RunAction::BeginOfRunAction(const G4Run *)
 {
     G4AnalysisManager *am = G4AnalysisManager::Instance();
-    am->OpenFile("output.root");
+    am->OpenFile("output/output.root");
 
     std::cout << "Creating ntuple..." << std::endl;
 
