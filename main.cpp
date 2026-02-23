@@ -38,14 +38,16 @@ int main(int argc, char **argv)
         // Process macro or start UI session
         if (ui)
         {
-            UImanager->ApplyCommand("/control/execute run2.mac");
+            UImanager->ApplyCommand("/control/execute macro/run1.mac");
             ui->SessionStart();
         }
         else
-        {
-            G4String command = "/control/execute ";
+        {   
+            ui = new G4UIExecutive(argc, argv);
+            G4String command = "/control/execute macro/";
             G4String fileName = argv[1];
             UImanager->ApplyCommand(command + fileName);
+            ui->SessionStart();
         }
 
         // Clean up

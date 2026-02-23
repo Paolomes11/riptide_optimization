@@ -17,17 +17,42 @@ namespace riptide
     {
         std::ignore = history;
         auto *track = step->GetTrack();
-        auto *post_step = step->GetPostStepPoint();
 
+        // Considera solo i fotoni ottici
         if (track->GetDefinition() != G4OpticalPhoton::Definition())
         {
             return false;
         }
 
-        auto event_id = G4EventManager::GetEventManager()->GetConstCurrentEvent()->GetEventID();
-        auto position = post_step->GetPosition();
+        // Considera solo i fotoni che attraversano la superficie del fotocatodo
+        auto *pre = step->GetPreStepPoint();
+        if (pre->GetStepStatus() != fGeomBoundary)
+        {
+            return false;
+        }
 
-        // std::cout << event_id << " " << position.x() << " " << position.y() << " " << position.z() << "\n";
+        // Log degli ingressi dei fotoni riflessi dal fotocatodo nel fotocatodo
+        // static std::map<int, int> entries;
+        // auto *post = step->GetPostStepPoint();
+        // if (post->GetStepStatus() == fGeomBoundary)
+        // {
+        //     int event_id =
+        //         G4EventManager::GetEventManager()->GetConstCurrentEvent()->GetEventID();
+
+        //     entries[event_id]++;
+
+        //     if (entries[event_id] > 1)
+        //     {
+        //         std::cout << "Fotone rientrato nel detector! Event "
+        //                   << event_id
+        //                   << " ingressi = "
+        //                   << entries[event_id]
+        //                   << std::endl;
+        //     }
+        // }
+
+        auto event_id = G4EventManager::GetEventManager()->GetConstCurrentEvent()->GetEventID();
+        auto position = step->GetPostStepPoint()->GetPosition();
 
         G4AnalysisManager *am = G4AnalysisManager::Instance();
         am->FillNtupleIColumn(0, event_id);
