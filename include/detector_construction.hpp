@@ -14,8 +14,12 @@ namespace riptide
         G4GDMLParser m_parser{};
         std::filesystem::path m_geometry_path;
 
+        // Posizioni delle lenti (per ottimizzazione)
+        double m_lens75_x;
+        double m_lens60_x;
+
     public:
-        explicit DetectorConstruction(std::filesystem::path geometry_path);
+        DetectorConstruction(std::filesystem::path geometry_path, double lens75_x = 83.9, double lens60_x = 153.4);
         G4VPhysicalVolume *Construct() override;
         void ConstructSDandField() override;
     };

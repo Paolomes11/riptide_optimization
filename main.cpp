@@ -11,11 +11,32 @@ int main(int argc, char **argv)
 {
     try
     {
+        // Posizioni delle lenti di default
+        double lens75_x = 83.9;
+        double lens60_x = 153.4;
+        G4String macro_file = "run1.mac";
+
+        // Legge i parametri da riga di comando
+        if (argc >= 3)
+        {
+            lens75_x = std::stod(argv[1]);
+            lens60_x = std::stod(argv[2]);
+        }
+        if (argc >= 4)
+        {
+            macro_file = argv[3];
+        }
+
+        std::cout << "Using lens positions: "
+                  << "lens75_x = " << lens75_x << " mm, "
+                  << "lens60_x = " << lens60_x << " mm\n";
+        std::cout << "Macro file: " << macro_file << "\n";
+
         // Create the run manager
         G4RunManager run_manager{};
 
         // Set mandatory initialization classes
-        run_manager.SetUserInitialization(new riptide::DetectorConstruction("geometry/main.gdml"));
+        run_manager.SetUserInitialization(new riptide::DetectorConstruction("geometry/main.gdml", lens75_x, lens60_x));
         run_manager.SetUserInitialization(new riptide::PhysicsList());
         run_manager.SetUserInitialization(new riptide::ActionInitialization());
 
@@ -23,10 +44,10 @@ int main(int argc, char **argv)
         run_manager.Initialize();
 
         G4UIExecutive *ui = nullptr;
-        if (argc == 1)
-        {
+        // if (argc == 1)
+        // {
             ui = new G4UIExecutive(argc, argv);
-        }
+        // }
 
         // Initialize visualization with the default graphics system
         auto visManager = new G4VisExecutive(argc, argv);
@@ -42,16 +63,13 @@ int main(int argc, char **argv)
             ui->SessionStart();
         }
         else
-        {   
-            ui = new G4UIExecutive(argc, argv);
-            G4String command = "/control/execute macro/";
-            G4String fileName = argv[1];
-            UImanager->ApplyCommand(command + fileName);
-            ui->SessionStart();
+        {
+            UImanager->ApplyCommand("/control/execute macro/" + macro_file);
         }
 
         // Clean up
         delete visManager;
+        delete ui;
     }
     catch (const std::exception &e)
     {
