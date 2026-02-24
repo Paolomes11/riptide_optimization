@@ -44,10 +44,10 @@ int main(int argc, char **argv)
         run_manager.Initialize();
 
         G4UIExecutive *ui = nullptr;
-        // if (argc == 1)
-        // {
+        if (argc == 1)
+        {
             ui = new G4UIExecutive(argc, argv);
-        // }
+        }
 
         // Initialize visualization with the default graphics system
         auto visManager = new G4VisExecutive(argc, argv);
