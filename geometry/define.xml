@@ -14,9 +14,9 @@
 
 <!-- Parametri delle lenti ottiche -->
 <constant name="lens75_r" value="38.6*mm" />     <!-- Raggio della lente 75mm -->
-<constant name="lens75_h" value="12.5*mm" />     <!-- Altezza della lente 75mm -->
+<constant name="lens75_h" value="12.5*mm" />     <!-- Spessore della lente 75mm -->
 <constant name="lens60_r" value="30.9*mm" />     <!-- Raggio della lente 60mm -->
-<constant name="lens60_h" value="16.3*mm" />     <!-- Altezza della lente 60mm -->
+<constant name="lens60_h" value="16.3*mm" />     <!-- Spessore della lente 60mm -->
 <constant name="lens_separation" value="69.5*mm" /> <!-- Distanza tra le due lenti -->
 
 <!-- Posizioni dei componenti lungo l'asse X -->

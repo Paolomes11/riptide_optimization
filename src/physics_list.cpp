@@ -9,20 +9,17 @@
 #include <G4StoppingPhysics.hh>
 #include <G4SystemOfUnits.hh>
 
-namespace riptide
-{
+namespace riptide {
 
-    PhysicsList::PhysicsList()
-    {
-        G4VModularPhysicsList::defaultCutValue = 1.0 * mm;
+PhysicsList::PhysicsList() {
+  G4VModularPhysicsList::defaultCutValue = 1.0 * mm;
 
-        RegisterPhysics(new G4EmStandardPhysics{0});
-        RegisterPhysics(new G4HadronElasticPhysics{0});
-        RegisterPhysics(
-            new G4HadronPhysicsINCLXX("hadronPhysicsINCLXX"));
-        RegisterPhysics(new G4DecayPhysics{0});
-        RegisterPhysics(new G4StoppingPhysics{0});
-        RegisterPhysics(new G4OpticalPhysics{0});
-    }
+  RegisterPhysics(new G4EmStandardPhysics{0});
+  RegisterPhysics(new G4HadronElasticPhysics{0});
+  RegisterPhysics(new G4HadronPhysicsINCLXX("hadronPhysicsINCLXX"));
+  RegisterPhysics(new G4DecayPhysics{0});
+  RegisterPhysics(new G4StoppingPhysics{0});
+  RegisterPhysics(new G4OpticalPhysics{0});
+}
 
 } // namespace riptide

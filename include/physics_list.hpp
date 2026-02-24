@@ -3,15 +3,13 @@
 
 #include <G4VModularPhysicsList.hh>
 
-namespace riptide
-{
+namespace riptide {
 
-    class PhysicsList : public G4VModularPhysicsList
-    {
-    public:
-        PhysicsList();
-        ~PhysicsList() override = default;
-    };
+class PhysicsList : public G4VModularPhysicsList {
+ public:
+  PhysicsList();
+  ~PhysicsList() override = default;
+};
 
 } // namespace riptide
 

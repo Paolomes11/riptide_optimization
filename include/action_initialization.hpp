@@ -3,15 +3,13 @@
 
 #include <G4VUserActionInitialization.hh>
 
-namespace riptide
-{
+namespace riptide {
 
-    class ActionInitialization : public G4VUserActionInitialization
-    {
-    public:
-        void BuildForMaster() const override;
-        void Build() const override;
-    };
+class ActionInitialization : public G4VUserActionInitialization {
+ public:
+  void BuildForMaster() const override;
+  void Build() const override;
+};
 
 } // namespace riptide
 

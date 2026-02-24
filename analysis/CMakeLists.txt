@@ -10,6 +10,9 @@ find_package(ROOT REQUIRED COMPONENTS
     Gpad
 )
 
+# fmt
+find_package(fmt REQUIRED)
+
 add_executable(viewer
     src/viewer.cpp
 )
@@ -32,6 +35,7 @@ add_executable(geometric_efficiency
 target_include_directories(geometric_efficiency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(geometric_efficiency
+    fmt::fmt
     ROOT::Core
     ROOT::RIO
     ROOT::Tree
