@@ -18,22 +18,33 @@ DetectorConstruction::DetectorConstruction(std::filesystem::path geometry_path, 
 }
 
 G4VPhysicalVolume* DetectorConstruction::Construct() {
-  m_parser.Read(m_geometry_path.string());
-  auto world = m_parser.GetWorldVolume();
+  // Legge GDML solo la prima volta
+  if (!m_world) {
+    m_parser.Read(m_geometry_path.string());
+    m_world = m_parser.GetWorldVolume();
 
-  // Sposta le lenti per ottimizzazione
-  auto pv_store = G4PhysicalVolumeStore::GetInstance();
+    // Trova i volumi fisici delle lenti
+    auto pv_store = G4PhysicalVolumeStore::GetInstance();
 
-  for (auto pv : *pv_store) {
-    auto name = pv->GetName();
-    if (name == "lens75_x_phys") {
-      pv->SetTranslation(G4ThreeVector(m_lens75_x, 0., 0.));
-    } else if (name == "lens60_x_phys") {
-      pv->SetTranslation(G4ThreeVector(m_lens60_x, 0., 0.));
+    for (auto pv : *pv_store) {
+      auto name = pv->GetName();
+
+      if (name == "lens75_x_phys") {
+        m_lens75_phys = pv;
+      } else if (name == "lens60_x_phys") {
+        m_lens60_phys = pv;
+      }
+    }
+
+    if (!m_lens75_phys || !m_lens60_phys) {
+      throw std::runtime_error("Lens physical volumes not found in GDML");
     }
   }
 
-  return world;
+  // Imposta posizione iniziale
+  SetLensPositions(m_lens75_x, m_lens60_x);
+
+  return m_world;
 }
 
 void DetectorConstruction::ConstructSDandField() {
@@ -51,6 +62,17 @@ void DetectorConstruction::ConstructSDandField() {
       lv->SetSensitiveDetector(new SensitivePhotocathode{it->value});
     }
   }
+}
+
+void DetectorConstruction::SetLensPositions(double lens75_x, double lens60_x) {
+  m_lens75_x = lens75_x;
+  m_lens60_x = lens60_x;
+
+  if (m_lens75_phys)
+    m_lens75_phys->SetTranslation(G4ThreeVector(lens75_x, 0., 0.));
+
+  if (m_lens60_phys)
+    m_lens60_phys->SetTranslation(G4ThreeVector(lens60_x, 0., 0.));
 }
 
 } // namespace riptide

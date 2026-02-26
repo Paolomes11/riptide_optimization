@@ -15,7 +15,7 @@ constexpr double h2 = 16.3; // spessore lente 2 [mm]
 constexpr double x_min = 1.0;
 constexpr double x_max = 173.0;
 
-constexpr double dx     = 5.0; // passo griglia [mm]
+constexpr double dx     = 3.0; // passo griglia [mm]
 constexpr int n_photons = 10000;
 
 const std::filesystem::path macro_path    = "run1.mac";

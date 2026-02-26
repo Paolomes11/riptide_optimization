@@ -5,8 +5,14 @@
 
 namespace riptide {
 
+class EfficiencyCollector;
+
 class ActionInitialization : public G4VUserActionInitialization {
+  EfficiencyCollector* m_collector;
+
  public:
+  explicit ActionInitialization(EfficiencyCollector* collector = nullptr);
+
   void BuildForMaster() const override;
   void Build() const override;
 };

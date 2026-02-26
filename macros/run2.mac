@@ -1,21 +1,21 @@
-
 # Particle source: optical photons
 /gps/particle opticalphoton
 /gps/energy 2.5 eV
 
 /gps/pos/type Plane
-/gps/pos/shape Annulus
+/gps/pos/shape Square
 /gps/pos/centre 0 0 0 cm
-/gps/pos/rot1 0 1 0
-/gps/pos/rot2 0 0 2
-/gps/pos/radius 10 mm
-/gps/pos/inner_radius 0 mm
+/gps/pos/halfx 1 mm
+/gps/pos/halfy 2 cm
 
 
 # Direzione principale lungo +X con piccola divergenza
 /gps/ang/type iso
-/gps/direction 1 0 0
-#/gps/direction 1 0.05 -0.15
+/gps/ang/mintheta 0
+/gps/ang/maxtheta 1
+/gps/ang/minphi 0
+/gps/ang/maxphi 1
+/gps/direction 1 0.05 -0.15
 
 # Run
 /run/beamOn 10000

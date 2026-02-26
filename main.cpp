@@ -1,5 +1,12 @@
+/*
+    Un'altra versione del main con una migliore gestione dei flag da riga di comando usando lyra e
+   spdlog.
+*/
+
 #include "action_initialization.hpp"
 #include "detector_construction.hpp"
+#include "efficiency_collector.hpp"
+#include "optimizer.hpp"
 #include "physics_list.hpp"
 
 #include <G4RunManager.hh>
@@ -7,67 +14,105 @@
 #include <G4UImanager.hh>
 #include <G4VisExecutive.hh>
 
+#include <lyra/lyra.hpp>
+#include <spdlog/spdlog.h>
+
 int main(int argc, char** argv) {
+  std::filesystem::path geometry_path = "geometry/main.gdml";
+  std::filesystem::path macro_file;
+  std::filesystem::path macro_vis = "macros/vis.mac";  // macro grafica standard
+  std::filesystem::path macro_run = "macros/run1.mac"; // macro simulazione standard
+  bool visualize                  = false;
+  bool batch                      = false;
+  bool optimize                   = false;
+  bool show_help                  = false;
+
+  auto cli = lyra::cli() | lyra::help(show_help)
+           | lyra::opt(geometry_path, "geometry")["-g"]["--geometry"]("Path to GDML geometry file")
+                 .required()
+           | lyra::opt(macro_file, "macro")["-m"]["--macro"]("Path to macro file (default: none)")
+           | lyra::opt(visualize)["-v"]["--visualize"]("Enable visualization mode")
+           | lyra::opt(batch)["-b"]["--batch"]("Enable batch mode (no visualization)")
+           | lyra::opt(optimize)["-o"]["--optimize"]("Enable geometrical efficiency optimization");
+
+  auto result = cli.parse({argc, argv});
+  if (!result) {
+    spdlog::error("CLI parsing error: {}", result.message());
+    std::cerr << cli << '\n';
+    return EXIT_FAILURE;
+  }
+
+  if (show_help) {
+    std::cout << cli << '\n';
+    return EXIT_SUCCESS;
+  }
+
+  if (visualize && batch) {
+    spdlog::error("Cannot use --visualize and --batch together.");
+    return EXIT_FAILURE;
+  }
+
+  // Try catch errors
   try {
-    // Posizioni delle lenti di default
-    double lens75_x     = 83.9;
-    double lens60_x     = 153.4;
-    G4String macro_file = "run1.mac";
-
-    // Legge i parametri da riga di comando
-    if (argc >= 3) {
-      lens75_x = std::stod(argv[1]);
-      lens60_x = std::stod(argv[2]);
-    }
-    if (argc >= 4) {
-      macro_file = argv[3];
-    }
-
-    std::cout << "Using lens positions: "
-              << "lens75_x = " << lens75_x << " mm, "
-              << "lens60_x = " << lens60_x << " mm\n";
-    std::cout << "Macro file: " << macro_file << "\n";
-
-    // Create the run manager
+    // Crea il run manager
     G4RunManager run_manager{};
+    auto collector = std::make_unique<riptide::EfficiencyCollector>();
 
-    // Set mandatory initialization classes
-    run_manager.SetUserInitialization(
-        new riptide::DetectorConstruction("geometry/main.gdml", lens75_x, lens60_x));
+    // Imposta il collector come istanza globale per il sensitive detector
+    riptide::EfficiencyCollector::SetInstance(collector.get());
+
+    run_manager.SetUserInitialization(new riptide::DetectorConstruction(geometry_path.string()));
     run_manager.SetUserInitialization(new riptide::PhysicsList());
-    run_manager.SetUserInitialization(new riptide::ActionInitialization());
-
-    // Initialize G4 kernel
+    G4UIExecutive* ui           = nullptr;
+    G4VisExecutive* vis_manager = nullptr;
+    auto UImanager              = G4UImanager::GetUIpointer();
+    run_manager.SetUserInitialization(new riptide::ActionInitialization(collector.get()));
     run_manager.Initialize();
 
-    G4UIExecutive* ui = nullptr;
-    if (argc == 1) {
-      ui = new G4UIExecutive(argc, argv);
+    if (optimize) {
+      spdlog::info("Running optimization");
+      // Funzione separata, passa run manager e macro scelta
+      riptide::run_optimization(&run_manager, macro_file, collector.get());
+      return EXIT_SUCCESS;
     }
 
-    // Initialize visualization with the default graphics system
-    auto visManager = new G4VisExecutive(argc, argv);
-    visManager->Initialize();
+    // Visualizzazione
+    if (visualize) {
+      spdlog::info("Visualization mode enabled");
+      ui          = new G4UIExecutive(argc, argv);
+      vis_manager = new G4VisExecutive();
+      vis_manager->Initialize();
 
-    // Get the pointer to the User Interface manager
-    auto UImanager = G4UImanager::GetUIpointer();
+      // Prima esegui la macro grafica standard
+      UImanager->ApplyCommand("/control/execute " + macro_vis.string());
 
-    // Process macro or start UI session
-    if (ui) {
-      UImanager->ApplyCommand("/control/execute macro/run1.mac");
+      // Poi esegui la macro di simulazione (o quella specificata)
+      if (!macro_file.empty()) {
+        UImanager->ApplyCommand("/control/execute " + macro_file.string());
+      } else {
+        UImanager->ApplyCommand("/control/execute " + macro_run.string());
+      }
+
       ui->SessionStart();
-    } else {
-      UImanager->ApplyCommand("/control/execute macro/" + macro_file);
+      delete ui;
+      delete vis_manager;
+      return EXIT_SUCCESS;
     }
 
-    // Clean up
-    delete visManager;
-    delete ui;
+    // Batch mode
+    if (batch || !visualize) {
+      spdlog::info("Batch mode enabled");
+      if (!macro_file.empty()) {
+        UImanager->ApplyCommand("/control/execute " + macro_file.string());
+      } else {
+        UImanager->ApplyCommand("/control/execute " + macro_run.string());
+      }
+    }
   } catch (const std::exception& e) {
-    std::cerr << "Error: " << e.what() << "\n";
-    return 1;
+    spdlog::error("Error: {}", e.what());
+    return EXIT_FAILURE;
   } catch (...) {
-    std::cerr << "Unknown error occurred \n";
-    return 1;
+    spdlog::error("Unknown error occurred");
+    return EXIT_FAILURE;
   }
 }
