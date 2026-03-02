@@ -26,7 +26,8 @@ class EfficiencyCollector {
   static void SetInstance(EfficiencyCollector* collector);
 
  private:
-  static EfficiencyCollector* s_instance;
+  // Static object is not reccomended
+ static EfficiencyCollector* s_instance;
 };
 
 } // namespace riptide
