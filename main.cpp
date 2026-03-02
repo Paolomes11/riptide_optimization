@@ -5,7 +5,6 @@
 
 #include "action_initialization.hpp"
 #include "detector_construction.hpp"
-#include "efficiency_collector.hpp"
 #include "optimizer.hpp"
 #include "physics_list.hpp"
 
@@ -16,6 +15,9 @@
 
 #include <lyra/lyra.hpp>
 #include <spdlog/spdlog.h>
+#include <filesystem>
+#include <memory>
+#include <string>
 
 int main(int argc, char** argv) {
   std::filesystem::path geometry_path = "geometry/main.gdml";
@@ -26,6 +28,10 @@ int main(int argc, char** argv) {
   bool batch                      = false;
   bool optimize                   = false;
   bool show_help                  = false;
+
+  // File di output per i risultati di ottimizzazione (se abilitata)
+  std::string root_output_file = "output/events.root";
+  spdlog::info("Root output file path: {}", root_output_file);
 
   auto cli = lyra::cli() | lyra::help(show_help)
            | lyra::opt(geometry_path, "geometry")["-g"]["--geometry"]("Path to GDML geometry file")
@@ -56,23 +62,20 @@ int main(int argc, char** argv) {
   try {
     // Crea il run manager
     G4RunManager run_manager{};
-    auto collector = std::make_unique<riptide::EfficiencyCollector>();
-
-    // Imposta il collector come istanza globale per il sensitive detector
-    riptide::EfficiencyCollector::SetInstance(collector.get());
 
     run_manager.SetUserInitialization(new riptide::DetectorConstruction(geometry_path.string()));
     run_manager.SetUserInitialization(new riptide::PhysicsList());
+    run_manager.SetUserInitialization(new riptide::ActionInitialization(root_output_file));
+    run_manager.Initialize();
+
+    auto UImanager              = G4UImanager::GetUIpointer();
     G4UIExecutive* ui           = nullptr;
     G4VisExecutive* vis_manager = nullptr;
-    auto UImanager              = G4UImanager::GetUIpointer();
-    run_manager.SetUserInitialization(new riptide::ActionInitialization(collector.get()));
-    run_manager.Initialize();
 
     if (optimize) {
       spdlog::info("Running optimization");
       // Funzione separata, passa run manager e macro scelta
-      riptide::run_optimization(&run_manager, macro_file, collector.get());
+      riptide::run_optimization(&run_manager, macro_file);
       return EXIT_SUCCESS;
     }
 

@@ -43,7 +43,6 @@ add_executable(simulate
     src/run_action.cpp
     src/event_action.cpp
     src/optimizer.cpp
-    src/efficiency_collector.cpp
 )
 
 # Warnings specifici per simulate
@@ -74,14 +73,14 @@ target_include_directories(simulate PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 # Link alle librerie
 target_link_libraries(simulate PRIVATE
-    ${Geant4_LIBRARIES}
     ${ROOT_LIBRARIES}
     spdlog::spdlog
     lyra
+    ${Geant4_LIBRARIES}
 )
 
 # Crea la cartella di output
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output)
 
 # Subdirectory per l'analisi dei dati (debug e sviluppo)
-# add_subdirectory(analysis)
+add_subdirectory(analysis)

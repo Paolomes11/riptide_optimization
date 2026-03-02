@@ -30,6 +30,14 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
 
   // Setter per ottimizzazione
   void SetLensPositions(double lens75_x, double lens60_x);
+
+  // Getter per ottimizzazione
+  double GetLens75X() const {
+    return m_lens75_x;
+  }
+  double GetLens60X() const {
+    return m_lens60_x;
+  }
 };
 
 } // namespace riptide

@@ -4,11 +4,9 @@
 #include <filesystem>
 
 class G4RunManager;
-class EfficiencyCollector;
 
 namespace riptide {
-void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file,
-                      EfficiencyCollector* collector);
+void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file);
 }
 
 #endif // RIPTIDE_OPTIMIZER_HPP

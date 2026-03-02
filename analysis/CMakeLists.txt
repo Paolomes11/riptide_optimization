@@ -1,45 +1,20 @@
-cmake_minimum_required(VERSION 3.16)
-project(riptide_analysis)
+cmake_minimum_required(VERSION 3.26)
 
+# Nome dell'eseguibile per l'analisi
+add_executable(plot2D
+    plot2D.cpp
+)
+
+# Link alle librerie necessarie (ROOT)
 find_package(ROOT REQUIRED COMPONENTS
     Core
     RIO
-    Tree
     Hist
     Graf
-    Gpad
 )
+include(${ROOT_USE_FILE})
 
-# fmt
-find_package(fmt REQUIRED)
+target_link_libraries(plot2D PRIVATE ${ROOT_LIBRARIES})
 
-add_executable(viewer
-    src/viewer.cpp
-)
-
-target_link_libraries(viewer
-    ROOT::Core
-    ROOT::RIO
-    ROOT::Tree
-    ROOT::Hist
-    ROOT::Graf
-    ROOT::Gpad
-)
-
-# Eseguibile per efficienza geometrica
-add_executable(geometric_efficiency
-    src/efficiency.cpp
-    main_efficiency.cpp
-)
-
-target_include_directories(geometric_efficiency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-target_link_libraries(geometric_efficiency
-    fmt::fmt
-    ROOT::Core
-    ROOT::RIO
-    ROOT::Tree
-    ROOT::Hist
-    ROOT::Graf
-    ROOT::Gpad
-)
+# Include directory ROOT se serve
+target_include_directories(plot2D PRIVATE ${ROOT_INCLUDE_DIRS})

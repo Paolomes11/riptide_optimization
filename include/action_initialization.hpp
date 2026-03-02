@@ -2,16 +2,15 @@
 #define RIPTIDE_ACTION_INITIALIZATION_HPP
 
 #include <G4VUserActionInitialization.hh>
+#include <string>
 
 namespace riptide {
 
-class EfficiencyCollector;
-
 class ActionInitialization : public G4VUserActionInitialization {
-  EfficiencyCollector* m_collector;
+  std::string m_output_file;
 
  public:
-  explicit ActionInitialization(EfficiencyCollector* collector = nullptr);
+  explicit ActionInitialization(const std::string& output_file);
 
   void BuildForMaster() const override;
   void Build() const override;

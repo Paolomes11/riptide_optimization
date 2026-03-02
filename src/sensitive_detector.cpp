@@ -1,15 +1,11 @@
 #include "sensitive_detector.hpp"
-#include "efficiency_collector.hpp"
+#include "detector_construction.hpp"
+#include "event_action.hpp"
 
-#include <G4AnalysisManager.hh>
-#include <G4EventManager.hh>
 #include <G4OpticalPhoton.hh>
-#include <G4SystemOfUnits.hh>
-#include <G4VProcess.hh>
+#include <G4RunManager.hh>
 
-#include <fmt/format.h>
 #include <iostream>
-#include <tuple>
 
 namespace riptide {
 
@@ -30,15 +26,27 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* hist
     return false;
   }
 
-  // Registra l'evento come evento con hit
-  auto event_id = G4EventManager::GetEventManager()->GetConstCurrentEvent()->GetEventID();
-
-  // Registra l'evento con hit usando il collector globale
-  auto collector = riptide::EfficiencyCollector::GetInstance();
-  if (collector) {
-    collector->recordEventWithHit(event_id);
-  } else {
+  // Recupera EventAction tramite il puntatore statico
+  auto* eventAction = EventAction::GetEventAction();
+  if (!eventAction) {
+    std::cerr << "SensitivePhotocathode: EventAction not found!" << std::endl;
+    return false;
   }
+
+  // Recupera DetectorConstruction per leggere le posizioni correnti delle lenti
+  auto* det = dynamic_cast<const DetectorConstruction*>(
+      G4RunManager::GetRunManager()->GetUserDetectorConstruction());
+
+  if (!det) {
+    std::cerr << "SensitivePhotocathode: DetectorConstruction not found!" << std::endl;
+    return false;
+  }
+
+  double current_x1 = det->GetLens75X();
+  double current_x2 = det->GetLens60X();
+
+  // Registra il fotone come "hit"
+  eventAction->AddPhotonHit(current_x1, current_x2);
 
   // // Salva i dati del fotone colpito nell'ntuple
   // auto position = step->GetPostStepPoint()->GetPosition();

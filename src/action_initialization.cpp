@@ -1,5 +1,4 @@
 #include "action_initialization.hpp"
-#include "efficiency_collector.hpp"
 #include "event_action.hpp"
 #include "primary_generator_action.hpp"
 #include "run_action.hpp"
@@ -7,9 +6,9 @@
 
 namespace riptide {
 
-ActionInitialization::ActionInitialization(EfficiencyCollector* collector)
-    : m_collector(collector) {
-  std::cout << "ActionInitialization: Constructor called with collector: " << collector
+ActionInitialization::ActionInitialization(const std::string& output_file)
+    : m_output_file(output_file) {
+  std::cout << "ActionInitialization: Constructor called, output file: " << output_file
             << std::endl;
 }
 
@@ -18,16 +17,12 @@ void ActionInitialization::BuildForMaster() const {
 }
 
 void ActionInitialization::Build() const {
-  // Initialize user actions for worker threads here
-  // For example:
+  // Azioni standard
   SetUserAction(new PrimaryGeneratorAction());
   SetUserAction(new RunAction());
-  // SetUserAction(new SteppingAction());
 
-  // EventAction con collector, solo se presente
-  if (m_collector) {
-    SetUserAction(new EventAction(m_collector));
-  }
+  // EventAction con file ROOT
+  SetUserAction(new EventAction(m_output_file));
 }
 
 } // namespace riptide

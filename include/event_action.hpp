@@ -3,17 +3,50 @@
 
 #include <G4UserEventAction.hh>
 
+#include <TFile.h>
+#include <TTree.h>
+#include <vector>
+
 namespace riptide {
 
-class EfficiencyCollector;
+// Struttura per un hit/fotone
+struct PhotonHit {
+  double x1;
+  double x2;
+  int config_id; // Identificatore della configurazione delle lenti
+};
 
 class EventAction : public G4UserEventAction {
-  EfficiencyCollector* m_collector;
+  TFile* m_file;
+  TTree* m_tree;
+
+  // Variabili da salvare per ogni fotone
+  double x1, x2; // Parametri di posizione delle lenti
+  int config_id; // Identificatore della configurazione delle lenti
+
+  // Vector per memorizzare tutti i fotoni di un evento
+  std::vector<PhotonHit> eventHits;
+
+  // puntatore statico
+  static inline EventAction* s_currentEventAction = nullptr;
 
  public:
-  EventAction(EfficiencyCollector* collector);
+  EventAction(const std::string& output_file_name);
+  virtual ~EventAction();
 
-  void EndOfEventAction(const G4Event* event) override;
+  // Funzione che viene chiamata dal SensitiveDetector per registrare un hit
+  void AddPhotonHit(double lens_x1, double lens_x2);
+  
+  // Funzione per impostare l'identificatore della configurazione
+  void SetConfigId(int config_id);
+
+  virtual void EndOfEventAction(const G4Event* event) override;
+  virtual void BeginOfEventAction(const G4Event* event) override;
+
+  // Metodo statico per ottenere l'EventAction corrente
+  static EventAction* GetEventAction() {
+    return s_currentEventAction;
+  }
 };
 
 } // namespace riptide
