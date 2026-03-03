@@ -32,52 +32,41 @@ target_include_directories(lyra INTERFACE
     ${CMAKE_SOURCE_DIR}/external
 )
 
-# Eseguibile principale
-add_executable(simulate
-    main.cpp
-    src/physics_list.cpp
-    src/detector_construction.cpp
-    src/action_initialization.cpp
-    src/primary_generator_action.cpp
-    src/sensitive_detector.cpp
-    src/run_action.cpp
-    src/event_action.cpp
-    src/optimizer.cpp
+# Libreria comune
+file(GLOB_RECURSE COMMON_SRC src/common/*.cpp)
+add_library(common_lib ${COMMON_SRC})
+target_include_directories(common_lib PUBLIC ${CMAKE_SOURCE_DIR}/include/common)
+target_link_libraries(common_lib PUBLIC ${ROOT_LIBRARIES} spdlog::spdlog lyra ${Geant4_LIBRARIES})
+
+# Rileva automaticamente tutti i main in programs/
+file(GLOB PROGRAM_MAIN programs/*_main.cpp)
+
+# Directory include
+include_directories(
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/common
+    ${CMAKE_SOURCE_DIR}/include/optimization
 )
 
-# Warnings specifici per simulate
-target_compile_options(simulate PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wconversion
-    -Wsign-conversion
-    -Wcast-qual
-    -Wformat=2
-    -Wundef
-    -Werror=float-equal
-    -Wshadow
-    -Wcast-align
-    -Wunused
-    -Wnull-dereference
-    -Wdouble-promotion
-    -Wimplicit-fallthrough
-    -Wextra-semi
-    -Woverloaded-virtual
-    -Wnon-virtual-dtor
-    -Wold-style-cast
-)
+foreach(MAIN_FILE ${PROGRAM_MAIN})
+    get_filename_component(PROG_NAME ${MAIN_FILE} NAME_WE)
+    # Trova eventuali src specifici della simulazione
+    string(REPLACE "_main" "" PROG_SUBDIR ${PROG_NAME})
+    file(GLOB_RECURSE SPEC_SRC src/${PROG_SUBDIR}/*.cpp)
 
-# Include directories
-target_include_directories(simulate PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_executable(${PROG_NAME} ${MAIN_FILE} ${SPEC_SRC})
+    target_include_directories(${PROG_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(${PROG_NAME} PRIVATE common_lib)
+    
+    # Warnings specifici (puoi aggiungerli anche qui)
+    target_compile_options(${PROG_NAME} PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wcast-qual
+        -Wformat=2 -Wundef -Werror=float-equal -Wshadow -Wcast-align
+        -Wunused -Wnull-dereference -Wdouble-promotion -Wimplicit-fallthrough
+        -Wextra-semi -Woverloaded-virtual -Wnon-virtual-dtor -Wold-style-cast
+    )
+endforeach()
 
-# Link alle librerie
-target_link_libraries(simulate PRIVATE
-    ${ROOT_LIBRARIES}
-    spdlog::spdlog
-    lyra
-    ${Geant4_LIBRARIES}
-)
 
 # Crea la cartella di output
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output)

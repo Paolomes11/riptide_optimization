@@ -5,7 +5,7 @@ cmake -S . -B build/ -G"Ninja Multi-Config"
 cmake --build build/ --config Debug
 
 ## To start program in visualization mode
-./build/Debug/simulate -g geometry/main.gdml -m macros/run1.mac -v
+./build/Debug/optimization_main -g geometry/main.gdml -m macros/run1.mac -v
 
 ## To start 2D image visualization program
 ./build/analysis/Debug/plot2D
