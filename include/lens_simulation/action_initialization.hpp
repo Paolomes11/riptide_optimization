@@ -21,10 +21,8 @@
 namespace riptide {
 
 class ActionInitialization : public G4VUserActionInitialization {
-  std::string m_output_file;
-
  public:
-  explicit ActionInitialization(const std::string& output_file);
+  ActionInitialization() = default;
 
   void BuildForMaster() const override;
   void Build() const override;

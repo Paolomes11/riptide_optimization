@@ -62,16 +62,6 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* hist
   // Registra il fotone come "hit"
   eventAction->AddPhotonHit(current_x1, current_x2);
 
-  // // Salva i dati del fotone colpito nell'ntuple
-  // auto position = step->GetPostStepPoint()->GetPosition();
-
-  // G4AnalysisManager* am = G4AnalysisManager::Instance();
-  // am->FillNtupleIColumn(0, event_id);
-  // am->FillNtupleDColumn(1, position.x());
-  // am->FillNtupleDColumn(2, position.y());
-  // am->FillNtupleDColumn(3, position.z());
-  // am->AddNtupleRow(0);
-
   return true;
 }
 

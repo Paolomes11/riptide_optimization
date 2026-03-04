@@ -40,37 +40,27 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* hist
     return false;
   }
 
-  // // Recupera EventAction tramite il puntatore statico
-  // auto* eventAction = EventAction::GetEventAction();
-  // if (!eventAction) {
-  //   std::cerr << "SensitivePhotocathode: EventAction not found!" << std::endl;
-  //   return false;
-  // }
+  // Recupera EventAction tramite il puntatore statico
+  auto* eventAction = EventAction::GetEventAction();
+  if (!eventAction) {
+    std::cerr << "SensitivePhotocathode: EventAction not found!" << std::endl;
+    return false;
+  }
 
-  // // Recupera DetectorConstruction per leggere le posizioni correnti delle lenti
-  // auto* det = dynamic_cast<const DetectorConstruction*>(
-  //     G4RunManager::GetRunManager()->GetUserDetectorConstruction());
+  // Recupera DetectorConstruction per leggere le posizioni correnti delle lenti
+  auto* det = dynamic_cast<const DetectorConstruction*>(
+      G4RunManager::GetRunManager()->GetUserDetectorConstruction());
 
-  // if (!det) {
-  //   std::cerr << "SensitivePhotocathode: DetectorConstruction not found!" << std::endl;
-  //   return false;
-  // }
+  if (!det) {
+    std::cerr << "SensitivePhotocathode: DetectorConstruction not found!" << std::endl;
+    return false;
+  }
 
-  // double current_x1 = det->GetLens75X();
-  // double current_x2 = det->GetLens60X();
-
-  // // Registra il fotone come "hit"
-  // eventAction->AddPhotonHit(current_x1, current_x2);
-
-  // // Salva i dati del fotone colpito nell'ntuple
-  // auto position = step->GetPostStepPoint()->GetPosition();
-
-  // G4AnalysisManager* am = G4AnalysisManager::Instance();
-  // am->FillNtupleIColumn(0, event_id);
-  // am->FillNtupleDColumn(1, position.x());
-  // am->FillNtupleDColumn(2, position.y());
-  // am->FillNtupleDColumn(3, position.z());
-  // am->AddNtupleRow(0);
+  // Registra il fotone come "hit"
+  auto pos   = pre->GetPosition();
+  double f_y = pos.y();
+  double f_z = pos.z();
+  eventAction->AddPhotonHit(f_y, f_z);
 
   return true;
 }

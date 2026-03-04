@@ -20,6 +20,7 @@
 #include "action_initialization.hpp"
 #include "detector_construction.hpp"
 #include "physics_list.hpp"
+#include "lens_scan.hpp"
 
 #include <G4RunManager.hh>
 #include <G4UIExecutive.hh>
@@ -43,7 +44,7 @@ int main(int argc, char** argv) {
   bool show_help                  = false;
 
   // File di output per i risultati di ottimizzazione (se abilitata)
-  std::string root_output_file = "output/lens.root";
+  std::string root_output_file = "output/lens_simulation/lens.root";
   spdlog::info("Root output file path: {}", root_output_file);
 
   auto cli = lyra::cli() | lyra::help(show_help)
@@ -78,7 +79,7 @@ int main(int argc, char** argv) {
 
     run_manager.SetUserInitialization(new riptide::DetectorConstruction(geometry_path.string()));
     run_manager.SetUserInitialization(new riptide::PhysicsList());
-    run_manager.SetUserInitialization(new riptide::ActionInitialization(root_output_file));
+    run_manager.SetUserInitialization(new riptide::ActionInitialization());
     run_manager.Initialize();
 
     auto UImanager              = G4UImanager::GetUIpointer();
@@ -87,7 +88,7 @@ int main(int argc, char** argv) {
 
     if (lens_sim) {
       spdlog::info("Running lens simulation");
-      // TO DO
+      riptide::lens_scan(&run_manager, macro_file, root_output_file);
       return EXIT_SUCCESS;
     }
 

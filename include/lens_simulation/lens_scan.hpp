@@ -12,24 +12,17 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
-#include "action_initialization.hpp"
-#include "event_action.hpp"
-#include "primary_generator_action.hpp"
-#include "run_action.hpp"
+#ifndef RIPTIDE_LENS_SCAN_HPP
+#define RIPTIDE_LENS_SCAN_HPP
+
+#include <filesystem>
+#include <string>
+
+class G4RunManager;
 
 namespace riptide {
-
-void ActionInitialization::BuildForMaster() const {
-  SetUserAction(new RunAction());
+void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
+                      const std::string& root_output_file);
 }
 
-void ActionInitialization::Build() const {
-  // Azioni standard
-  SetUserAction(new PrimaryGeneratorAction());
-  SetUserAction(new RunAction());
-
-  // EventAction con file ROOT
-  SetUserAction(new EventAction());
-}
-
-} // namespace riptide
+#endif // RIPTIDE_LENS_SCAN_HPP
