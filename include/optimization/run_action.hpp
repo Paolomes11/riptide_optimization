@@ -12,24 +12,19 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
-#include "action_initialization.hpp"
-#include "event_action.hpp"
-#include "primary_generator_action.hpp"
-#include "run_action.hpp"
+#ifndef RIPTIDE_RUN_ACTION_HPP
+#define RIPTIDE_RUN_ACTION_HPP
 
-namespace riptide {
+#include <G4UserRunAction.hh>
+#include <string>
 
-void ActionInitialization::BuildForMaster() const {
-  SetUserAction(new RunAction());
-}
+class RunAction : public G4UserRunAction {
+ public:
+  RunAction();
+  ~RunAction();
 
-void ActionInitialization::Build() const {
-  // Azioni standard
-  SetUserAction(new PrimaryGeneratorAction());
-  SetUserAction(new RunAction());
+  virtual void BeginOfRunAction(const G4Run*);
+  virtual void EndOfRunAction(const G4Run*);
+};
 
-  // EventAction con file ROOT
-  SetUserAction(new EventAction());
-}
-
-} // namespace riptide
+#endif // RIPTIDE_RUN_ACTION_HPP

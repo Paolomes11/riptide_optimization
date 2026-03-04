@@ -6,9 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# -----------------------------
 # Librerie esterne
-# -----------------------------
 # Geant4
 find_package(Geant4 REQUIRED ui_all vis_all)
 include(${Geant4_USE_FILE})
@@ -24,25 +22,19 @@ find_package(spdlog REQUIRED)
 add_library(lyra INTERFACE)
 target_include_directories(lyra INTERFACE ${CMAKE_SOURCE_DIR}/external)
 
-# -----------------------------
 # Libreria comune
-# -----------------------------
 file(GLOB COMMON_SRC src/common/*.cpp)
 add_library(common_lib ${COMMON_SRC})
 target_include_directories(common_lib PUBLIC ${CMAKE_SOURCE_DIR}/include/common)
 target_link_libraries(common_lib PUBLIC ${ROOT_LIBRARIES} spdlog::spdlog lyra ${Geant4_LIBRARIES})
 
-# -----------------------------
 # Directory include globali
-# -----------------------------
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/include/common
 )
 
-# -----------------------------
 # Warnings comuni
-# -----------------------------
 set(COMMON_WARNINGS
     -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wcast-qual
     -Wformat=2 -Wundef -Werror=float-equal -Wshadow -Wcast-align
@@ -50,9 +42,7 @@ set(COMMON_WARNINGS
     -Wextra-semi -Woverloaded-virtual -Wnon-virtual-dtor -Wold-style-cast
 )
 
-# -----------------------------
 # Costruzione dei progetti (main)
-# -----------------------------
 file(GLOB PROGRAM_MAIN programs/*_main.cpp)
 
 foreach(MAIN_FILE ${PROGRAM_MAIN})
@@ -78,12 +68,10 @@ foreach(MAIN_FILE ${PROGRAM_MAIN})
     target_compile_options(${PROG_NAME} PRIVATE ${COMMON_WARNINGS})
 endforeach()
 
-# -----------------------------
+
 # Crea la cartella di output
-# -----------------------------
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output)
 
-# -----------------------------
+
 # Subdirectory per l'analisi dei dati
-# -----------------------------
 add_subdirectory(analysis)

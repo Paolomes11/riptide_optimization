@@ -16,11 +16,13 @@
 #define RIPTIDE_OPTIMIZER_HPP
 
 #include <filesystem>
+#include <string>
 
 class G4RunManager;
 
 namespace riptide {
-void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file);
+void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file,
+                      const std::string& root_output_file);
 }
 
 #endif // RIPTIDE_OPTIMIZER_HPP

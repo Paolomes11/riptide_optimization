@@ -36,8 +36,8 @@
 int main(int argc, char** argv) {
   std::filesystem::path geometry_path = "geometry/main.gdml";
   std::filesystem::path macro_file;
-  std::filesystem::path macro_vis = "macros/vis.mac";  // macro grafica standard
-  std::filesystem::path macro_run = "macros/run1.mac"; // macro simulazione standard
+  std::filesystem::path macro_vis = "macros/vis.mac";          // macro grafica standard
+  std::filesystem::path macro_run = "macros/optimization.mac"; // macro simulazione standard
   bool visualize                  = false;
   bool batch                      = false;
   bool optimize                   = false;
@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
 
     run_manager.SetUserInitialization(new riptide::DetectorConstruction(geometry_path.string()));
     run_manager.SetUserInitialization(new riptide::PhysicsList());
-    run_manager.SetUserInitialization(new riptide::ActionInitialization(root_output_file));
+    run_manager.SetUserInitialization(new riptide::ActionInitialization());
     run_manager.Initialize();
 
     auto UImanager              = G4UImanager::GetUIpointer();
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
     if (optimize) {
       spdlog::info("Running optimization");
       // Funzione separata, passa run manager e macro scelta
-      riptide::run_optimization(&run_manager, macro_file);
+      riptide::run_optimization(&run_manager, macro_file, root_output_file);
       return EXIT_SUCCESS;
     }
 

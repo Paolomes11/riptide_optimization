@@ -17,8 +17,6 @@
 
 #include <G4UserEventAction.hh>
 
-#include <TFile.h>
-#include <TTree.h>
 #include <vector>
 
 namespace riptide {
@@ -31,11 +29,7 @@ struct PhotonHit {
 };
 
 class EventAction : public G4UserEventAction {
-  TFile* m_file;
-  TTree* m_tree;
-
   // Variabili da salvare per ogni fotone
-  double x1, x2; // Parametri di posizione delle lenti
   int config_id; // Identificatore della configurazione delle lenti
 
   // Vector per memorizzare tutti i fotoni di un evento
@@ -45,12 +39,12 @@ class EventAction : public G4UserEventAction {
   static inline EventAction* s_currentEventAction = nullptr;
 
  public:
-  EventAction(const std::string& output_file_name);
-  virtual ~EventAction();
+  EventAction() = default;
+  virtual ~EventAction() = default;
 
   // Funzione che viene chiamata dal SensitiveDetector per registrare un hit
   void AddPhotonHit(double lens_x1, double lens_x2);
-  
+
   // Funzione per impostare l'identificatore della configurazione
   void SetConfigId(int config_id);
 

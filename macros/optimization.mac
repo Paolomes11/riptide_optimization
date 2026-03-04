@@ -11,10 +11,9 @@
 /gps/pos/inner_radius 0 mm
 
 
-# Direzione principale lungo +X con piccola divergenza
+# Direzione principale lungo +X
 /gps/ang/type iso
 /gps/direction 1 0 0
-#/gps/direction 1 0.05 -0.15
 
 # Run
 /run/beamOn 10000

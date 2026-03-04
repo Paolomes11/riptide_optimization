@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
   std::filesystem::path geometry_path = "geometry/main.gdml";
   std::filesystem::path macro_file;
   std::filesystem::path macro_vis = "macros/vis.mac";  // macro grafica standard
-  std::filesystem::path macro_run = "macros/run1.mac"; // macro simulazione standard
+  std::filesystem::path macro_run = "macros/lens_simulation.mac"; // macro simulazione standard
   bool visualize                  = false;
   bool batch                      = false;
   bool lens_sim                   = false;

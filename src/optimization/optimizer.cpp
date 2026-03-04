@@ -17,6 +17,7 @@
 #include "detector_construction.hpp"
 #include "event_action.hpp"
 
+#include <G4AnalysisManager.hh>
 #include <G4RunManager.hh>
 #include <G4UImanager.hh>
 
@@ -29,7 +30,8 @@
 
 namespace riptide {
 
-void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file) {
+void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file,
+                      const std::string& root_output_file) {
   using json = nlohmann::json;
 
   // Legge i parametri del file di configurazione
@@ -47,10 +49,20 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
     throw std::runtime_error("DetectorConstruction not found!");
   }
 
+  // Apertura file di output e creazione Ntuple
+  auto analysisManager = G4AnalysisManager::Instance();
+  analysisManager->OpenFile(root_output_file);
+
+  analysisManager->CreateNtuple("events", "Eventi fotoni");
+  analysisManager->CreateNtupleDColumn("x1");
+  analysisManager->CreateNtupleDColumn("x2");
+  analysisManager->CreateNtupleIColumn("config_id");
+  analysisManager->FinishNtuple();
+
   // Parametri di ottimizzazione
-  double x_min  = config["x_min"];
-  double x_max  = config["x_max"];
-  double dx     = config["dx"];
+  double x_min = config["x_min"];
+  double x_max = config["x_max"];
+  double dx    = config["dx"];
 
   double r1 = config["r1"], h1 = config["h1"];
   double r2 = config["r2"], h2 = config["h2"];
@@ -68,7 +80,8 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
       run_manager->GeometryHasBeenModified();
 
       // Imposta l'identificatore della configurazione
-      auto* eventAction = dynamic_cast<EventAction*>(const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
+      auto* eventAction = dynamic_cast<EventAction*>(
+          const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
       if (eventAction) {
         eventAction->SetConfigId(config_counter);
       }
@@ -83,6 +96,10 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
       config_counter++;
     }
   }
+
+  // Scrive e chiude il file di output
+  analysisManager->Write();
+  analysisManager->CloseFile();
 
   spdlog::info("Optimization completed");
 }
