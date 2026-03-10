@@ -3,15 +3,10 @@
 /gps/energy 2.5 eV
 
 /gps/pos/type Plane
-/gps/pos/shape Annulus
+#/gps/pos/shape Square
+/gps/pos/centre 0 10 0 mm
 /gps/pos/rot1 0 1 0
 /gps/pos/rot2 0 0 1
-#/gps/pos/radius 0.5 mm
-/gps/pos/radius 0.1 mm
-/gps/pos/inner_radius 0 mm
-
-#/gps/pos/shape Square
-#/gps/pos/centre 0 10 0 mm
 #/gps/pos/halfx 0.05 mm
 #/gps/pos/halfy 0.05 mm
 

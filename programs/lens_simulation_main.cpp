@@ -19,8 +19,8 @@
 
 #include "action_initialization.hpp"
 #include "detector_construction.hpp"
-#include "physics_list.hpp"
 #include "lens_scan.hpp"
+#include "physics_list.hpp"
 
 #include <G4RunManager.hh>
 #include <G4UIExecutive.hh>
@@ -36,7 +36,7 @@
 int main(int argc, char** argv) {
   std::filesystem::path geometry_path = "geometry/main.gdml";
   std::filesystem::path macro_file;
-  std::filesystem::path macro_vis = "macros/vis.mac";  // macro grafica standard
+  std::filesystem::path macro_vis = "macros/vis.mac";             // macro grafica standard
   std::filesystem::path macro_run = "macros/lens_simulation.mac"; // macro simulazione standard
   bool visualize                  = false;
   bool batch                      = false;
@@ -77,7 +77,9 @@ int main(int argc, char** argv) {
     // Crea il run manager
     G4RunManager run_manager{};
 
-    run_manager.SetUserInitialization(new riptide::DetectorConstruction(geometry_path.string()));
+    run_manager.GeometryHasBeenModified(true);
+    run_manager.SetUserInitialization(
+        new riptide::DetectorConstruction(geometry_path.string(), 80.9, 153.4));
     run_manager.SetUserInitialization(new riptide::PhysicsList());
     run_manager.SetUserInitialization(new riptide::ActionInitialization());
     run_manager.Initialize();

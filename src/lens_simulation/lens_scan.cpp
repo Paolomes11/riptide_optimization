@@ -75,7 +75,9 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   analysisManager->FinishNtuple(2);
 
   // Parametri di scansione lenti e sorgente
+  // Tiene conto di 30mm di scintillatore e 3mm di margine
   double x_min = config["x_min"];
+  // Tiene conto di 3mm di margine
   double x_max = config["x_max"];
   double dx    = config["dx"];
 

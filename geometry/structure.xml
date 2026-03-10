@@ -8,10 +8,10 @@
   <solidref ref="lens60_x_ellipsoid" />
 </volume>
 
-<volume name="glass_window_x_volume">
+<!-- <volume name="glass_window_x_volume">
   <materialref ref="borosilicate_glass" />
   <solidref ref="glass_window_disk" />
-</volume>
+</volume> -->
 
 <!-- Associa nome al volume -->
 <volume name="photocathode_x_volume">
@@ -36,11 +36,11 @@
     <rotationref ref="rot_90y" />
   </physvol>
 
-  <physvol name="glass_window_x_phys">
+  <!-- <physvol name="glass_window_x_phys">
     <volumeref ref="glass_window_x_volume" />
     <positionref ref="glass_window_x_pos" />
     <rotationref ref="rot_90y" />
-  </physvol>
+  </physvol> -->
 
   <physvol name="photocathode_x_phys">
     <volumeref ref="photocathode_x_volume" />

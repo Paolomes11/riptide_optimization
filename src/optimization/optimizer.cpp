@@ -71,6 +71,7 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
   std::filesystem::path macro_to_run = macro_file.empty() ? "macros/run1.mac" : macro_file;
 
   int config_counter = 0;
+  // TBB parallelization
   for (double x1 = x_min - r1 + h1; x1 <= x_max - h2 - 1 - r1; x1 += dx) {
     double x2_min = x1 + r1 + r2 + 1;
     double x2_max = x_max + r2 - h2;

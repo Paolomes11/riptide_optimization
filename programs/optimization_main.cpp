@@ -77,7 +77,9 @@ int main(int argc, char** argv) {
     // Crea il run manager
     G4RunManager run_manager{};
 
-    run_manager.SetUserInitialization(new riptide::DetectorConstruction(geometry_path.string()));
+    run_manager.GeometryHasBeenModified(true);
+    run_manager.SetUserInitialization(
+        new riptide::DetectorConstruction(geometry_path.string(), 80.9, 173.4));
     run_manager.SetUserInitialization(new riptide::PhysicsList());
     run_manager.SetUserInitialization(new riptide::ActionInitialization());
     run_manager.Initialize();

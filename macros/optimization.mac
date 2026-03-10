@@ -6,7 +6,7 @@
 /gps/pos/shape Annulus
 /gps/pos/centre 0 0 0 cm
 /gps/pos/rot1 0 1 0
-/gps/pos/rot2 0 0 2
+/gps/pos/rot2 0 0 1
 /gps/pos/radius 10 mm
 /gps/pos/inner_radius 0 mm
 

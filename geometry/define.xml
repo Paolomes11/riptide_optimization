@@ -19,10 +19,10 @@
 <constant name="lens60_h" value="16.3*mm" />     <!-- Spessore della lente 60mm -->
 <constant name="lens_separation" value="69.5*mm" /> <!-- Distanza tra le due lenti -->
 
-<!-- Posizioni dei componenti lungo l'asse X -->
-<position name="lens75_x_pos" unit="mm" x="83.9" y="0" z="0" />
-<position name="lens60_x_pos" unit="mm" x="153.5" y="0" z="0" />
-<position name="glass_window_x_pos" unit="mm" x="173.9" y="0" z="0" />
+<!-- Posizioni dei componenti lungo l'asse X 83.9 153.5 default-->
+<position name="lens75_x_pos" unit="mm" x="14.9" y="0" z="0" />
+<position name="lens60_x_pos" unit="mm" x="185.4" y="0" z="0" />
+<!-- <position name="glass_window_x_pos" unit="mm" x="173.9" y="0" z="0" /> -->
 <position name="photocathode_x_pos" unit="mm" x="179.8" y="0" z="0" />
 
 <!-- Definizioni di rotazioni standard -->

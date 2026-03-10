@@ -51,8 +51,7 @@ int main() {
 
   TTree* hits    = (TTree*)f.Get("Hits");
   TTree* runs    = (TTree*)f.Get("Runs");
-  TTree* configs = (TTree*)f.Get("Configurations"); // contiene x1 e x2
-
+  TTree* configs = (TTree*)f.Get("Configurations");
   if (!hits || !runs || !configs) {
     std::cerr << "Hits, Runs, or Configurations trees not found!" << std::endl;
     return 1;
@@ -66,8 +65,7 @@ int main() {
   configs->SetBranchAddress("x2", &cfg_x2);
 
   std::map<int, std::pair<double, double>> config_values;
-  Long64_t n_cfg = configs->GetEntries();
-  for (Long64_t i = 0; i < n_cfg; i++) {
+  for (Long64_t i = 0; i < configs->GetEntries(); i++) {
     configs->GetEntry(i);
     config_values[cfg_id_cfg] = {cfg_x1, cfg_x2};
   }
@@ -80,8 +78,7 @@ int main() {
   runs->SetBranchAddress("x_source", &x_source);
 
   std::map<int, std::vector<std::pair<int, double>>> config_to_runs;
-  Long64_t n_runs = runs->GetEntries();
-  for (Long64_t i = 0; i < n_runs; i++) {
+  for (Long64_t i = 0; i < runs->GetEntries(); i++) {
     runs->GetEntry(i);
     config_to_runs[config_id].push_back({run_id, x_source});
   }
@@ -95,6 +92,8 @@ int main() {
 
   gStyle->SetOptStat(0);
   gStyle->SetTitleFontSize(0.05);
+  gStyle->SetPadGridX(true);
+  gStyle->SetPadGridY(true);
 
   // Selezione casuale di 10 configurazioni
   std::vector<int> all_configs;
@@ -104,84 +103,78 @@ int main() {
   if (all_configs.size() > 10)
     all_configs.resize(10);
 
-  TCanvas* c     = new TCanvas("c", "Beam positions", 1200, 600);
+  TCanvas* c     = new TCanvas("c", "Beam positions", 1400, 700);
   int file_index = 1;
 
   for (auto cfg_id : all_configs) {
     auto& runs_vec = config_to_runs[cfg_id];
-
     c->Clear();
-    c->cd();
-    // Dividiamo il canvas in due grafici, uno per y e uno per z
-    c->Divide(2, 1);
+    c->Divide(2, 1, 0.01, 0.01); // gap minimo tra pad
 
-    // Colori disponibili
     std::vector<int> colors = {kRed,      kBlue,       kGreen + 2, kMagenta,
                                kCyan + 1, kOrange + 7, kViolet,    kTeal + 2};
 
     // --- Grafico Y ---
     c->cd(1);
+    gPad->SetLeftMargin(0.12);
+    gPad->SetRightMargin(0.05);
+    gPad->SetTopMargin(0.08);
+    gPad->SetBottomMargin(0.12);
+    gPad->SetGridx();
+    gPad->SetGridy();
     TGraph* g_y_all = new TGraph();
     int point_index = 0;
-
     for (size_t i = 0; i < runs_vec.size(); i++) {
       int run_i = runs_vec[i].first;
-      double x0 = runs_vec[i].second; // posizione iniziale del fascio
-
-      std::vector<double> y_hits_vec;
-      Long64_t n_hits = hits->GetEntries();
-      for (Long64_t j = 0; j < n_hits; j++) {
+      double x0 = runs_vec[i].second;
+      for (Long64_t j = 0; j < hits->GetEntries(); j++) {
         hits->GetEntry(j);
         if (hit_run_id == run_i)
-          y_hits_vec.push_back(y_hit);
-      }
-
-      int color = colors[i % colors.size()]; // colori ciclici
-      for (auto y_val : y_hits_vec) {
-        g_y_all->SetPoint(point_index++, x0, y_val);
+          g_y_all->SetPoint(point_index++, x0, y_hit);
       }
     }
     g_y_all->SetMarkerStyle(20);
     g_y_all->SetMarkerSize(1);
     g_y_all->SetMarkerColor(kRed);
-    g_y_all->SetTitle(("Posizione Y - x1=" + format_double(config_values[cfg_id].first)
+    g_y_all->SetTitle(("Y positions - x1=" + format_double(config_values[cfg_id].first)
                        + " mm, x2=" + format_double(config_values[cfg_id].second) + " mm")
                           .c_str());
     g_y_all->GetXaxis()->SetTitle("Posizione iniziale fascio [mm]");
     g_y_all->GetYaxis()->SetTitle("Posizione y fotoni [mm]");
     g_y_all->Draw("AP");
+    gPad->Modified();
+    gPad->Update();
 
     // --- Grafico Z ---
     c->cd(2);
+    gPad->SetLeftMargin(0.15); // più largo per titolo Y
+    gPad->SetRightMargin(0.05);
+    gPad->SetTopMargin(0.08);
+    gPad->SetBottomMargin(0.12);
+    gPad->SetGridx();
+    gPad->SetGridy();
     TGraph* g_z_all = new TGraph();
     point_index     = 0;
-
     for (size_t i = 0; i < runs_vec.size(); i++) {
       int run_i = runs_vec[i].first;
       double x0 = runs_vec[i].second;
-
-      std::vector<double> z_hits_vec;
-      Long64_t n_hits = hits->GetEntries();
-      for (Long64_t j = 0; j < n_hits; j++) {
+      for (Long64_t j = 0; j < hits->GetEntries(); j++) {
         hits->GetEntry(j);
         if (hit_run_id == run_i)
-          z_hits_vec.push_back(z_hit);
-      }
-
-      int color = colors[i % colors.size()];
-      for (auto z_val : z_hits_vec) {
-        g_z_all->SetPoint(point_index++, x0, z_val);
+          g_z_all->SetPoint(point_index++, x0, z_hit);
       }
     }
     g_z_all->SetMarkerStyle(20);
     g_z_all->SetMarkerSize(1);
     g_z_all->SetMarkerColor(kBlue);
-    g_z_all->SetTitle(("Posizione Z - x1=" + format_double(config_values[cfg_id].first)
+    g_z_all->SetTitle(("Z positions - x1=" + format_double(config_values[cfg_id].first)
                        + " mm, x2=" + format_double(config_values[cfg_id].second) + " mm")
                           .c_str());
     g_z_all->GetXaxis()->SetTitle("Posizione iniziale fascio [mm]");
     g_z_all->GetYaxis()->SetTitle("Posizione z fotoni [mm]");
     g_z_all->Draw("AP");
+    gPad->Modified();
+    gPad->Update();
 
     std::string filename = (output_dir / (std::to_string(file_index) + ".png")).string();
     c->SaveAs(filename.c_str());
