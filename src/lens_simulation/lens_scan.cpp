@@ -129,15 +129,8 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
 
         auto* eventAction = dynamic_cast<EventAction*>(
             const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
-
         if (eventAction) {
-          for (const auto& photon : eventAction->GetEventHits()) {
-            analysisManager->FillNtupleIColumn(2, 0, run_id);
-            analysisManager->FillNtupleDColumn(2, 1, photon.y);
-            analysisManager->FillNtupleDColumn(2, 2, photon.z);
-            analysisManager->AddNtupleRow(2);
-          }
-          eventAction->ClearEventHits(); // prepara per il prossimo run
+          eventAction->runID = run_id; // assegna il run corrente
         }
 
         spdlog::info("Run done: config_id={}, y_source={} mm, run_id={}", config_counter, y_source,

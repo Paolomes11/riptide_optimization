@@ -69,8 +69,10 @@ foreach(MAIN_FILE ${PROGRAM_MAIN})
 endforeach()
 
 
-# Crea la cartella di output
+# Crea la cartella di output e sue sottocartelle
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output)
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output/lens_simulation)
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output/mean_covariance_maps)
 
 
 # Subdirectory per l'analisi dei dati

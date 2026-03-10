@@ -59,6 +59,9 @@ class EventAction : public G4UserEventAction {
   static EventAction* GetEventAction() {
     return s_currentEventAction;
   }
+
+  // Identificatore del run corrente, da impostare in lens_scan.cpp
+  int runID = -1;
 };
 
 } // namespace riptide

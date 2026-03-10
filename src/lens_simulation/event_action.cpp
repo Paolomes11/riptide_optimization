@@ -13,7 +13,8 @@
  */
 
 #include "event_action.hpp"
-#include "G4Event.hh"
+#include <G4Event.hh>
+#include <G4AnalysisManager.hh>
 #include <iostream>
 
 namespace riptide {
@@ -31,7 +32,20 @@ void EventAction::BeginOfEventAction(const G4Event* /*event*/) {
 }
 
 // Alla fine dell'evento, scrivi tutti i fotoni nel TTree
-void EventAction::EndOfEventAction(const G4Event* event) {
+void EventAction::EndOfEventAction(const G4Event* /*event*/) {
+  // Ottieni il manager di analisi ROOT
+  auto* analysisManager = G4AnalysisManager::Instance();
+
+  // Scrive tutte le hit accumulate nell'evento corrente
+  for (const auto& photon : eventHits) {
+    analysisManager->FillNtupleIColumn(2, 0, runID); // runID da impostare altrove
+    analysisManager->FillNtupleDColumn(2, 1, photon.y);
+    analysisManager->FillNtupleDColumn(2, 2, photon.z);
+    analysisManager->AddNtupleRow(2);
+  }
+
+  // Pulisce il vettore per il prossimo evento
+  eventHits.clear();
 }
 
 } // namespace riptide
