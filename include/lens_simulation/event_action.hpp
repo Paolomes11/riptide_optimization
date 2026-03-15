@@ -24,13 +24,16 @@ namespace riptide {
 // Struttura per un hit/fotone
 struct PhotonHit {
   // Posizione del fotone
-  double y;
-  double z;
+  float y;
+  float z;
 };
 
 class EventAction : public G4UserEventAction {
   // Vector per memorizzare tutti i fotoni di un evento
   std::vector<PhotonHit> eventHits;
+
+  // Per evitare run_id
+  int m_lastRunHitCount = 0;
 
   // puntatore statico
   static inline EventAction* s_currentEventAction = nullptr;
@@ -50,6 +53,15 @@ class EventAction : public G4UserEventAction {
   // Pulisce gli hit dopo averli salvati
   void ClearEventHits() {
     eventHits.clear();
+  }
+
+  // n_hits getter e clearer
+  int GetLastRunHitCount() const {
+    return m_lastRunHitCount;
+  }
+
+  void ResetLastRunHitCount() {
+    m_lastRunHitCount = 0;
   }
 
   virtual void EndOfEventAction(const G4Event* event) override;

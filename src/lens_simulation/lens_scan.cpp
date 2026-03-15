@@ -46,12 +46,16 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   if (!det)
     throw std::runtime_error("DetectorConstruction not found!");
 
-  auto UImanager                     = G4UImanager::GetUIpointer();
-  std::filesystem::path macro_to_run = macro_file.empty() ? "macros/run1.mac" : macro_file;
+  auto UImanager = G4UImanager::GetUIpointer();
+  std::filesystem::path macro_to_run =
+      macro_file.empty() ? "macros/lens_simulation.mac" : macro_file;
 
   // Apertura file ROOT e creazione delle Ntuple
   auto analysisManager = G4AnalysisManager::Instance();
   analysisManager->OpenFile(root_output_file);
+
+  // Compressione LZ4 livello 4 — encoding: algoritmo*100 + livello (404 = LZ4 lv4)
+  analysisManager->SetCompressionLevel(404);
 
   // Ntuple 0: configurazioni lenti
   analysisManager->CreateNtuple("Configurations", "Lens configurations");
@@ -64,14 +68,14 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   analysisManager->CreateNtuple("Runs", "Source positions per configuration");
   analysisManager->CreateNtupleIColumn("run_id");
   analysisManager->CreateNtupleIColumn("config_id");
-  analysisManager->CreateNtupleDColumn("x_source");
+  analysisManager->CreateNtupleFColumn("x_source");
+  analysisManager->CreateNtupleIColumn("n_hits");
   analysisManager->FinishNtuple(1);
 
   // Ntuple 2: hit/fotoni
   analysisManager->CreateNtuple("Hits", "Detected photons");
-  analysisManager->CreateNtupleIColumn("run_id");
-  analysisManager->CreateNtupleDColumn("y_hit");
-  analysisManager->CreateNtupleDColumn("z_hit");
+  analysisManager->CreateNtupleFColumn("y_hit");
+  analysisManager->CreateNtupleFColumn("z_hit");
   analysisManager->FinishNtuple(2);
 
   // Parametri di scansione lenti e sorgente
@@ -120,18 +124,22 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
           eventAction->runID = run_id; // assegna il run corrente
         }
 
-        // Salva run nella Ntuple Runs
-        analysisManager->FillNtupleIColumn(1, 0, run_id);
-        analysisManager->FillNtupleIColumn(1, 1, config_counter);
-        analysisManager->FillNtupleDColumn(1, 2, y_source);
-        analysisManager->AddNtupleRow(1);
-
         // Cambia seed
         long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
         CLHEP::HepRandom::setTheSeed(seed);
 
         // Esegue la macro
         UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
+
+        // legge n_hits scritte da EventAction durante questo run
+        int n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0;
+
+        // Salva run nella Ntuple Runs
+        analysisManager->FillNtupleIColumn(1, 0, run_id);
+        analysisManager->FillNtupleIColumn(1, 1, config_counter);
+        analysisManager->FillNtupleFColumn(1, 2, static_cast<float>(y_source));
+        analysisManager->FillNtupleIColumn(1, 3, n_hits);
+        analysisManager->AddNtupleRow(1);
 
         spdlog::info("Run done: config_id={}, y_source={} mm, run_id={}", config_counter, y_source,
                      run_id);

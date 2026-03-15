@@ -87,18 +87,30 @@ int main(int argc, char** argv) {
   std::cout << "Selected configuration id: " << selected_cfg_id << std::endl;
 
   // --- Runs per la configurazione ---
-  int run_id, config_id;
-  double x_source;
+  int run_id, config_id, n_hits_run;
+  float x_source;
   runs->SetBranchAddress("run_id", &run_id);
   runs->SetBranchAddress("config_id", &config_id);
   runs->SetBranchAddress("x_source", &x_source);
+  runs->SetBranchAddress("n_hits", &n_hits_run);
 
+  // Così si evita run_id
+  struct RunEntry {
+    Long64_t first_hit;
+    int n_hits;
+    double xs_rounded;
+  };
+
+  std::map<int, RunEntry> all_runs;
   std::map<int, double> runs_map; // run_id -> x_source
+  Long64_t cumulative = 0;
   for (Long64_t i = 0; i < runs->GetEntries(); i++) {
     runs->GetEntry(i);
+    double x_source_rounded = std::round(static_cast<double>(x_source) * 10.0) / 10.0;
+    all_runs[run_id]        = {cumulative, n_hits_run, x_source_rounded};
+    cumulative += n_hits_run;
     if (config_id == selected_cfg_id) {
-      double x_source_rounded = std::round(x_source * 10.0) / 10.0;
-      runs_map[run_id]        = x_source_rounded;
+      runs_map[run_id] = x_source_rounded;
     }
   }
 
@@ -108,9 +120,7 @@ int main(int argc, char** argv) {
   }
 
   // --- Hits ---
-  int hit_run_id;
-  double y_hit, z_hit;
-  hits->SetBranchAddress("run_id", &hit_run_id);
+  float y_hit, z_hit;
   hits->SetBranchAddress("y_hit", &y_hit);
   hits->SetBranchAddress("z_hit", &z_hit);
 
@@ -118,13 +128,17 @@ int main(int argc, char** argv) {
   std::map<double, std::vector<double>> y_hits_map;
   std::map<double, std::vector<double>> z_hits_map;
 
-  for (Long64_t j = 0; j < hits->GetEntries(); j++) {
-    hits->GetEntry(j);
-    auto it = runs_map.find(hit_run_id);
-    if (it != runs_map.end()) {
-      double xs = it->second;
-      y_hits_map[xs].push_back(y_hit);
-      z_hits_map[xs].push_back(z_hit);
+  for (auto& [rid, xs] : runs_map) {
+    // re = run entry
+    const auto& re = all_runs.at(rid);
+    auto& yvec     = y_hits_map[xs];
+    auto& zvec     = z_hits_map[xs];
+    yvec.reserve(re.n_hits);
+    zvec.reserve(re.n_hits);
+    for (Long64_t j = re.first_hit; j < re.first_hit + re.n_hits; j++) {
+      hits->GetEntry(j);
+      yvec.push_back(y_hit);
+      zvec.push_back(z_hit);
     }
   }
 

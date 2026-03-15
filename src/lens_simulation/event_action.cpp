@@ -13,8 +13,8 @@
  */
 
 #include "event_action.hpp"
-#include <G4Event.hh>
 #include <G4AnalysisManager.hh>
+#include <G4Event.hh>
 #include <iostream>
 
 namespace riptide {
@@ -38,11 +38,12 @@ void EventAction::EndOfEventAction(const G4Event* /*event*/) {
 
   // Scrive tutte le hit accumulate nell'evento corrente
   for (const auto& photon : eventHits) {
-    analysisManager->FillNtupleIColumn(2, 0, runID); // runID da impostare altrove
-    analysisManager->FillNtupleDColumn(2, 1, photon.y);
-    analysisManager->FillNtupleDColumn(2, 2, photon.z);
+    analysisManager->FillNtupleFColumn(2, 0, photon.y);
+    analysisManager->FillNtupleFColumn(2, 1, photon.z);
     analysisManager->AddNtupleRow(2);
   }
+
+  m_lastRunHitCount += static_cast<int>(eventHits.size());
 
   // Pulisce il vettore per il prossimo evento
   eventHits.clear();

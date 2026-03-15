@@ -64,15 +64,14 @@ int main(int argc, char** argv) {
   tConfig->SetBranchAddress("x1", &x1);
   tConfig->SetBranchAddress("x2", &x2);
 
-  int run_id, run_config;
-  double y_source;
+  int run_id, run_config, n_hits_run;
+  float y_source;
   tRuns->SetBranchAddress("run_id", &run_id);
   tRuns->SetBranchAddress("config_id", &run_config);
   tRuns->SetBranchAddress("x_source", &y_source);
+  tRuns->SetBranchAddress("n_hits", &n_hits_run);
 
-  int hit_run;
-  double y_hit, z_hit;
-  tHits->SetBranchAddress("run_id", &hit_run);
+  float y_hit, z_hit;
   tHits->SetBranchAddress("y_hit", &y_hit);
   tHits->SetBranchAddress("z_hit", &z_hit);
 
@@ -101,10 +100,22 @@ int main(int argc, char** argv) {
             << ", x2=" << x2_sel << "\n";
 
   // ---------------------- trova run esatto ----------------------
+  struct RunInfo {
+    Long64_t first_hit;
+    int n_hits;
+  };
+  std::map<int, RunInfo> run_info_map;
+  Long64_t cumulative_hits = 0;
+  for (Long64_t i = 0; i < tRuns->GetEntries(); ++i) {
+    tRuns->GetEntry(i);
+    run_info_map[run_id] = {cumulative_hits, n_hits_run};
+    cumulative_hits += n_hits_run;
+  }
+
   int exact_run_id = -1;
   for (Long64_t i = 0; i < tRuns->GetEntries(); ++i) {
     tRuns->GetEntry(i);
-    if (run_config == target_config_id && std::abs(y_source - y0_target) < 1e-6) {
+    if (run_config == target_config_id && std::abs(y_source - y0_target) < 1e-3) {
       exact_run_id = run_id;
       break;
     }
@@ -118,10 +129,12 @@ int main(int argc, char** argv) {
 
   // ---------------------- raccogli tutte le hit ----------------------
   std::vector<Hit> hits;
-  for (Long64_t i = 0; i < tHits->GetEntries(); ++i) {
+  // ri = run_info
+  const auto& ri = run_info_map.at(exact_run_id);
+  hits.reserve(ri.n_hits);
+  for (Long64_t i = ri.first_hit; i < ri.first_hit + ri.n_hits; ++i) {
     tHits->GetEntry(i);
-    if (hit_run == exact_run_id)
-      hits.push_back({y_hit, z_hit});
+    hits.push_back({static_cast<double>(y_hit), static_cast<double>(z_hit)});
   }
 
   if (hits.empty()) {
@@ -169,12 +182,10 @@ int main(int argc, char** argv) {
             << ", sigma y=" << y_sigma << ", media z=" << z_mean << ", sigma z=" << z_sigma << "\n";
 
   // ---------------------- debug migliorato ----------------------
-  std::cout << "Primi 10 hit_run nel file: ";
-  for (Long64_t i = 0; i < std::min(10LL, tHits->GetEntries()); ++i) {
-    tHits->GetEntry(i);
-    std::cout << hit_run << " ";
+  std::cout << "Prime 10 hit raccolte (y, z):\n";
+  for (size_t i = 0; i < std::min<size_t>(10, hits.size()); ++i) {
+    std::cout << "  (" << hits[i].y << ", " << hits[i].z << ")\n";
   }
-  std::cout << std::endl;
 
   // ---------------------- canvas e istogramma ----------------------
   double y_min = y_mean - max_sigma * y_sigma;
