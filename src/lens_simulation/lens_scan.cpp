@@ -114,6 +114,12 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
         // Identificatore del run corrente
         int run_id = run_counter++;
 
+        auto* eventAction = dynamic_cast<EventAction*>(
+            const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
+        if (eventAction) {
+          eventAction->runID = run_id; // assegna il run corrente
+        }
+
         // Salva run nella Ntuple Runs
         analysisManager->FillNtupleIColumn(1, 0, run_id);
         analysisManager->FillNtupleIColumn(1, 1, config_counter);
@@ -126,12 +132,6 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
 
         // Esegue la macro
         UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
-
-        auto* eventAction = dynamic_cast<EventAction*>(
-            const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
-        if (eventAction) {
-          eventAction->runID = run_id; // assegna il run corrente
-        }
 
         spdlog::info("Run done: config_id={}, y_source={} mm, run_id={}", config_counter, y_source,
                      run_id);

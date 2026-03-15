@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
 
     run_manager.GeometryHasBeenModified(true);
     run_manager.SetUserInitialization(
-        new riptide::DetectorConstruction(geometry_path.string(), 80.9, 153.4));
+        new riptide::DetectorConstruction(geometry_path.string(), 75.9, 164.4));
     run_manager.SetUserInitialization(new riptide::PhysicsList());
     run_manager.SetUserInitialization(new riptide::ActionInitialization());
     run_manager.Initialize();

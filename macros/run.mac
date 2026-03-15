@@ -4,7 +4,7 @@
 
 /gps/pos/type Plane
 #/gps/pos/shape Square
-/gps/pos/centre 0 10 0 mm
+/gps/pos/centre 0 1 0 mm
 /gps/pos/rot1 0 1 0
 /gps/pos/rot2 0 0 1
 #/gps/pos/halfx 0.05 mm

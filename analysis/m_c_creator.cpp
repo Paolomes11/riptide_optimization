@@ -1,3 +1,17 @@
+/*
+ * Copyright 2026 Giulio Mesini
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ */
+
 #include <TCanvas.h>
 #include <TFile.h>
 #include <TH2D.h>
@@ -66,6 +80,7 @@ int main(int argc, char** argv) {
   int target_config_id = -1;
   double best_dist     = std::numeric_limits<double>::max();
   double x1_sel = 0, x2_sel = 0;
+
   for (Long64_t i = 0; i < tConfig->GetEntries(); ++i) {
     tConfig->GetEntry(i);
     double dist =
@@ -77,6 +92,7 @@ int main(int argc, char** argv) {
       x2_sel           = x2;
     }
   }
+
   if (target_config_id < 0) {
     std::cerr << "Nessuna configurazione trovata!\n";
     return 1;
@@ -93,6 +109,7 @@ int main(int argc, char** argv) {
       break;
     }
   }
+
   if (exact_run_id < 0) {
     std::cerr << "Nessun run trovato con y0_target = " << y0_target << "\n";
     return 1;
@@ -106,43 +123,66 @@ int main(int argc, char** argv) {
     if (hit_run == exact_run_id)
       hits.push_back({y_hit, z_hit});
   }
+
   if (hits.empty()) {
     std::cerr << "Nessuna hit trovata!\n";
     return 1;
   }
 
-  // ---------------------- calcola media e deviazione standard ----------------------
-  double y_sum = 0, z_sum = 0;
-  for (auto& h : hits) {
-    y_sum += h.y;
-    z_sum += h.z;
-  }
-  double y_mean = y_sum / hits.size();
-  double z_mean = z_sum / hits.size();
+  // ---------------------- calcolo robusto media e sigma ----------------------
+  const double max_sigma         = 2.0; // soglia outlier
+  std::vector<Hit> hits_filtered = hits;
+  double y_mean = 0, z_mean = 0;
+  double y_sigma = 0, z_sigma = 0;
 
-  double y_var = 0, z_var = 0;
-  for (auto& h : hits) {
-    y_var += (h.y - y_mean) * (h.y - y_mean);
-    z_var += (h.z - z_mean) * (h.z - z_mean);
-  }
-  double y_sigma = std::sqrt(y_var / hits.size());
-  double z_sigma = std::sqrt(z_var / hits.size());
+  // due iterazioni per stabilizzare media e sigma
+  for (int iter = 0; iter < 2; ++iter) {
+    double y_sum = 0, z_sum = 0;
+    for (auto& h : hits_filtered) {
+      y_sum += h.y;
+      z_sum += h.z;
+    }
+    size_t n = hits_filtered.size();
+    y_mean   = y_sum / n;
+    z_mean   = z_sum / n;
 
-  // ---------------------- filtra outlier (>3σ) ----------------------
-  std::vector<Hit> hits_zoom;
-  for (auto& h : hits) {
-    if (std::abs(h.y - y_mean) <= 3 * y_sigma && std::abs(h.z - z_mean) <= 3 * z_sigma)
-      hits_zoom.push_back(h);
+    double y_var = 0, z_var = 0;
+    for (auto& h : hits_filtered) {
+      y_var += (h.y - y_mean) * (h.y - y_mean);
+      z_var += (h.z - z_mean) * (h.z - z_mean);
+    }
+    y_sigma = std::sqrt(y_var / n);
+    z_sigma = std::sqrt(z_var / n);
+
+    // filtra outlier
+    std::vector<Hit> temp;
+    for (auto& h : hits_filtered) {
+      if (std::abs(h.y - y_mean) <= max_sigma * y_sigma
+          && std::abs(h.z - z_mean) <= max_sigma * z_sigma) {
+        temp.push_back(h);
+      }
+    }
+    hits_filtered = temp;
   }
 
-  // ridefinisci range per zoom
-  double y_min = y_mean - 0.5 * y_sigma;
-  double y_max = y_mean + 0.5 * y_sigma;
-  double z_min = z_mean - 3 * z_sigma;
-  double z_max = z_mean + 3 * z_sigma;
+  std::cout << "Hit dopo filtraggio: " << hits_filtered.size() << ", media y=" << y_mean
+            << ", sigma y=" << y_sigma << ", media z=" << z_mean << ", sigma z=" << z_sigma << "\n";
+
+  // ---------------------- debug migliorato ----------------------
+  std::cout << "Primi 10 hit_run nel file: ";
+  for (Long64_t i = 0; i < std::min(10LL, tHits->GetEntries()); ++i) {
+    tHits->GetEntry(i);
+    std::cout << hit_run << " ";
+  }
+  std::cout << std::endl;
 
   // ---------------------- canvas e istogramma ----------------------
-  TCanvas* c = new TCanvas("c", "Hits sul detector", 1200, 1000); // canvas più grande
+  double y_min = y_mean - max_sigma * y_sigma;
+  double y_max = y_mean + max_sigma * y_sigma;
+  double z_min = z_mean - max_sigma * z_sigma;
+  double z_max = z_mean + max_sigma * z_sigma;
+
+  TCanvas* c = new TCanvas("c", "Hits sul detector", 1200, 1000);
   gStyle->SetOptStat(0);
   c->SetGrid();
 
@@ -152,14 +192,14 @@ int main(int argc, char** argv) {
                             .c_str(),
                         200, y_min, y_max, 200, z_min, z_max);
 
-  for (auto& h : hits_zoom)
+  for (auto& h : hits_filtered)
     hist->Fill(h.y, h.z);
 
   hist->GetXaxis()->SetTitle("Y [mm]");
   hist->GetYaxis()->SetTitle("Z [mm]");
   hist->GetXaxis()->CenterTitle();
   hist->GetYaxis()->CenterTitle();
-  hist->GetYaxis()->SetTitleOffset(1.2); // evita taglio
+  hist->GetYaxis()->SetTitleOffset(1.2);
   hist->Draw("COLZ");
 
   std::ostringstream filename;

@@ -96,8 +96,10 @@ int main(int argc, char** argv) {
   std::map<int, double> runs_map; // run_id -> x_source
   for (Long64_t i = 0; i < runs->GetEntries(); i++) {
     runs->GetEntry(i);
-    if (config_id == selected_cfg_id)
-      runs_map[run_id] = x_source;
+    if (config_id == selected_cfg_id) {
+      double x_source_rounded = std::round(x_source * 10.0) / 10.0;
+      runs_map[run_id]        = x_source_rounded;
+    }
   }
 
   if (runs_map.empty()) {
@@ -126,34 +128,70 @@ int main(int argc, char** argv) {
     }
   }
 
-  // --- Calcolo medie e deviazioni ---
+  // --- Calcolo medie e deviazioni robuste (filtro 3σ) con debug compatto ---
   std::vector<double> xs_vec, y_mean_vec, y_err_vec, z_mean_vec, z_err_vec;
-  for (auto& [xs, yvec] : y_hits_map) {
-    double y_sum = 0;
-    for (double v : yvec)
-      y_sum += v;
-    double y_mean = y_sum / yvec.size();
-    double y_std  = 0;
-    for (double v : yvec)
-      y_std += (v - y_mean) * (v - y_mean);
-    y_std = std::sqrt(y_std / yvec.size());
+  const double max_sigma = 2.0;
+
+  for (auto& [xs, yvec_orig] : y_hits_map) {
+    auto& zvec_orig = z_hits_map[xs];
+
+    std::vector<double> yvec = yvec_orig;
+    std::vector<double> zvec = zvec_orig;
+    double y_mean = 0, z_mean = 0;
+    double y_sigma = 0, z_sigma = 0;
+
+    // due iterazioni per stabilizzare media e sigma
+    for (int iter = 0; iter < 2; ++iter) {
+      double y_sum = 0, z_sum = 0;
+      for (double v : yvec)
+        y_sum += v;
+      for (double v : zvec)
+        z_sum += v;
+
+      size_t n = yvec.size();
+      if (n == 0)
+        break; // nessun hit rimasto dopo filtraggio
+      y_mean = y_sum / n;
+      z_mean = z_sum / n;
+
+      double y_var = 0, z_var = 0;
+      for (double v : yvec)
+        y_var += (v - y_mean) * (v - y_mean);
+      for (double v : zvec)
+        z_var += (v - z_mean) * (v - z_mean);
+      y_sigma = std::sqrt(y_var / n);
+      z_sigma = std::sqrt(z_var / n);
+
+      // filtra outlier e debug compatto
+      std::vector<double> y_temp, z_temp;
+      std::vector<std::pair<double, double>> scartati;
+      for (size_t i = 0; i < yvec.size(); ++i) {
+        if (std::abs(yvec[i] - y_mean) <= max_sigma * y_sigma
+            && std::abs(zvec[i] - z_mean) <= max_sigma * z_sigma) {
+          y_temp.push_back(yvec[i]);
+          z_temp.push_back(zvec[i]);
+        } else {
+          scartati.emplace_back(yvec[i], zvec[i]);
+        }
+      }
+
+      if (!scartati.empty()) {
+        const auto& esempio = scartati[0];
+        std::cout << "[DEBUG] x_source=" << xs << ", scartati=" << scartati.size()
+                  << ", esempio(y,z)=(" << esempio.first << "," << esempio.second << ")"
+                  << ", deviazione aggiornata y_sigma=" << y_sigma << ", z_sigma=" << z_sigma
+                  << std::endl;
+      }
+
+      yvec = y_temp;
+      zvec = z_temp;
+    }
 
     xs_vec.push_back(xs);
     y_mean_vec.push_back(y_mean);
-    y_err_vec.push_back(y_std);
-
-    auto& zvec   = z_hits_map[xs];
-    double z_sum = 0;
-    for (double v : zvec)
-      z_sum += v;
-    double z_mean = z_sum / zvec.size();
-    double z_std  = 0;
-    for (double v : zvec)
-      z_std += (v - z_mean) * (v - z_mean);
-    z_std = std::sqrt(z_std / zvec.size());
-
+    y_err_vec.push_back(y_sigma);
     z_mean_vec.push_back(z_mean);
-    z_err_vec.push_back(z_std);
+    z_err_vec.push_back(z_sigma);
   }
 
   gStyle->SetOptStat(0);
@@ -200,7 +238,7 @@ int main(int argc, char** argv) {
                     .c_str());
   g_z->GetXaxis()->SetTitle("Posizione iniziale fascio [mm]");
   g_z->GetYaxis()->SetTitle("Posizione z fotoni [mm]");
-  g_z->Draw("AP");
+  g_z->Draw("APE");
 
   std::string filename =
       (output_dir
