@@ -13,10 +13,11 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 5. [Programma: optimization](#programma-optimization)
 6. [Programma: lens\_simulation](#programma-lens_simulation)
 7. [Output su SSD esterna](#output-su-ssd-esterna)
-8. [Strumenti di analisi](#strumenti-di-analisi)
-9. [File di configurazione](#file-di-configurazione)
-10. [Formato dei file ROOT](#formato-dei-file-root)
-11. [Workflow completo](#workflow-completo)
+8. [Parallelizzazione a processi](#parallelizzazione-a-processi)
+9. [Strumenti di analisi](#strumenti-di-analisi)
+10. [File di configurazione](#file-di-configurazione)
+11. [Formato dei file ROOT](#formato-dei-file-root)
+12. [Workflow completo](#workflow-completo)
 
 ---
 
@@ -38,6 +39,10 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 
 ```
 riptide_optimization/
+├── scripts/                             # Script di lancio e monitoraggio
+│   ├── run.sh                           # Lancia lens_simulation o optimization (locale o SSD)
+│   └── monitor.sh                       # Monitoraggio progresso chunk paralleli
+│
 ├── programs/                        # Entry point dei due eseguibili
 │   ├── optimization_main.cpp        # Main per la scansione di efficienza
 │   └── lens_simulation_main.cpp     # Main per la simulazione beam scan
@@ -417,19 +422,83 @@ Le directory vengono create automaticamente dal programma.
 Lo script `run.sh` nella root del progetto semplifica il lancio e verifica automaticamente che l'SSD sia montata prima di partire:
 
 ```bash
-chmod +x run.sh
+chmod +x scripts/run.sh scripts/monitor.sh
 
-# Sintassi: ./run.sh [lens|opt] [local|ssd] [opzioni extra]
+# Sintassi: ./scripts/run.sh [lens|opt] [local|ssd] [opzioni extra]
 
-./run.sh lens local                          # output locale
-./run.sh lens ssd                            # output su SSD (mount default)
-./run.sh opt  ssd --ssd-mount /mnt/myusb    # SSD con mount personalizzato
-./run.sh lens local --output /tmp/test.root  # path manuale
+./scripts/run.sh lens local                          # output locale
+./scripts/run.sh lens ssd                            # output su SSD (mount default)
+./scripts/run.sh opt  ssd --ssd-mount /mnt/myusb    # SSD con mount personalizzato
+./scripts/run.sh lens local --output /tmp/test.root  # path manuale
 ```
 
 ### Nota su IntelliSense (VSCode)
 
 Il file `.vscode/c_cpp_properties.json` è configurato per usare `build/compile_commands.json`, generato automaticamente da CMake grazie a `CMAKE_EXPORT_COMPILE_COMMANDS ON`. È sufficiente eseguire `cmake ..` nella cartella `build/` almeno una volta per aggiornare l'IntelliSense di VSCode con i path corretti.
+
+---
+
+## Parallelizzazione a processi
+
+`lens_simulation` supporta la parallelizzazione tramite processi indipendenti. Lo spazio delle configurazioni `(x1, x2)` viene diviso in N chunk sul loop esterno di `x1`, ognuno lanciato come processo separato con il suo file ROOT di output. Al termine, i chunk vengono uniti automaticamente con `hadd` in un unico file finale identico a quello prodotto da un processo singolo.
+
+Questa strategia è sicura con Geant4 perché ogni processo ha il proprio `G4RunManager` indipendente, evitando i problemi di thread-safety del multithreading a livello di run.
+
+### Dipendenze
+
+- `python3` con `numpy` — per il calcolo dei chunk (già presente su qualsiasi sistema con ROOT)
+- `hadd` — per il merge dei file ROOT (incluso in ROOT)
+
+### Utilizzo
+
+```bash
+# Sintassi: ./scripts/run.sh [lens|opt] [local|ssd] [--jobs N] [opzioni extra]
+
+# 4 processi in parallelo, output locale
+./scripts/run.sh lens local --jobs 4
+
+# 8 processi in parallelo, output su SSD esterna
+./scripts/run.sh lens ssd --jobs 8
+
+# numero di jobs consigliato: numero di core fisici della macchina
+nproc --all   # mostra il numero di core disponibili
+./scripts/run.sh lens ssd --jobs $(nproc --all)
+```
+
+### Come funziona internamente
+
+1. `run.sh` legge `config.json` e calcola tutti i valori di `x1` del loop globale
+2. Li divide in N chunk bilanciati e genera N file `config_chunk_X.json` temporanei in `/tmp`
+3. Ogni config chunk contiene `x1_start`, `x1_end`, `config_id_offset` e `run_id_offset` — parametri che `lens_scan.cpp` usa per inizializzare i contatori in modo che siano globalmente unici e contigui
+4. Lancia N processi in background, ognuno con il suo chunk config e il suo file di output
+5. Attende che tutti i processi terminino, verificando gli exit code
+6. Esegue `hadd` per unire i chunk in un unico file `lens.root`
+7. Rimuove i file chunk intermedi e i config temporanei
+
+### Output
+
+Con `--jobs 4` su SSD, la struttura generata è:
+
+```
+/mnt/external_ssd/riptide/runs/run_20260315_094512/
+├── chunk_0.root    ← rimosso dopo il merge
+├── chunk_1.root    ← rimosso dopo il merge
+├── chunk_2.root    ← rimosso dopo il merge
+├── chunk_3.root    ← rimosso dopo il merge
+└── lens.root       ← file finale, identico al run singolo
+```
+
+### Log dei processi
+
+Durante l'esecuzione parallela, ogni processo scrive il proprio log in `/tmp/riptide_chunks_<timestamp>/chunk_N.log`. In caso di errore su un chunk, lo script segnala quale log consultare:
+
+```
+[ERROR] Chunk 2 fallito (vedi /tmp/riptide_chunks_20260315_094512/chunk_2.log)
+```
+
+### Nota sui config_id
+
+I `config_id` nel file finale sono globalmente unici e contigui grazie agli offset calcolati dallo script. Il TTree `Configurations` del file merged contiene tutte le coppie `(x1, x2)` con gli stessi indici che avrebbe un run singolo — gli strumenti di analisi funzionano senza modifiche.
 
 ---
 
@@ -558,7 +627,7 @@ cmake --build build/ --config Release
 
 # 2a. Scansione efficienza grezza — output su SSD esterna
 sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
-./run.sh opt ssd
+./scripts/run.sh opt ssd
 #    → /mnt/external_ssd/riptide/runs/run_<timestamp>/events.root
 
 # 2b. Analisi mappa 2D efficienza
@@ -570,7 +639,7 @@ sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
 #    → output/lens_simulation/lens.root
 
 # 3a. Beam scan dettagliato — output su SSD esterna
-./run.sh lens ssd
+./scripts/run.sh lens ssd
 #    → /mnt/external_ssd/riptide/runs/run_<timestamp>/lens.root
 
 # 3b. Grafico risposta sistema ottico per una configurazione

@@ -41,7 +41,7 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     spdlog::info("Output directory: {}", output_path.parent_path().string());
   }
 
-  // Legge i parametri del file di configurazione
+  // Legge i parametri dal file di configurazione (path parametrico)
   std::ifstream f(config_file);
   if (!f.is_open())
     throw std::runtime_error("Impossibile aprire config: " + config_file.string());
@@ -100,66 +100,95 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   double source_y_max = 10.0;
   double source_dy    = 0.1;
 
-  int config_counter = 0;
-  int run_counter    = 0;
+  // Offset per config_id e run_id: permette il merge corretto di chunk paralleli
+  int config_id_offset = config.value("config_id_offset", 0);
+  int run_id_offset    = config.value("run_id_offset", 0);
 
-  for (double x1 = x_min - r1 + h1; x1 <= x_max - h2 - 1 - r1; x1 += dx) {
-    double x2_min = x1 + r1 + r2 + 1;
-    double x2_max = x_max + r2 - h2;
+  int config_counter = config_id_offset;
+  int run_counter    = run_id_offset;
 
-    for (double x2 = x2_min; x2 <= x2_max; x2 += dx) {
-      det->SetLensPositions(x1, x2);
-      run_manager->GeometryHasBeenModified();
+  // Costruisce la lista di coppie (x1, x2) da simulare.
+  // Se il config contiene "pairs" (generato da run.sh per chunk bilanciati),
+  // usa quella lista. Altrimenti usa il loop geometrico completo.
+  struct LensPair {
+    double x1, x2;
+  };
+  std::vector<LensPair> pairs;
 
-      // Salva la configurazione delle lenti
-      analysisManager->FillNtupleIColumn(0, 0, config_counter);
-      analysisManager->FillNtupleDColumn(0, 1, x1);
-      analysisManager->FillNtupleDColumn(0, 2, x2);
-      analysisManager->AddNtupleRow(0);
+  if (config.contains("pairs")) {
+    for (const auto& p : config["pairs"]) {
+      pairs.push_back({p[0].get<double>(), p[1].get<double>()});
+    }
+    spdlog::info("Loaded {} pairs from config", pairs.size());
+  } else {
+    // Loop geometrico standard
+    double x1_loop_min = x_min - r1 + h1;
+    double x1_loop_max = x_max - h2 - 1 - r1;
+    if (config.contains("x1_start"))
+      x1_loop_min = config["x1_start"];
+    if (config.contains("x1_end"))
+      x1_loop_max = config["x1_end"];
 
-      // Loop sulla posizione sorgente
-      for (double y_source = source_y_min; y_source <= source_y_max; y_source += source_dy) {
-        // Imposta posizione del centro del GPS
-        UImanager->ApplyCommand("/gps/pos/centre 0 " + std::to_string(y_source) + " 0 mm");
+    for (double x1 = x1_loop_min; x1 <= x1_loop_max + 1e-9; x1 += dx) {
+      double x2_min = x1 + r1 + r2 + 1;
+      double x2_max = x_max + r2 - h2;
+      for (double x2 = x2_min; x2 <= x2_max + 1e-9; x2 += dx) {
+        pairs.push_back({x1, x2});
+      }
+    }
+    spdlog::info("Generated {} pairs from geometry loop", pairs.size());
+  }
 
-        // Identificatore del run corrente
-        int run_id = run_counter++;
+  for (const auto& pair : pairs) {
+    double x1 = pair.x1;
+    double x2 = pair.x2;
 
-        auto* eventAction = dynamic_cast<EventAction*>(
-            const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
-        if (eventAction) {
-          eventAction->runID = run_id; // assegna il run corrente
-        }
+    det->SetLensPositions(x1, x2);
+    run_manager->GeometryHasBeenModified();
 
-        // Cambia seed
-        long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-        CLHEP::HepRandom::setTheSeed(seed);
+    // Salva la configurazione delle lenti
+    analysisManager->FillNtupleIColumn(0, 0, config_counter);
+    analysisManager->FillNtupleDColumn(0, 1, x1);
+    analysisManager->FillNtupleDColumn(0, 2, x2);
+    analysisManager->AddNtupleRow(0);
 
-        // Esegue la macro
-        UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
+    // Loop sulla posizione sorgente
+    for (double y_source = source_y_min; y_source <= source_y_max + 1e-9; y_source += source_dy) {
+      UImanager->ApplyCommand("/gps/pos/centre 0 " + std::to_string(y_source) + " 0 mm");
 
-        // legge n_hits scritte da EventAction durante questo run
-        int n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0;
+      int run_id = run_counter++;
 
-        // Salva run nella Ntuple Runs
-        analysisManager->FillNtupleIColumn(1, 0, run_id);
-        analysisManager->FillNtupleIColumn(1, 1, config_counter);
-        analysisManager->FillNtupleFColumn(1, 2, static_cast<float>(y_source));
-        analysisManager->FillNtupleIColumn(1, 3, n_hits);
-        analysisManager->AddNtupleRow(1);
-
-        spdlog::info("Run done: config_id={}, y_source={} mm, run_id={}", config_counter, y_source,
-                     run_id);
+      auto* eventAction = dynamic_cast<EventAction*>(
+          const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
+      if (eventAction) {
+        eventAction->runID = run_id;
       }
 
-      config_counter++;
+      long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+      CLHEP::HepRandom::setTheSeed(seed);
+
+      UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
+
+      int n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0;
+
+      analysisManager->FillNtupleIColumn(1, 0, run_id);
+      analysisManager->FillNtupleIColumn(1, 1, config_counter);
+      analysisManager->FillNtupleFColumn(1, 2, static_cast<float>(y_source));
+      analysisManager->FillNtupleIColumn(1, 3, n_hits);
+      analysisManager->AddNtupleRow(1);
+
+      spdlog::info("Run done: config_id={}, y_source={} mm, run_id={}", config_counter, y_source,
+                   run_id);
     }
+
+    config_counter++;
   }
 
   // Scrive e chiude file
   analysisManager->Write();
   analysisManager->CloseFile();
 
+  spdlog::info("Total runs completed: {}", run_counter - run_id_offset);
   spdlog::info("Optimization completed");
 }
 
