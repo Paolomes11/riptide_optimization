@@ -12,10 +12,11 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 4. [Build](#build)
 5. [Programma: optimization](#programma-optimization)
 6. [Programma: lens\_simulation](#programma-lens_simulation)
-7. [Strumenti di analisi](#strumenti-di-analisi)
-8. [File di configurazione](#file-di-configurazione)
-9. [Formato dei file ROOT](#formato-dei-file-root)
-10. [Workflow completo](#workflow-completo)
+7. [Output su SSD esterna](#output-su-ssd-esterna)
+8. [Strumenti di analisi](#strumenti-di-analisi)
+9. [File di configurazione](#file-di-configurazione)
+10. [Formato dei file ROOT](#formato-dei-file-root)
+11. [Workflow completo](#workflow-completo)
 
 ---
 
@@ -171,6 +172,10 @@ cmake --build build/ --config Release
 | `-v`, `--visualize` | flag | Abilita la visualizzazione interattiva OpenGL/Qt |
 | `-b`, `--batch` | flag | Modalità batch senza UI |
 | `-o`, `--optimize` | flag | Avvia la scansione di ottimizzazione |
+| `--output` | path | Path al file ROOT di output (default: `output/events.root`) |
+| `--config` | path | Path al file `config.json` (default: `config/config.json`) |
+| `--ssd` | flag | Scrive l'output sull'SSD esterna con timestamp automatico |
+| `--ssd-mount` | path | Mount point dell'SSD (default: `/mnt/external_ssd`) |
 
 ### Output
 
@@ -227,6 +232,10 @@ Il loop di scansione in `optimizer.cpp` itera su tutte le coppie (x1, x2) fisica
 | `-v`, `--visualize` | flag | Abilita visualizzazione interattiva |
 | `-b`, `--batch` | flag | Modalità batch |
 | `-l`, `--lens-sim` | flag | Avvia il beam scan completo |
+| `--output` | path | Path al file ROOT di output (default: `output/lens_simulation/lens.root`) |
+| `--config` | path | Path al file `config.json` (default: `config/config.json`) |
+| `--ssd` | flag | Scrive l'output sull'SSD esterna con timestamp automatico |
+| `--ssd-mount` | path | Mount point dell'SSD (default: `/mnt/external_ssd`) |
 
 ### Output
 
@@ -271,6 +280,156 @@ Per ogni run:
 - Si aggiorna la posizione GPS con `/gps/pos/centre 0 y_source 0 mm`
 - Si esegue la macro (`/run/beamOn 1000`)
 - `EventAction` accumula le hit evento per evento; a fine run, `lens_scan` legge il conteggio tramite `GetLastRunHitCount()` e lo salva in `Runs.n_hits`
+
+---
+
+## Output su SSD esterna
+
+Il progetto supporta nativamente la scrittura dell'output su SSD esterna ad alta velocità (es. NVMe via USB4), utile per simulazioni con file ROOT di grandi dimensioni.
+
+### Trovare il device dell'SSD esterna (Linux)
+
+Prima di montare l'SSD, è necessario identificare il nome del device assegnato dal kernel. I passaggi sono i seguenti.
+
+**1. Collegare l'SSD e identificare il device**
+
+```bash
+lsblk
+```
+
+Output tipico dopo aver collegato un'SSD NVMe via USB4/Thunderbolt:
+
+```
+NAME        MAJ:MIN RM   SIZE RO TYPE MOUNTPOINT
+sda           8:0    0 476.9G  0 disk
+nvme0n1     259:0    0 476.9G  0 disk
+├─nvme0n1p1 259:1    0   512M  0 part /boot/efi
+└─nvme0n1p2 259:2    0 476.4G  0 part /
+nvme1n1     259:3    0 953.9G  0 disk          ← SSD esterna (nessun mountpoint)
+└─nvme1n1p1 259:4    0 953.9G  0 part
+```
+
+L'SSD esterna è quella senza mountpoint attivo. In questo caso `nvme1n1` (o `nvme1n1p1` se ha una partizione).
+
+Se non è immediatamente chiaro quale sia, si può usare:
+
+```bash
+# Mostra modello e dimensione di tutti i dischi
+lsblk -o NAME,SIZE,MODEL,TRAN
+
+# Oppure, per vedere solo i device collegati via USB/Thunderbolt
+lsblk -o NAME,SIZE,MODEL,TRAN | grep -E "usb|thunderbolt"
+```
+
+**2. Verificare il filesystem della partizione**
+
+```bash
+sudo blkid /dev/nvme1n1p1
+```
+
+Output atteso:
+```
+/dev/nvme1n1p1: UUID="xxxx-xxxx" TYPE="ext4" ...
+```
+
+Se il filesystem è `exFAT` (comune su SSD formattate su Windows/Mac), installare il supporto:
+
+```bash
+sudo apt install exfatprogs   # Ubuntu/Debian
+```
+
+**3. Creare il mount point e montare**
+
+```bash
+sudo mkdir -p /mnt/external_ssd
+sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
+```
+
+Verificare che il mount sia riuscito:
+
+```bash
+mountpoint -q /mnt/external_ssd && echo "Montata correttamente" || echo "Errore"
+df -h /mnt/external_ssd   # mostra spazio disponibile
+```
+
+**4. (Opzionale) Mount automatico all'avvio**
+
+Per montare l'SSD automaticamente al boot, aggiungere una riga a `/etc/fstab`. Prima recuperare l'UUID:
+
+```bash
+sudo blkid /dev/nvme1n1p1
+# UUID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+
+Poi aggiungere a `/etc/fstab`:
+
+```
+UUID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  /mnt/external_ssd  ext4  noatime,nodiratime,discard,nofail  0  2
+```
+
+L'opzione `nofail` è importante: evita che il sistema si blocchi al boot se l'SSD non è collegata.
+
+**5. Smontare a fine sessione**
+
+```bash
+sudo umount /mnt/external_ssd
+```
+### Montaggio ottimale per I/O intensivo
+
+```bash
+sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
+```
+
+- `noatime` — disabilita la scrittura degli access time ad ogni lettura
+- `nodiratime` — idem per le directory
+- `discard` — abilita il TRIM per mantenere le prestazioni dell'SSD nel tempo
+
+### Utilizzo con `--ssd`
+
+Con il flag `--ssd`, il path di output viene generato automaticamente con un timestamp al secondo, così ogni run ha la propria cartella:
+
+```
+/mnt/external_ssd/riptide/runs/run_20260315_094512/lens.root
+/mnt/external_ssd/riptide/runs/run_20260315_094512/events.root
+```
+
+Le directory vengono create automaticamente dal programma.
+
+```bash
+# lens_simulation su SSD
+./build/Release/lens_simulation_main -g geometry/main.gdml -b -l --ssd
+
+# optimization su SSD
+./build/Release/optimization_main -g geometry/main.gdml -b -o --ssd
+
+# SSD su mount point personalizzato
+./build/Release/lens_simulation_main -g geometry/main.gdml -b -l \
+    --ssd --ssd-mount /mnt/myusb
+
+# Path di output completamente manuale (senza --ssd)
+./build/Release/lens_simulation_main -g geometry/main.gdml -b -l \
+    --output /mnt/external_ssd/mio_run/lens.root \
+    --config config/config_alt.json
+```
+
+### Script `run.sh`
+
+Lo script `run.sh` nella root del progetto semplifica il lancio e verifica automaticamente che l'SSD sia montata prima di partire:
+
+```bash
+chmod +x run.sh
+
+# Sintassi: ./run.sh [lens|opt] [local|ssd] [opzioni extra]
+
+./run.sh lens local                          # output locale
+./run.sh lens ssd                            # output su SSD (mount default)
+./run.sh opt  ssd --ssd-mount /mnt/myusb    # SSD con mount personalizzato
+./run.sh lens local --output /tmp/test.root  # path manuale
+```
+
+### Nota su IntelliSense (VSCode)
+
+Il file `.vscode/c_cpp_properties.json` è configurato per usare `build/compile_commands.json`, generato automaticamente da CMake grazie a `CMAKE_EXPORT_COMPILE_COMMANDS ON`. È sufficiente eseguire `cmake ..` nella cartella `build/` almeno una volta per aggiornare l'IntelliSense di VSCode con i path corretti.
 
 ---
 
@@ -393,17 +552,26 @@ La compressione è impostata con `SetCompressionLevel(404)` (LZ4 livello 4, se s
 cmake -S . -B build/ -G "Ninja Multi-Config"
 cmake --build build/ --config Release
 
-# 2a. Scansione efficienza grezza (optimization)
+# 2a. Scansione efficienza grezza — output locale
 ./build/Release/optimization_main -g geometry/main.gdml -o
 #    → output/events.root
+
+# 2a. Scansione efficienza grezza — output su SSD esterna
+sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
+./run.sh opt ssd
+#    → /mnt/external_ssd/riptide/runs/run_<timestamp>/events.root
 
 # 2b. Analisi mappa 2D efficienza
 ./build/analysis/Release/plot2D
 #    → output/efficiency2D.png
 
-# 3a. Beam scan dettagliato sulle configurazioni di interesse (lens_simulation)
+# 3a. Beam scan dettagliato — output locale
 ./build/Release/lens_simulation_main -g geometry/main.gdml -l
 #    → output/lens_simulation/lens.root
+
+# 3a. Beam scan dettagliato — output su SSD esterna
+./run.sh lens ssd
+#    → /mnt/external_ssd/riptide/runs/run_<timestamp>/lens.root
 
 # 3b. Grafico risposta sistema ottico per una configurazione
 ./build/analysis/Release/beam_scan_plot 94.9 186.4

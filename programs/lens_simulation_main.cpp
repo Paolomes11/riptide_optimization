@@ -30,27 +30,37 @@
 #include <lyra/lyra.hpp>
 #include <spdlog/spdlog.h>
 #include <filesystem>
+#include <iomanip>
 #include <memory>
+#include <sstream>
 #include <string>
 
 int main(int argc, char** argv) {
   std::filesystem::path geometry_path = "geometry/main.gdml";
   std::filesystem::path macro_file;
-  std::filesystem::path macro_vis = "macros/vis.mac";             // macro grafica standard
-  std::filesystem::path macro_run = "macros/lens_simulation.mac"; // macro simulazione standard
-  bool visualize                  = false;
-  bool batch                      = false;
-  bool lens_sim                   = false;
-  bool show_help                  = false;
+  std::filesystem::path macro_vis   = "macros/vis.mac";             // macro grafica standard
+  std::filesystem::path macro_run   = "macros/lens_simulation.mac"; // macro simulazione standard
+  std::filesystem::path config_file = "config/config.json";
+  bool visualize                    = false;
+  bool batch                        = false;
+  bool lens_sim                     = false;
+  bool show_help                    = false;
+  bool use_ssd                      = false;
 
-  // File di output per i risultati di ottimizzazione (se abilitata)
+  // Path di output: default locale, sovrascrivibile da CLI o --ssd
   std::string root_output_file = "output/lens_simulation/lens.root";
-  spdlog::info("Root output file path: {}", root_output_file);
+  std::string ssd_mount        = "/mnt/external_ssd";
 
   auto cli = lyra::cli() | lyra::help(show_help)
            | lyra::opt(geometry_path, "geometry")["-g"]["--geometry"]("Path to GDML geometry file")
                  .required()
            | lyra::opt(macro_file, "macro")["-m"]["--macro"]("Path to macro file (default: none)")
+           | lyra::opt(config_file, "config")["--config"](
+                 "Path to config JSON file (default: config/config.json)")
+           | lyra::opt(root_output_file, "output")["--output"]("Path to ROOT output file")
+           | lyra::opt(ssd_mount, "ssd-mount")["--ssd-mount"](
+                 "Mount point of external SSD (default: /mnt/external_ssd)")
+           | lyra::opt(use_ssd)["--ssd"]("Write output to external SSD (uses --ssd-mount)")
            | lyra::opt(visualize)["-v"]["--visualize"]("Enable visualization mode")
            | lyra::opt(batch)["-b"]["--batch"]("Enable batch mode (no visualization)")
            | lyra::opt(lens_sim)["-l"]["--lens-sim"]("Enable lens simulation mode");
@@ -72,6 +82,22 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
+  // Risolvi il path di output: --ssd sovrascrive --output con un path datato sull'SSD
+  if (use_ssd) {
+    std::string timestamp = []() {
+      auto t  = std::time(nullptr);
+      auto tm = *std::localtime(&t);
+      std::ostringstream oss;
+      oss << std::put_time(&tm, "%Y%m%d_%H%M%S");
+      return oss.str();
+    }();
+    root_output_file = ssd_mount + "/riptide/runs/run_" + timestamp + "/lens.root";
+    spdlog::info("SSD mode: output -> {}", root_output_file);
+  }
+
+  spdlog::info("Output file : {}", root_output_file);
+  spdlog::info("Config file : {}", config_file.string());
+
   // Try catch errors
   try {
     // Crea il run manager
@@ -90,7 +116,7 @@ int main(int argc, char** argv) {
 
     if (lens_sim) {
       spdlog::info("Running lens simulation");
-      riptide::lens_scan(&run_manager, macro_file, root_output_file);
+      riptide::lens_scan(&run_manager, macro_file, root_output_file, config_file);
       return EXIT_SUCCESS;
     }
 

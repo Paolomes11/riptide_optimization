@@ -31,13 +31,21 @@
 namespace riptide {
 
 void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file,
-                      const std::string& root_output_file) {
+                      const std::string& root_output_file,
+                      const std::filesystem::path& config_file) {
   using json = nlohmann::json;
 
-  // Legge i parametri del file di configurazione
-  std::ifstream f("config/config.json");
+  // Crea la directory di output se non esiste
+  std::filesystem::path output_path(root_output_file);
+  if (output_path.has_parent_path()) {
+    std::filesystem::create_directories(output_path.parent_path());
+    spdlog::info("Output directory: {}", output_path.parent_path().string());
+  }
+
+  // Legge i parametri dal file di configurazione (path parametrico)
+  std::ifstream f(config_file);
   if (!f.is_open()) {
-    throw std::runtime_error("Impossibile aprire config/config.json");
+    throw std::runtime_error("Impossibile aprire config: " + config_file.string());
   }
   json config;
   f >> config;

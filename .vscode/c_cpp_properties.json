@@ -2,17 +2,11 @@
     "configurations": [
         {
             "name": "Linux",
-            "includePath": [
-                "${workspaceFolder}/**",
-                "/home/giulio/software/geant4/geant4-v11.4.0-install/include/Geant4",
-                "/home/giulio/root/include"
-            ],
-            "defines": [],
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",
             "cppStandard": "gnu++17",
-            "intelliSenseMode": "linux-gcc-x64",
-            "configurationProvider": "ms-vscode.cmake-tools"
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
     "version": 4
