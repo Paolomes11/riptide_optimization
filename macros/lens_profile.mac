@@ -20,5 +20,5 @@
 /gps/direction 1 0 0
 
 # Run
-/run/beamOn 300
+/run/beamOn 100
 #/run/beamOn 1
