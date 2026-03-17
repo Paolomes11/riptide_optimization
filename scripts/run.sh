@@ -19,7 +19,7 @@ set -e
 # Root del progetto (cartella padre di scripts/)
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# ---------- configurazione di default ----------
+# configurazione di default
 BUILD_DIR="$PROJECT_ROOT/build"
 GEOMETRY="$PROJECT_ROOT/geometry/main.gdml"
 SSD_MOUNT="/mnt/external_ssd"
@@ -28,7 +28,7 @@ BINARY_OPT="$BUILD_DIR/Release/optimization_main"
 N_JOBS=1
 CONFIG_FILE="$PROJECT_ROOT/config/config.json"
 
-# ---------- parsing argomenti posizionali ----------
+# parsing argomenti posizionali
 MODE="${1:-lens}"    # lens | opt
 TARGET="${2:-local}" # local | ssd
 shift 2 || true
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ---------- verifica build ----------
+# verifica build
 BINARY="$BINARY_LENS"
 [[ "$MODE" == "opt" ]] && BINARY="$BINARY_OPT"
 if [[ ! -f "$BINARY" ]]; then
@@ -56,7 +56,7 @@ if [[ ! -f "$BINARY" ]]; then
   exit 1
 fi
 
-# ---------- verifica SSD ----------
+# verifica SSD
 SSD_ARGS=""
 if [[ "$TARGET" == "ssd" ]]; then
   if ! mountpoint -q "$SSD_MOUNT"; then
@@ -68,7 +68,7 @@ if [[ "$TARGET" == "ssd" ]]; then
   SSD_ARGS="--ssd --ssd-mount $SSD_MOUNT"
 fi
 
-# ---------- run singolo (N_JOBS=1) ----------
+# run singolo (N_JOBS=1)
 if [[ "$N_JOBS" -eq 1 ]]; then
   echo "[INFO]  Avvio $MODE ($TARGET), processo singolo"
   case "$MODE" in
@@ -79,7 +79,7 @@ if [[ "$N_JOBS" -eq 1 ]]; then
   exit 0
 fi
 
-# ---------- run parallelo (N_JOBS > 1) — solo lens_simulation ----------
+# run parallelo (N_JOBS > 1) — solo lens_simulation
 if [[ "$MODE" != "lens" ]]; then
   echo "[ERROR] La parallelizzazione --jobs è supportata solo per 'lens'." >&2
   exit 1

@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // --- Configurazioni ---
+  // Configurazioni
   int cfg_id_cfg;
   double cfg_x1, cfg_x2;
   configs->SetBranchAddress("config_id", &cfg_id_cfg);
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
   }
   std::cout << "Selected configuration id: " << selected_cfg_id << std::endl;
 
-  // --- Runs per la configurazione ---
+  // Runs per la configurazione
   int run_id, config_id, n_hits_run;
   float x_source;
   runs->SetBranchAddress("run_id", &run_id);
@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // --- Hits ---
+  // Hits
   float y_hit, z_hit;
   hits->SetBranchAddress("y_hit", &y_hit);
   hits->SetBranchAddress("z_hit", &z_hit);
@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
     }
   }
 
-  // --- Calcolo medie e deviazioni robuste (filtro 3σ) con debug compatto ---
+  // Calcolo medie e deviazioni robuste (filtro 3σ) con debug compatto
   std::vector<double> xs_vec, y_mean_vec, y_err_vec, z_mean_vec, z_err_vec;
   const double max_sigma = 2.0;
 
@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
   TCanvas* c = new TCanvas("c", "Beam positions", 1400, 700);
   c->Divide(2, 1, 0.01, 0.01);
 
-  // --- Grafico Y ---
+  // Grafico Y
   c->cd(1);
   gPad->SetLeftMargin(0.12);
   gPad->SetRightMargin(0.05);
@@ -235,7 +235,7 @@ int main(int argc, char** argv) {
   g_y->GetYaxis()->SetTitle("Posizione y fotoni [mm]");
   g_y->Draw("AP");
 
-  // --- Grafico Z ---
+  // Grafico Z
   c->cd(2);
   gPad->SetLeftMargin(0.15);
   gPad->SetRightMargin(0.05);

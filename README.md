@@ -1,6 +1,6 @@
 # riptide_optimization
 
-Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende due programmi principali — `optimization` e `lens_simulation` — più tre strumenti di analisi ROOT.
+Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende due programmi principali — `optimization` e `lens_simulation` — più quattro strumenti di analisi ROOT.
 
 ---
 
@@ -75,6 +75,7 @@ riptide_optimization/
 │   ├── plot2D.cpp                   # Mappa 2D efficienza geometrica
 │   ├── beam_scan_plot.cpp           # Grafici posizione fotoni vs posizione sorgente
 │   ├── m_c_creator.cpp              # Istogramma 2D hit su detector per un run
+│   ├── psf_extractor.cpp            # Media e matrice di covarianza PSF per tutti i run
 │   └── CMakeLists.txt
 │
 ├── geometry/                        # Geometria GDML
@@ -100,7 +101,9 @@ riptide_optimization/
     ├── events.root                  # Output di optimization
     ├── lens_simulation/
     │   └── lens.root                # Output di lens_simulation
-    └── mean_covariance_maps/        # Output di m_c_creator
+    ├── mean_covariance_maps/        # Output di m_c_creator
+    └── psf/
+        └── psf_data.root            # Output di psf_extractor
 ```
 
 ---
@@ -140,9 +143,10 @@ cmake --build build/ --config Release
 #   build/analysis/Release/plot2D
 #   build/analysis/Release/beam_scan_plot
 #   build/analysis/Release/m_c_creator
+#   build/analysis/Release/psf_extractor
 ```
 
-> **Nota**: CMake crea automaticamente le cartelle `output/`, `output/lens_simulation/` e `output/mean_covariance_maps/` durante la configurazione.
+> **Nota**: CMake crea automaticamente le cartelle `output/`, `output/lens_simulation/`, `output/mean_covariance_maps/` e `output/psf/` durante la configurazione.
 
 ---
 
@@ -545,6 +549,44 @@ Per una terna (x1, x2, y0) fissata, raccoglie tutte le hit del run corrispondent
 # Output: output/mean_covariance_maps/detector_hits_config_<id>_y0_5.0.png
 ```
 
+### psf\_extractor
+
+**Legge**: `output/lens_simulation/lens.root` (o qualsiasi file lens prodotto da `lens_simulation`)
+
+Processa in batch tutti i run presenti nel file di input e, per ognuno, calcola media bidimensionale (μ_y, μ_z) e matrice di covarianza 2×2 della PSF applicando un filtro outlier a 2σ iterativo (2 iterazioni). Salva i risultati in un file ROOT separato per l'analisi successiva.
+
+```bash
+./build/analysis/Release/psf_extractor [input.root] [output.root]
+
+# Con path di default
+./build/analysis/Release/psf_extractor
+#    → output/psf/psf_data.root
+
+# Con path espliciti
+./build/analysis/Release/psf_extractor \
+    output/lens_simulation/lens.root \
+    output/psf/psf_data.root
+```
+
+Il file di output contiene un TTree `PSF` con una riga per ogni run:
+
+| Branch | Tipo | Descrizione |
+|---|---|---|
+| `config_id` | `Int_t` | Indice configurazione |
+| `x1`, `x2` | `Double_t` | Posizioni lenti [mm] |
+| `y_source` | `Double_t` | Posizione sorgente [mm] |
+| `mu_y`, `mu_z` | `Double_t` | Media PSF [mm] |
+| `cov_yy`, `cov_yz`, `cov_zz` | `Double_t` | Matrice di covarianza [mm²] |
+| `n_hits` | `Int_t` | Hit usate dopo filtro 2σ |
+| `n_hits_raw` | `Int_t` | Hit raw prima del filtro |
+
+La matrice di covarianza campionaria (divisione per N−1) è:
+
+```
+Σ = | cov_yy  cov_yz |
+    | cov_yz  cov_zz |
+```
+
 ---
 
 ## File di configurazione
@@ -612,6 +654,24 @@ lens.root
 
 La compressione è impostata con `SetCompressionLevel(404)` (LZ4 livello 4, se supportato dalla versione di Geant4/ROOT installata).
 
+### psf\_data.root (psf\_extractor)
+
+```
+psf_data.root
+└── TTree "PSF"    (~71.000 righe, una per run)
+    ├── config_id   Int_t      indice configurazione
+    ├── x1          Double_t   posizione lente 75mm [mm]
+    ├── x2          Double_t   posizione lente 60mm [mm]
+    ├── y_source    Double_t   posizione sorgente [mm]
+    ├── mu_y        Double_t   media y PSF [mm]
+    ├── mu_z        Double_t   media z PSF [mm]
+    ├── cov_yy      Double_t   varianza y [mm²]
+    ├── cov_yz      Double_t   covarianza y-z [mm²]
+    ├── cov_zz      Double_t   varianza z [mm²]
+    ├── n_hits      Int_t      hit dopo filtro outlier 2σ
+    └── n_hits_raw  Int_t      hit raw prima del filtro
+```
+
 ---
 
 ## Workflow completo
@@ -649,6 +709,12 @@ sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
 # 3c. Istogramma 2D hit per una configurazione e posizione sorgente specifica
 ./build/analysis/Release/m_c_creator 94.9 186.4 5.0
 #    → output/mean_covariance_maps/detector_hits_config_<id>_y0_5.0.png
+
+# 3d. Estrazione PSF completa (media + covarianza per tutti i run)
+./build/analysis/Release/psf_extractor \
+    output/lens_simulation/lens.root \
+    output/psf/psf_data.root
+#    → output/psf/psf_data.root
 
 # 4. Visualizzazione interattiva della geometria
 ./build/Release/optimization_main -g geometry/main.gdml -v

@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
   double x2_target = std::stod(argv[2]);
   double y0_target = std::stod(argv[3]);
 
-  // ---------------------- apri file ROOT ----------------------
+  // apri file ROOT
   TFile* file = TFile::Open("output/lens_simulation/lens.root");
   if (!file || file->IsZombie()) {
     std::cerr << "Errore nell'aprire il file ROOT\n";
@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // ---------------------- setup branch ----------------------
+  // setup branch
   int config_id;
   double x1, x2;
   tConfig->SetBranchAddress("config_id", &config_id);
@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
   tHits->SetBranchAddress("y_hit", &y_hit);
   tHits->SetBranchAddress("z_hit", &z_hit);
 
-  // ---------------------- trova configurazione più vicina ----------------------
+  // trova configurazione più vicina
   int target_config_id = -1;
   double best_dist     = std::numeric_limits<double>::max();
   double x1_sel = 0, x2_sel = 0;
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
   std::cout << "Configurazione scelta: config_id=" << target_config_id << ", x1=" << x1_sel
             << ", x2=" << x2_sel << "\n";
 
-  // ---------------------- trova run esatto ----------------------
+  // trova run esatto
   struct RunInfo {
     Long64_t first_hit;
     int n_hits;
@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
   }
   std::cout << "Run selezionato: run_id=" << exact_run_id << ", y_source=" << y0_target << "\n";
 
-  // ---------------------- raccogli tutte le hit ----------------------
+  // raccogli tutte le hit
   std::vector<Hit> hits;
   // ri = run_info
   const auto& ri = run_info_map.at(exact_run_id);
@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // ---------------------- calcolo robusto media e sigma ----------------------
+  // calcolo robusto media e sigma
   const double max_sigma         = 2.0; // soglia outlier
   std::vector<Hit> hits_filtered = hits;
   double y_mean = 0, z_mean = 0;
@@ -181,13 +181,13 @@ int main(int argc, char** argv) {
   std::cout << "Hit dopo filtraggio: " << hits_filtered.size() << ", media y=" << y_mean
             << ", sigma y=" << y_sigma << ", media z=" << z_mean << ", sigma z=" << z_sigma << "\n";
 
-  // ---------------------- debug migliorato ----------------------
+  // debug migliorato
   std::cout << "Prime 10 hit raccolte (y, z):\n";
   for (size_t i = 0; i < std::min<size_t>(10, hits.size()); ++i) {
     std::cout << "  (" << hits[i].y << ", " << hits[i].z << ")\n";
   }
 
-  // ---------------------- canvas e istogramma ----------------------
+  // canvas e istogramma
   double y_min = y_mean - max_sigma * y_sigma;
   double y_max = y_mean + max_sigma * y_sigma;
   double z_min = z_mean - max_sigma * z_sigma;
