@@ -11,7 +11,7 @@
 /gps/pos/inner_radius 0 mm
 
 #/gps/pos/shape Square
-#/gps/pos/centre 0 10 0 mm
+/gps/pos/centre 0 10 0 mm
 #/gps/pos/halfx 0.05 mm
 #/gps/pos/halfy 0.05 mm
 

@@ -62,6 +62,8 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* hist
   double f_z = pos.z();
   eventAction->AddPhotonHit(f_y, f_z);
 
+  track->SetTrackStatus(fStopAndKill);
+
   return true;
 }
 
