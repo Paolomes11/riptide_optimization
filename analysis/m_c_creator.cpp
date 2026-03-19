@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
   double y0_target = std::stod(argv[3]);
 
   // apri file ROOT
-  TFile* file = TFile::Open("output/lens_simulation/lens.root");
+  TFile* file = TFile::Open("output/lens_simulation/lens_20260319_170944.root");
   if (!file || file->IsZombie()) {
     std::cerr << "Errore nell'aprire il file ROOT\n";
     return 1;
@@ -142,40 +142,74 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // calcolo robusto media e sigma
-  const double max_sigma         = 2.0; // soglia outlier
+  // calcolo robusto media e covarianza con taglio ellittico
+  const double max_sigma         = 2.0; // soglia (raggio ellisse)
   std::vector<Hit> hits_filtered = hits;
+
   double y_mean = 0, z_mean = 0;
   double y_sigma = 0, z_sigma = 0;
 
-  // due iterazioni per stabilizzare media e sigma
-  for (int iter = 0; iter < 2; ++iter) {
+  // più iterazioni → più stabile
+  for (int iter = 0; iter < 4; ++iter) {
+    size_t n = hits_filtered.size();
+    if (n < 2)
+      break;
+
+    // media
     double y_sum = 0, z_sum = 0;
     for (auto& h : hits_filtered) {
       y_sum += h.y;
       z_sum += h.z;
     }
-    size_t n = hits_filtered.size();
-    y_mean   = y_sum / n;
-    z_mean   = z_sum / n;
+    y_mean = y_sum / n;
+    z_mean = z_sum / n;
 
-    double y_var = 0, z_var = 0;
+    // covarianza
+    double y_var = 0, z_var = 0, yz_cov = 0;
     for (auto& h : hits_filtered) {
-      y_var += (h.y - y_mean) * (h.y - y_mean);
-      z_var += (h.z - z_mean) * (h.z - z_mean);
+      double dy = h.y - y_mean;
+      double dz = h.z - z_mean;
+      y_var += dy * dy;
+      z_var += dz * dz;
+      yz_cov += dy * dz;
     }
-    y_sigma = std::sqrt(y_var / n);
-    z_sigma = std::sqrt(z_var / n);
 
-    // filtra outlier
+    y_var /= n;
+    z_var /= n;
+    yz_cov /= n;
+
+    y_sigma = std::sqrt(y_var);
+    z_sigma = std::sqrt(z_var);
+
+    // inversa della matrice di covarianza
+    double det = y_var * z_var - yz_cov * yz_cov;
+    if (det < 1e-12)
+      det = 1e-12;
+
+    double inv_yy = z_var / det;
+    double inv_zz = y_var / det;
+    double inv_yz = -yz_cov / det;
+
+    // filtro ellittico (Mahalanobis)
     std::vector<Hit> temp;
+    temp.reserve(hits_filtered.size());
+
     for (auto& h : hits_filtered) {
-      if (std::abs(h.y - y_mean) <= max_sigma * y_sigma
-          && std::abs(h.z - z_mean) <= max_sigma * z_sigma) {
+      double dy = h.y - y_mean;
+      double dz = h.z - z_mean;
+
+      double d2 = dy * dy * inv_yy + dz * dz * inv_zz + 2.0 * dy * dz * inv_yz;
+
+      if (d2 <= max_sigma * max_sigma) {
         temp.push_back(h);
       }
     }
-    hits_filtered = temp;
+
+    // evita di svuotare tutto per instabilità numeriche
+    if (temp.empty())
+      break;
+
+    hits_filtered.swap(temp);
   }
 
   std::cout << "Hit dopo filtraggio: " << hits_filtered.size() << ", media y=" << y_mean

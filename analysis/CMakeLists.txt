@@ -40,3 +40,6 @@ target_include_directories(plot2D PRIVATE ${ROOT_INCLUDE_DIRS})
 target_include_directories(beam_scan_plot PRIVATE ${ROOT_INCLUDE_DIRS})
 target_include_directories(m_c_creator PRIVATE ${ROOT_INCLUDE_DIRS})
 target_include_directories(psf_extractor PRIVATE ${ROOT_INCLUDE_DIRS})
+
+# Sottocartella per analisi PSF
+add_subdirectory(psf_analysis)

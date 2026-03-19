@@ -54,7 +54,7 @@ struct PSFResult {
 };
 
 bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sigma_cut = 2.0,
-                 int n_iter = 2) {
+                 int n_iter = 4) {
   if (raw_hits.empty())
     return false;
 
@@ -65,44 +65,71 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
   double sig_y = 0, sig_z = 0;
 
   for (int iter = 0; iter < n_iter; ++iter) {
-    // Calcola medie
+    size_t n = hits.size();
+    if (n < 2)
+      return false;
+
+    // ===== MEDIA =====
     mean_y = 0;
     mean_z = 0;
     for (auto& h : hits) {
       mean_y += h.y;
       mean_z += h.z;
     }
-    size_t n = hits.size();
-    if (n == 0)
-      return false;
     mean_y /= n;
     mean_z /= n;
 
-    // Calcola deviazioni standard
-    double var_y = 0, var_z = 0;
+    // ===== COVARIANZA =====
+    double var_y = 0, var_z = 0, cov_yz = 0;
     for (auto& h : hits) {
-      var_y += (h.y - mean_y) * (h.y - mean_y);
-      var_z += (h.z - mean_z) * (h.z - mean_z);
+      double dy = h.y - mean_y;
+      double dz = h.z - mean_z;
+      var_y += dy * dy;
+      var_z += dz * dz;
+      cov_yz += dy * dz;
     }
-    sig_y = std::sqrt(var_y / n);
-    sig_z = std::sqrt(var_z / n);
 
-    // Filtra outlier
+    var_y /= n;
+    var_z /= n;
+    cov_yz /= n;
+
+    sig_y = std::sqrt(var_y);
+    sig_z = std::sqrt(var_z);
+
+    // ===== INVERSA COVARIANZA =====
+    double det = var_y * var_z - cov_yz * cov_yz;
+    if (det < 1e-12)
+      det = 1e-12;
+
+    double inv_yy = var_z / det;
+    double inv_zz = var_y / det;
+    double inv_yz = -cov_yz / det;
+
+    // ===== FILTRO ELLITTICO =====
     std::vector<Hit> filtered;
     filtered.reserve(hits.size());
+
     for (auto& h : hits) {
-      if (std::abs(h.y - mean_y) <= sigma_cut * sig_y
-          && std::abs(h.z - mean_z) <= sigma_cut * sig_z)
+      double dy = h.y - mean_y;
+      double dz = h.z - mean_z;
+
+      double d2 = dy * dy * inv_yy + dz * dz * inv_zz + 2.0 * dy * dz * inv_yz;
+
+      if (d2 <= sigma_cut * sigma_cut)
         filtered.push_back(h);
     }
-    hits = std::move(filtered);
+
+    if (filtered.empty())
+      break;
+
+    hits.swap(filtered);
   }
 
   size_t n = hits.size();
   if (n < 3)
-    return false; // minimo per covarianza sensata
+    return false;
 
-  // Ricalcola media finale sulle hit filtrate
+  // ===== MEDIA FINALE =====
   mean_y = 0;
   mean_z = 0;
   for (auto& h : hits) {
@@ -112,7 +139,7 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
   mean_y /= n;
   mean_z /= n;
 
-  // Matrice di covarianza (estimatore campionario, divisione per n-1)
+  // ===== COVARIANZA FINALE (stimatore campionario) =====
   double cov_yy = 0, cov_yz = 0, cov_zz = 0;
   for (auto& h : hits) {
     double dy = h.y - mean_y;
@@ -121,13 +148,16 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
     cov_yz += dy * dz;
     cov_zz += dz * dz;
   }
-  double denom           = static_cast<double>(n - 1);
+
+  double denom = static_cast<double>(n - 1);
+
   result.mean_y          = mean_y;
   result.mean_z          = mean_z;
   result.cov_yy          = cov_yy / denom;
   result.cov_yz          = cov_yz / denom;
   result.cov_zz          = cov_zz / denom;
   result.n_hits_filtered = static_cast<int>(n);
+
   return true;
 }
 

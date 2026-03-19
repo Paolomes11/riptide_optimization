@@ -74,6 +74,7 @@ file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output)
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output/lens_simulation)
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output/mean_covariance_maps)
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output/psf)
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output/psf_analysis)
 
 
 # Subdirectory per l'analisi dei dati

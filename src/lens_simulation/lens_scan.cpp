@@ -97,7 +97,7 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
 
   // Parametri sorgente GPS
   double source_y_min = 0.0;
-  double source_y_max = 10.0;
+  double source_y_max = 10.0 * sqrt(2.0);
   double source_dy    = 0.1;
 
   // Offset per config_id e run_id: permette il merge corretto di chunk paralleli
@@ -123,14 +123,14 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   } else {
     // Loop geometrico standard
     double x1_loop_min = x_min - r1 + h1;
-    double x1_loop_max = x_max - h2 - 1 - r1;
+    double x1_loop_max = x_max - h2 - 3 - r1;
     if (config.contains("x1_start"))
       x1_loop_min = config["x1_start"];
     if (config.contains("x1_end"))
       x1_loop_max = config["x1_end"];
 
     for (double x1 = x1_loop_min; x1 <= x1_loop_max + 1e-9; x1 += dx) {
-      double x2_min = x1 + r1 + r2 + 1;
+      double x2_min = x1 + r1 + r2 + 3; // Tiene conto di 3mm di margine tra lente 1 e lente 2
       double x2_max = x_max + r2 - h2;
       for (double x2 = x2_min; x2 <= x2_max + 1e-9; x2 += dx) {
         pairs.push_back({x1, x2});
