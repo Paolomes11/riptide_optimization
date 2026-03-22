@@ -181,4 +181,165 @@ std::vector<TracePoint> build_trace(double y0, const LensConfig& cfg, const PSFD
   return trace;
 }
 
+// Fit lineare pesato ODR della traccia media
+
+static bool solve_wls(const std::vector<double>& y, const std::vector<double>& z,
+                      const std::vector<double>& w, double& a_out, double& b_out, double& var_a,
+                      double& var_b, double& cov_ab_out) {
+  const int N = static_cast<int>(y.size());
+  if (N < 2)
+    return false;
+
+  // Accumula le somme pesate per il sistema normale 2x2:
+  //   [S_yy  S_y ] [a]   [S_yz]
+  //   [S_y   S_1 ] [b] = [S_z ]
+  double S1  = 0.0; // sum w_i
+  double Sy  = 0.0; // sum w_i * y_i
+  double Sz  = 0.0; // sum w_i * z_i
+  double Syy = 0.0; // sum w_i * y_i^2
+  double Syz = 0.0; // sum w_i * y_i * z_i
+
+  for (int i = 0; i < N; ++i) {
+    S1 += w[i];
+    Sy += w[i] * y[i];
+    Sz += w[i] * z[i];
+    Syy += w[i] * y[i] * y[i];
+    Syz += w[i] * y[i] * z[i];
+  }
+
+  // Determinante della matrice normale (deve essere > 0 per sistema non degenere)
+  double det = Syy * S1 - Sy * Sy;
+  if (std::abs(det) < 1e-30)
+    return false; // sistema singolare (tutti y_i uguali o N < 2)
+
+  // Soluzione di Cramer
+  a_out = (Syz * S1 - Sz * Sy) / det;
+  b_out = (Syy * Sz - Sy * Syz) / det;
+
+  // Matrice di covarianza dei parametri: C = (X^T W X)^{-1}
+  //   X^T W X = [[Syy, Sy], [Sy, S1]]
+  var_a      = S1 / det;
+  var_b      = Syy / det;
+  cov_ab_out = -Sy / det;
+
+  return true;
+}
+
+LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter, double tol) {
+  const int N = static_cast<int>(trace.size());
+  if (N < 3)
+    throw std::invalid_argument(
+        "fit_trace: la traccia deve contenere almeno 3 punti (trovati: " + std::to_string(N) + ")");
+
+  // Estrai i vettori di coordinate dalla traccia
+  std::vector<double> vy(N), vz(N);
+  for (int i = 0; i < N; ++i) {
+    vy[i] = trace[i].mu_y;
+    vz[i] = trace[i].mu_z;
+  }
+
+  LineFitResult res{};
+  res.n_iter    = 0;
+  res.converged = false;
+
+  // Step 1: stima iniziale con OLS non pesato
+  // Risolvi z = a*y + b con pesi unitari per ottenere la direzione iniziale
+  {
+    std::vector<double> w_unit(N, 1.0);
+    double var_a_tmp, var_b_tmp, cov_ab_tmp;
+    bool ok = solve_wls(vy, vz, w_unit, res.a, res.b, var_a_tmp, var_b_tmp, cov_ab_tmp);
+    if (!ok) {
+      // Fallback: retta orizzontale
+      res.a = 0.0;
+      res.b = vz[0];
+    }
+  }
+
+  // Step 2–3: loop IRLS (Iteratively Reweighted Least Squares)
+  std::vector<double> weights(N);
+
+  for (int iter = 0; iter < max_iter; ++iter) {
+    res.n_iter = iter + 1;
+
+    double a_prev  = res.a;
+    double norm_sq = 1.0 + res.a * res.a;
+    double norm    = std::sqrt(norm_sq);
+
+    // Componenti del vettore normale alla retta z = a*y + b
+    double n_y = -res.a / norm; //  n_y = -a / sqrt(1+a^2)
+    double n_z = 1.0 / norm;    //  n_z =  1 / sqrt(1+a^2)
+
+    // Calcola pesi w_i = 1 / sigma_{d,i}^2
+    for (int i = 0; i < N; ++i) {
+      const Cov2& cov = trace[i].cov;
+      // sigma^2_{d,i} = n_hat^T Sigma_i n_hat
+      double sd2 = n_y * n_y * cov.yy + 2.0 * n_y * n_z * cov.yz + n_z * n_z * cov.zz;
+
+      // Protezione contro covarianza degenerata o nulla:
+      // se sd2 e' troppo piccola usiamo un floor pari a (0.001 mm)^2
+      // per evitare pesi infiniti che destabilizzerebbero il fit.
+      const double sd2_floor = 1e-6; // (0.001 mm)^2
+      weights[i]             = 1.0 / std::max(sd2, sd2_floor);
+    }
+
+    // Risolvi il WLS con i pesi aggiornati
+    double new_a, new_b;
+    bool ok = solve_wls(vy, vz, weights, new_a, new_b, res.sigma_a, res.sigma_b, res.cov_ab);
+    if (!ok) {
+      // Il sistema e' diventato singolare: mantieni la stima precedente
+      std::cerr << "[fit_trace] WARNING: sistema WLS singolare all'iterazione " << iter + 1
+                << ", uso stima precedente.\n";
+      break;
+    }
+
+    res.a = new_a;
+    res.b = new_b;
+
+    // Controlla convergenza su variazione di a
+    if (std::abs(res.a - a_prev) < tol) {
+      res.converged = true;
+      break;
+    }
+  }
+
+  // Step 4: calcolo finale di chi^2, residui e pull
+  double norm_final = std::sqrt(1.0 + res.a * res.a);
+  double n_y_final  = -res.a / norm_final;
+  double n_z_final  = 1.0 / norm_final;
+
+  res.chi2 = 0.0;
+  res.residuals.resize(N);
+  res.residual_sig.resize(N);
+  res.pull.resize(N);
+
+  for (int i = 0; i < N; ++i) {
+    // Distanza perpendicolare con segno (positivo se il punto e' "sopra" la retta)
+    double d_i = (res.a * vy[i] - vz[i] + res.b) / norm_final;
+
+    // sigma_{d,i} con il vettore normale finale
+    const Cov2& cov = trace[i].cov;
+    double sd2      = n_y_final * n_y_final * cov.yy + 2.0 * n_y_final * n_z_final * cov.yz
+               + n_z_final * n_z_final * cov.zz;
+
+    const double sd2_floor = 1e-6;
+    double sd_i            = std::sqrt(std::max(sd2, sd2_floor));
+
+    res.residuals[i]    = d_i;
+    res.residual_sig[i] = sd_i;
+    res.pull[i]         = d_i / sd_i;
+
+    res.chi2 += (d_i * d_i) / std::max(sd2, sd2_floor);
+  }
+
+  // Gradi di liberta' e chi^2 ridotto
+  res.ndof      = N - 2;
+  res.chi2_ndof = (res.ndof > 0) ? res.chi2 / static_cast<double>(res.ndof) : 0.0;
+
+  // Trasforma sigma_a, sigma_b da varianza a deviazione standard
+  res.sigma_a = std::sqrt(std::max(res.sigma_a, 0.0));
+  res.sigma_b = std::sqrt(std::max(res.sigma_b, 0.0));
+
+  return res;
+}
+
 } // namespace riptide

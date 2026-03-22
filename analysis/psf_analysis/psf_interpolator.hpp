@@ -73,6 +73,43 @@ struct LensConfig {
 // Database PSF: mappa (x1,x2) -> lista ordinata di PSFPoint per y_source crescente
 using PSFDatabase = std::map<LensConfig, std::vector<PSFPoint>>;
 
+/**
+ * Risultato del fit ODR pesato della traccia media sul detector.
+ *
+ * Modello: z = a*y + b
+ *
+ * Il fit minimizza il chi^2 con distanza perpendicolare pesata dalla matrice
+ * di covarianza di ciascun punto (Orthogonal Distance Regression con Sigma_i
+ * completa). Il problema e' non lineare perche' il vettore normale n_hat
+ * dipende da 'a'; si risolve per iterazione.
+ */
+struct LineFitResult {
+  // Parametri della retta
+  double a; // pendenza [adimensionale]
+  double b; // intercetta [mm]
+
+  // Incertezza sui parametri
+  double sigma_a; // incertezza su a
+  double sigma_b; // incertezza su b
+  double cov_ab;  // covarianza tra a e b
+
+  // Chi^2 del fit
+  double chi2;
+  int ndof;         // gradi di libertà
+  double chi2_ndof; // chi^2 ridotto
+
+  // Valori per iterazione del fit
+  int n_iter; // numero di iterazioni fatte
+  bool converged;   // se è convergente
+
+  // Residui perpendicolari pesati per ciascun punto
+  // d_i = distanza perpendicolare del punto i dalla retta stimata [mm]
+  // sigma_d_i = sqrt(n_hat^T Sigma_i n_hat) [mm]
+  std::vector<double> residuals;    // d_i
+  std::vector<double> residual_sig; // sigma_{d,i}
+  std::vector<double> pull;         // d_i / sigma_{d,i}
+};
+
 //  Funzioni pubbliche
 
 /**
@@ -116,6 +153,41 @@ PSFValue interpolate(double r, const LensConfig& cfg, const PSFDatabase& db);
  */
 std::vector<TracePoint> build_trace(double y0, const LensConfig& cfg, const PSFDatabase& db,
                                     double L = 10.0, double dt = 0.1);
+
+/**
+ * Fit lineare pesato ODR della traccia media sul detector.
+ *
+ * Esegue il fit della retta z = a*y + b sui punti {(mu_y_i, mu_z_i)}
+ * usando le matrici di covarianza Sigma_i come peso statistico, tramite
+ * Orthogonal Distance Regression iterativa.
+ *
+ * Algoritmo:
+ *   1. Stima iniziale (a, b) con fit non pesato (OLS su z vs y).
+ *   2. Per ogni iterazione:
+ *      a. Calcola n_hat = (-a, 1) / sqrt(1 + a^2)  (normale alla retta z=ay+b)
+ *      b. Calcola sigma_{d,i}^2 = n_hat^T Sigma_i n_hat  per ogni punto
+ *      c. Risolve il sistema lineare pesato 2x2 per (a, b):
+ *         minimizza sum_i [ d_i^2 / sigma_{d,i}^2 ]
+ *         con d_i = distanza perpendicolare (linearizzata attorno a n_hat corrente)
+ *      d. Aggiorna (a, b); controlla convergenza su delta_a
+ *   3. Calcola chi^2, ndof, residui e pull finali.
+ *
+ * Nota sulla linearizzazione: la distanza perpendicolare esatta e' non lineare
+ * in (a, b). Per renderla lineare si usa la proiezione del residuo vettoriale
+ * sul vettore normale corrente:
+ *   d_i_lin = n_y * (mu_y_i - y_fit_i) + n_z * (mu_z_i - z_fit_i)
+ *           = n_y * mu_y_i + n_z * mu_z_i - (n_y * y_hat_i + n_z * z_hat_i)
+ * dove il punto sulla retta piu' vicino a (mu_y_i, mu_z_i) viene approssimato
+ * con la proiezione ortogonale calcolata con la stima corrente di (a, b).
+ * Questo e' l'approccio standard del IRLS per ODR (Boggs & Rogers 1990).
+ *
+ * @param trace     Traccia media prodotta da build_trace()
+ * @param max_iter  Numero massimo di iterazioni (default: 20)
+ * @param tol       Soglia di convergenza su |delta_a| (default: 1e-8)
+ * @return          LineFitResult con tutti i parametri del fit
+ * @throws std::invalid_argument se trace ha meno di 3 punti
+ */
+LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter = 20, double tol = 1e-8);
 
 } // namespace riptide
 

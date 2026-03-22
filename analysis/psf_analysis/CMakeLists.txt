@@ -28,3 +28,31 @@ target_include_directories(trace_viewer
     ${ROOT_INCLUDE_DIRS}
 )
 target_compile_features(trace_viewer PRIVATE cxx_std_17)
+
+# Test unitari fit_trace
+add_executable(test_fit_trace
+    test_fit_trace.cpp
+)
+target_link_libraries(test_fit_trace
+    PRIVATE psf_analysis
+    ${ROOT_LIBRARIES}
+)
+target_include_directories(test_fit_trace
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${ROOT_INCLUDE_DIRS}
+)
+target_compile_features(test_fit_trace PRIVATE cxx_std_17)
+
+# Registra il test in CTest in modo che `ctest` lo esegua automaticamente
+# dalla directory di build del progetto principale.
+enable_testing()
+add_test(
+    NAME fit_trace_unit
+    COMMAND test_fit_trace
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+# Il test e' considerato passato se il processo esce con codice 0.
+set_tests_properties(fit_trace_unit PROPERTIES
+    LABELS "unit;psf_analysis"
+    TIMEOUT 30
+)

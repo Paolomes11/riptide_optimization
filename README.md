@@ -1,6 +1,6 @@
 # riptide_optimization
 
-Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende due programmi principali — `optimization` e `lens_simulation` — più quattro strumenti di analisi ROOT.
+Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende due programmi principali — `optimization` e `lens_simulation` — quattro strumenti di analisi ROOT, e una libreria di analisi PSF (`psf_analysis`) con test unitari integrati.
 
 ---
 
@@ -15,9 +15,11 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 7. [Output su SSD esterna](#output-su-ssd-esterna)
 8. [Parallelizzazione a processi](#parallelizzazione-a-processi)
 9. [Strumenti di analisi](#strumenti-di-analisi)
-10. [File di configurazione](#file-di-configurazione)
-11. [Formato dei file ROOT](#formato-dei-file-root)
-12. [Workflow completo](#workflow-completo)
+10. [Libreria psf\_analysis](#libreria-psf_analysis)
+11. [Test unitari](#test-unitari)
+12. [File di configurazione](#file-di-configurazione)
+13. [Formato dei file ROOT](#formato-dei-file-root)
+14. [Workflow completo](#workflow-completo)
 
 ---
 
@@ -49,22 +51,22 @@ riptide_optimization/
 │
 ├── src/
 │   ├── common/                      # Codice condiviso tra i due programmi
-│   │   ├── physics_list.cpp         # Lista di fisica (ottica + standard EM)
-│   │   └── primary_generator_action.cpp  # Generatore particelle (GPS)
+│   │   ├── physics_list.cpp
+│   │   └── primary_generator_action.cpp
 │   ├── optimization/                # Sorgenti del programma optimization
 │   │   ├── detector_construction.cpp
 │   │   ├── action_initialization.cpp
-│   │   ├── event_action.cpp         # Raccolta hit, scrittura ROOT
+│   │   ├── event_action.cpp
 │   │   ├── run_action.cpp
-│   │   ├── sensitive_detector.cpp   # Fotocatodo sensibile
-│   │   └── optimizer.cpp            # Loop di scansione, output events.root
+│   │   ├── sensitive_detector.cpp
+│   │   └── optimizer.cpp
 │   └── lens_simulation/             # Sorgenti del programma lens_simulation
 │       ├── detector_construction.cpp
 │       ├── action_initialization.cpp
-│       ├── event_action.cpp         # Raccolta hit, scrittura ROOT
+│       ├── event_action.cpp
 │       ├── run_action.cpp
 │       ├── sensitive_detector.cpp
-│       └── lens_scan.cpp            # Loop beam scan, output lens.root
+│       └── lens_scan.cpp
 │
 ├── include/                         # Header files (specchi di src/)
 │   ├── common/
@@ -76,34 +78,41 @@ riptide_optimization/
 │   ├── beam_scan_plot.cpp           # Grafici posizione fotoni vs posizione sorgente
 │   ├── m_c_creator.cpp              # Istogramma 2D hit su detector per un run
 │   ├── psf_extractor.cpp            # Media e matrice di covarianza PSF per tutti i run
-│   └── CMakeLists.txt
+│   ├── CMakeLists.txt
+│   └── psf_analysis/                # Libreria PSF + analisi traccia
+│       ├── psf_interpolator.hpp     # API pubblica: strutture dati, dichiarazioni
+│       ├── psf_interpolator.cpp     # Implementazione: load, interpolate, build_trace, fit_trace
+│       ├── trace_viewer.cpp         # Eseguibile: visualizza traccia media con ellissi di cov
+│       ├── test_fit_trace.cpp       # Test unitari analitici per fit_trace()
+│       └── CMakeLists.txt
 │
 ├── geometry/                        # Geometria GDML
-│   ├── main.gdml                    # File principale (include gli altri)
-│   ├── define.xml                   # Costanti, posizioni, proprietà ottiche
-│   ├── materials.xml                # Materiali (aria, UVFS, GaAsP, borosilicato)
-│   ├── solids.xml                   # Solidi (ellissoidi lenti, fotocatodo)
-│   └── structure.xml                # Volumi fisici e loro posizionamento
+│   ├── main.gdml
+│   ├── define.xml
+│   ├── materials.xml
+│   ├── solids.xml
+│   └── structure.xml
 │
 ├── macros/
-│   ├── optimization.mac             # Sorgente per optimization (10000 fotoni, r=10mm)
-│   ├── lens_simulation.mac          # Sorgente per lens_simulation (1000 fotoni, r=0.1mm)
-│   ├── run.mac                      # Macro alternativa
-│   └── vis.mac                      # Macro per visualizzazione interattiva
+│   ├── optimization.mac
+│   ├── lens_simulation.mac
+│   ├── run.mac
+│   └── vis.mac
 │
 ├── config/
-│   └── config.json                  # Parametri di scansione e geometria lenti
+│   └── config.json
 │
 ├── external/
-│   └── lyra/                        # Libreria header-only per parsing CLI
+│   └── lyra/
 │
-└── output/                          # Creata automaticamente da CMake
-    ├── events.root                  # Output di optimization
+└── output/
+    ├── events.root
     ├── lens_simulation/
-    │   └── lens.root                # Output di lens_simulation
-    ├── mean_covariance_maps/        # Output di m_c_creator
+    │   └── lens.root
+    ├── mean_covariance_maps/
     └── psf/
-        └── psf_data.root            # Output di psf_extractor
+        ├── psf_data.root
+        └── psf_analysis/            # Output di trace_viewer
 ```
 
 ---
@@ -118,13 +127,13 @@ Sorgente fotoni  →  [Lente 75mm]  →  [Lente 60mm]  →  [Fotocatodo GaAsP 16
          x=0        x ≈ 14–170mm    x ≈ 45–186mm           x ≈ 180mm
 ```
 
-**Lente 75 mm** (`lens75`): ellissoide in UV Fused Silica (UVFS), raggio 38.6 mm, spessore 12.5 mm. Modella una lente piano-convessa tagliata da una sfera.
+**Lente 75 mm** (`lens75`): ellissoide in UV Fused Silica (UVFS), raggio 38.6 mm, spessore 12.5 mm.
 
-**Lente 60 mm** (`lens60`): ellissoide UVFS, raggio 30.9 mm, spessore 16.3 mm. Orientata con la faccia convessa verso la sorgente.
+**Lente 60 mm** (`lens60`): ellissoide UVFS, raggio 30.9 mm, spessore 16.3 mm.
 
-**Fotocatodo GaAsP**: lastra quadrata 16×16×0.01 mm, indice di rifrazione 3.5–3.8 nel range 2–4 eV, lunghezza di assorbimento ~1 µm. Registra i fotoni ottici che attraversano la sua superficie frontale (`fGeomBoundary`).
+**Fotocatodo GaAsP**: lastra quadrata 16×16×0.01 mm, indice di rifrazione 3.5–3.8 nel range 2–4 eV, lunghezza di assorbimento ~1 µm.
 
-**Sorgente**: fotoni ottici a 2.5 eV (≈ 496 nm), generati da GPS Geant4 su un disco (Annulus) con distribuzione angolare isotropa diretta lungo +X.
+**Sorgente**: fotoni ottici a 2.5 eV (≈ 496 nm), generati da GPS Geant4 su un disco con distribuzione angolare isotropa diretta lungo +X.
 
 ---
 
@@ -144,9 +153,11 @@ cmake --build build/ --config Release
 #   build/analysis/Release/beam_scan_plot
 #   build/analysis/Release/m_c_creator
 #   build/analysis/Release/psf_extractor
+#   build/analysis/psf_analysis/Release/trace_viewer
+#   build/analysis/psf_analysis/Release/test_fit_trace
 ```
 
-> **Nota**: CMake crea automaticamente le cartelle `output/`, `output/lens_simulation/`, `output/mean_covariance_maps/` e `output/psf/` durante la configurazione.
+> **Nota**: CMake crea automaticamente le cartelle `output/`, `output/lens_simulation/`, `output/mean_covariance_maps/`, `output/psf/` e `output/psf_analysis/` durante la configurazione.
 
 ---
 
@@ -154,21 +165,13 @@ cmake --build build/ --config Release
 
 **Eseguibile**: `optimization_main`
 
-**Scopo**: scansione grezza dell'efficienza geometrica del sistema a doppia lente. Per ogni coppia di posizioni (x1, x2) delle lenti, esegue una simulazione con 10000 fotoni emessi da una sorgente circolare a r=10 mm e conta quanti raggiungono il fotocatodo. Il risultato è una mappa 2D di efficienza.
+**Scopo**: scansione grezza dell'efficienza geometrica del sistema a doppia lente. Per ogni coppia di posizioni (x1, x2) delle lenti, esegue una simulazione con 10000 fotoni emessi da una sorgente circolare a r=10 mm e conta quanti raggiungono il fotocatodo.
 
 ### Utilizzo
 
 ```bash
-# Modalità ottimizzazione (scansione completa)
 ./build/Release/optimization_main -g geometry/main.gdml -o
-
-# Modalità visualizzazione interattiva
 ./build/Release/optimization_main -g geometry/main.gdml -v
-
-# Modalità batch con macro personalizzata
-./build/Release/optimization_main -g geometry/main.gdml -b -m macros/mia_macro.mac
-
-# Help
 ./build/Release/optimization_main --help
 ```
 
@@ -176,37 +179,25 @@ cmake --build build/ --config Release
 
 | Flag | Tipo | Descrizione |
 |---|---|---|
-| `-g`, `--geometry` | path | **Obbligatorio.** Percorso al file GDML della geometria |
-| `-m`, `--macro` | path | Macro Geant4 da eseguire (default: `macros/optimization.mac`) |
-| `-v`, `--visualize` | flag | Abilita la visualizzazione interattiva OpenGL/Qt |
+| `-g`, `--geometry` | path | **Obbligatorio.** Percorso al file GDML |
+| `-m`, `--macro` | path | Macro Geant4 (default: `macros/optimization.mac`) |
+| `-v`, `--visualize` | flag | Visualizzazione interattiva OpenGL/Qt |
 | `-b`, `--batch` | flag | Modalità batch senza UI |
 | `-o`, `--optimize` | flag | Avvia la scansione di ottimizzazione |
-| `--output` | path | Path al file ROOT di output (default: `output/events.root`) |
-| `--config` | path | Path al file `config.json` (default: `config/config.json`) |
-| `--ssd` | flag | Scrive l'output sull'SSD esterna con timestamp automatico |
+| `--output` | path | File ROOT di output (default: `output/events.root`) |
+| `--config` | path | File `config.json` (default: `config/config.json`) |
+| `--ssd` | flag | Output sull'SSD esterna con timestamp automatico |
 | `--ssd-mount` | path | Mount point dell'SSD (default: `/mnt/external_ssd`) |
 
 ### Output
 
-File ROOT: `output/events.root`
-
-Contiene un singolo TTree `events` con una riga per ogni fotone rilevato:
+File ROOT: `output/events.root` — TTree `events` con una riga per ogni fotone rilevato:
 
 | Branch | Tipo | Descrizione |
 |---|---|---|
 | `x1` | `Double_t` | Posizione della lente 75mm [mm] |
 | `x2` | `Double_t` | Posizione della lente 60mm [mm] |
-| `config_id` | `Int_t` | Indice della configurazione (progressivo) |
-
-L'efficienza per configurazione si calcola come `conteggio_hit / N_generati` (N=10000 di default).
-
-### Comportamento interno
-
-Il loop di scansione in `optimizer.cpp` itera su tutte le coppie (x1, x2) fisicamente valide secondo i vincoli geometrici delle lenti (vedi [config.json](#file-di-configurazione)). Per ogni configurazione:
-1. Sposta le lenti con `DetectorConstruction::SetLensPositions(x1, x2)`
-2. Imposta un seed casuale basato sul clock ad alta risoluzione
-3. Esegue la macro Geant4 (`/run/beamOn 10000`)
-4. `EventAction::EndOfEventAction` raccoglie le hit dal `SensitivePhotocathode` e le scrive nel TTree
+| `config_id` | `Int_t` | Indice della configurazione |
 
 ---
 
@@ -214,21 +205,13 @@ Il loop di scansione in `optimizer.cpp` itera su tutte le coppie (x1, x2) fisica
 
 **Eseguibile**: `lens_simulation_main`
 
-**Scopo**: simulazione dettagliata del beam scan. Per ogni configurazione di lenti e per ogni posizione della sorgente lungo Y (da 0 a 10 mm a passi di 0.1 mm), esegue 1000 fotoni con una sorgente puntiforme (r=0.1 mm) e registra la posizione (y, z) di ogni fotone sul fotocatodo. Permette di ricostruire la funzione di risposta del sistema ottico (PSF).
+**Scopo**: simulazione dettagliata del beam scan per la caratterizzazione della PSF. Per ogni configurazione di lenti e per ogni posizione della sorgente, registra la posizione (y, z) di ogni fotone sul fotocatodo.
 
 ### Utilizzo
 
 ```bash
-# Esecuzione della simulazione completa
 ./build/Release/lens_simulation_main -g geometry/main.gdml -l
-
-# Visualizzazione interattiva
 ./build/Release/lens_simulation_main -g geometry/main.gdml -v
-
-# Con macro personalizzata
-./build/Release/lens_simulation_main -g geometry/main.gdml -l -m macros/mia_macro.mac
-
-# Help
 ./build/Release/lens_simulation_main --help
 ```
 
@@ -238,354 +221,286 @@ Il loop di scansione in `optimizer.cpp` itera su tutte le coppie (x1, x2) fisica
 |---|---|---|
 | `-g`, `--geometry` | path | **Obbligatorio.** Percorso al file GDML |
 | `-m`, `--macro` | path | Macro Geant4 (default: `macros/lens_simulation.mac`) |
-| `-v`, `--visualize` | flag | Abilita visualizzazione interattiva |
+| `-v`, `--visualize` | flag | Visualizzazione interattiva |
 | `-b`, `--batch` | flag | Modalità batch |
 | `-l`, `--lens-sim` | flag | Avvia il beam scan completo |
-| `--output` | path | Path al file ROOT di output (default: `output/lens_simulation/lens.root`) |
-| `--config` | path | Path al file `config.json` (default: `config/config.json`) |
-| `--ssd` | flag | Scrive l'output sull'SSD esterna con timestamp automatico |
-| `--ssd-mount` | path | Mount point dell'SSD (default: `/mnt/external_ssd`) |
+| `--output` | path | File ROOT di output (default: `output/lens_simulation/lens.root`) |
+| `--config` | path | File `config.json` (default: `config/config.json`) |
+| `--ssd` | flag | Output sull'SSD esterna |
+| `--ssd-mount` | path | Mount point dell'SSD |
 
 ### Output
 
-File ROOT: `output/lens_simulation/lens.root`
+File ROOT: `output/lens_simulation/lens.root` — tre TTree:
 
-Contiene tre TTree:
-
-**`Configurations`** — una riga per coppia di posizioni lenti:
+**`Configurations`**: una riga per coppia di posizioni lenti.
 
 | Branch | Tipo | Descrizione |
 |---|---|---|
-| `config_id` | `Int_t` | Indice configurazione (progressivo) |
+| `config_id` | `Int_t` | Indice configurazione |
 | `x1` | `Double_t` | Posizione lente 75mm [mm] |
 | `x2` | `Double_t` | Posizione lente 60mm [mm] |
 
-**`Runs`** — una riga per ogni esecuzione (configurazione × posizione sorgente):
+**`Runs`**: una riga per ogni esecuzione (configurazione × posizione sorgente).
 
 | Branch | Tipo | Descrizione |
 |---|---|---|
-| `run_id` | `Int_t` | Indice run (progressivo globale) |
+| `run_id` | `Int_t` | Indice run globale |
 | `config_id` | `Int_t` | Configurazione di appartenenza |
 | `x_source` | `Float_t` | Posizione Y della sorgente [mm] |
-| `n_hits` | `Int_t` | Numero di fotoni rilevati in questo run |
+| `n_hits` | `Int_t` | Fotoni rilevati in questo run |
 
-**`Hits`** — una riga per ogni fotone rilevato:
+**`Hits`**: una riga per ogni fotone rilevato.
 
 | Branch | Tipo | Descrizione |
 |---|---|---|
-| `y_hit` | `Float_t` | Coordinata Y di arrivo sul fotocatodo [mm] |
-| `z_hit` | `Float_t` | Coordinata Z di arrivo sul fotocatodo [mm] |
+| `y_hit` | `Float_t` | Coordinata Y sul fotocatodo [mm] |
+| `z_hit` | `Float_t` | Coordinata Z sul fotocatodo [mm] |
 
-> **Mapping hits → run**: la colonna `n_hits` in `Runs` permette di ricostruire l'associazione senza un `run_id` in `Hits`. Le hit sono scritte in ordine sequenziale; la i-esima riga di `Runs` corrisponde alle `n_hits[i]` righe di `Hits` a partire dall'offset cumulativo `sum(n_hits[0..i-1])`.
-
-### Comportamento interno
-
-Il loop in `lens_scan.cpp` ha tre livelli annidati:
-1. **x1** — posizioni fisicamente valide della lente 75mm
-2. **x2** — posizioni fisicamente valide della lente 60mm (con gap minimo tra le lenti)
-3. **y_source** — da 0 a 10 mm con passo 0.1 mm (101 posizioni)
-
-Per ogni run:
-- Si aggiorna la posizione GPS con `/gps/pos/centre 0 y_source 0 mm`
-- Si esegue la macro (`/run/beamOn 1000`)
-- `EventAction` accumula le hit evento per evento; a fine run, `lens_scan` legge il conteggio tramite `GetLastRunHitCount()` e lo salva in `Runs.n_hits`
+> **Mapping hits → run**: le hit sono scritte sequenzialmente. La riga i-esima di `Runs` corrisponde alle `n_hits[i]` righe di `Hits` a partire dall'offset cumulativo `sum(n_hits[0..i-1])`.
 
 ---
 
 ## Output su SSD esterna
 
-Il progetto supporta nativamente la scrittura dell'output su SSD esterna ad alta velocità (es. NVMe via USB4), utile per simulazioni con file ROOT di grandi dimensioni.
-
-### Trovare il device dell'SSD esterna (Linux)
-
-Prima di montare l'SSD, è necessario identificare il nome del device assegnato dal kernel. I passaggi sono i seguenti.
-
-**1. Collegare l'SSD e identificare il device**
+### Trovare e montare il device
 
 ```bash
-lsblk
-```
-
-Output tipico dopo aver collegato un'SSD NVMe via USB4/Thunderbolt:
-
-```
-NAME        MAJ:MIN RM   SIZE RO TYPE MOUNTPOINT
-sda           8:0    0 476.9G  0 disk
-nvme0n1     259:0    0 476.9G  0 disk
-├─nvme0n1p1 259:1    0   512M  0 part /boot/efi
-└─nvme0n1p2 259:2    0 476.4G  0 part /
-nvme1n1     259:3    0 953.9G  0 disk          ← SSD esterna (nessun mountpoint)
-└─nvme1n1p1 259:4    0 953.9G  0 part
-```
-
-L'SSD esterna è quella senza mountpoint attivo. In questo caso `nvme1n1` (o `nvme1n1p1` se ha una partizione).
-
-Se non è immediatamente chiaro quale sia, si può usare:
-
-```bash
-# Mostra modello e dimensione di tutti i dischi
-lsblk -o NAME,SIZE,MODEL,TRAN
-
-# Oppure, per vedere solo i device collegati via USB/Thunderbolt
-lsblk -o NAME,SIZE,MODEL,TRAN | grep -E "usb|thunderbolt"
-```
-
-**2. Verificare il filesystem della partizione**
-
-```bash
-sudo blkid /dev/nvme1n1p1
-```
-
-Output atteso:
-```
-/dev/nvme1n1p1: UUID="xxxx-xxxx" TYPE="ext4" ...
-```
-
-Se il filesystem è `exFAT` (comune su SSD formattate su Windows/Mac), installare il supporto:
-
-```bash
-sudo apt install exfatprogs   # Ubuntu/Debian
-```
-
-**3. Creare il mount point e montare**
-
-```bash
+lsblk                                          # identifica il device
 sudo mkdir -p /mnt/external_ssd
 sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
+mountpoint -q /mnt/external_ssd && echo "OK"
 ```
 
-Verificare che il mount sia riuscito:
-
-```bash
-mountpoint -q /mnt/external_ssd && echo "Montata correttamente" || echo "Errore"
-df -h /mnt/external_ssd   # mostra spazio disponibile
-```
-
-**4. (Opzionale) Mount automatico all'avvio**
-
-Per montare l'SSD automaticamente al boot, aggiungere una riga a `/etc/fstab`. Prima recuperare l'UUID:
-
-```bash
-sudo blkid /dev/nvme1n1p1
-# UUID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-```
-
-Poi aggiungere a `/etc/fstab`:
-
-```
-UUID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  /mnt/external_ssd  ext4  noatime,nodiratime,discard,nofail  0  2
-```
-
-L'opzione `nofail` è importante: evita che il sistema si blocchi al boot se l'SSD non è collegata.
-
-**5. Smontare a fine sessione**
-
-```bash
-sudo umount /mnt/external_ssd
-```
-### Montaggio ottimale per I/O intensivo
-
-```bash
-sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
-```
-
-- `noatime` — disabilita la scrittura degli access time ad ogni lettura
-- `nodiratime` — idem per le directory
-- `discard` — abilita il TRIM per mantenere le prestazioni dell'SSD nel tempo
+Opzioni di mount consigliate per I/O intensivo: `noatime,nodiratime,discard`.
 
 ### Utilizzo con `--ssd`
 
-Con il flag `--ssd`, il path di output viene generato automaticamente con un timestamp al secondo, così ogni run ha la propria cartella:
-
-```
-/mnt/external_ssd/riptide/runs/run_20260315_094512/lens.root
-/mnt/external_ssd/riptide/runs/run_20260315_094512/events.root
-```
-
-Le directory vengono create automaticamente dal programma.
-
 ```bash
-# lens_simulation su SSD
 ./build/Release/lens_simulation_main -g geometry/main.gdml -b -l --ssd
-
-# optimization su SSD
-./build/Release/optimization_main -g geometry/main.gdml -b -o --ssd
-
-# SSD su mount point personalizzato
+./build/Release/optimization_main    -g geometry/main.gdml -b -o --ssd
 ./build/Release/lens_simulation_main -g geometry/main.gdml -b -l \
     --ssd --ssd-mount /mnt/myusb
-
-# Path di output completamente manuale (senza --ssd)
-./build/Release/lens_simulation_main -g geometry/main.gdml -b -l \
-    --output /mnt/external_ssd/mio_run/lens.root \
-    --config config/config_alt.json
 ```
 
-### Script `run.sh`
-
-Lo script `run.sh` nella root del progetto semplifica il lancio e verifica automaticamente che l'SSD sia montata prima di partire:
-
-```bash
-chmod +x scripts/run.sh scripts/monitor.sh
-
-# Sintassi: ./scripts/run.sh [lens|opt] [local|ssd] [opzioni extra]
-
-./scripts/run.sh lens local                          # output locale
-./scripts/run.sh lens ssd                            # output su SSD (mount default)
-./scripts/run.sh opt  ssd --ssd-mount /mnt/myusb    # SSD con mount personalizzato
-./scripts/run.sh lens local --output /tmp/test.root  # path manuale
+Il path di output viene generato automaticamente con timestamp:
 ```
-
-### Nota su IntelliSense (VSCode)
-
-Il file `.vscode/c_cpp_properties.json` è configurato per usare `build/compile_commands.json`, generato automaticamente da CMake grazie a `CMAKE_EXPORT_COMPILE_COMMANDS ON`. È sufficiente eseguire `cmake ..` nella cartella `build/` almeno una volta per aggiornare l'IntelliSense di VSCode con i path corretti.
+/mnt/external_ssd/riptide/runs/run_20260315_094512/lens.root
+```
 
 ---
 
 ## Parallelizzazione a processi
 
-`lens_simulation` supporta la parallelizzazione tramite processi indipendenti. Lo spazio delle configurazioni `(x1, x2)` viene diviso in N chunk sul loop esterno di `x1`, ognuno lanciato come processo separato con il suo file ROOT di output. Al termine, i chunk vengono uniti automaticamente con `hadd` in un unico file finale identico a quello prodotto da un processo singolo.
-
-Questa strategia è sicura con Geant4 perché ogni processo ha il proprio `G4RunManager` indipendente, evitando i problemi di thread-safety del multithreading a livello di run.
-
-### Dipendenze
-
-- `python3` con `numpy` — per il calcolo dei chunk (già presente su qualsiasi sistema con ROOT)
-- `hadd` — per il merge dei file ROOT (incluso in ROOT)
-
-### Utilizzo
+`lens_simulation` supporta la parallelizzazione tramite processi indipendenti. Lo spazio delle configurazioni viene diviso in N chunk, ognuno con il proprio file ROOT. Al termine i chunk vengono uniti con `hadd`.
 
 ```bash
-# Sintassi: ./scripts/run.sh [lens|opt] [local|ssd] [--jobs N] [opzioni extra]
-
-# 4 processi in parallelo, output locale
 ./scripts/run.sh lens local --jobs 4
-
-# 8 processi in parallelo, output su SSD esterna
-./scripts/run.sh lens ssd --jobs 8
-
-# numero di jobs consigliato: numero di core fisici della macchina
-nproc --all   # mostra il numero di core disponibili
-./scripts/run.sh lens ssd --jobs $(nproc --all)
+./scripts/run.sh lens ssd   --jobs 8
+./scripts/run.sh lens ssd   --jobs $(nproc --all)
 ```
 
-### Come funziona internamente
-
-1. `run.sh` legge `config.json` e calcola tutti i valori di `x1` del loop globale
-2. Li divide in N chunk bilanciati e genera N file `config_chunk_X.json` temporanei in `/tmp`
-3. Ogni config chunk contiene `x1_start`, `x1_end`, `config_id_offset` e `run_id_offset` — parametri che `lens_scan.cpp` usa per inizializzare i contatori in modo che siano globalmente unici e contigui
-4. Lancia N processi in background, ognuno con il suo chunk config e il suo file di output
-5. Attende che tutti i processi terminino, verificando gli exit code
-6. Esegue `hadd` per unire i chunk in un unico file `lens.root`
-7. Rimuove i file chunk intermedi e i config temporanei
-
-### Output
-
-Con `--jobs 4` su SSD, la struttura generata è:
-
-```
-/mnt/external_ssd/riptide/runs/run_20260315_094512/
-├── chunk_0.root    ← rimosso dopo il merge
-├── chunk_1.root    ← rimosso dopo il merge
-├── chunk_2.root    ← rimosso dopo il merge
-├── chunk_3.root    ← rimosso dopo il merge
-└── lens.root       ← file finale, identico al run singolo
-```
-
-### Log dei processi
-
-Durante l'esecuzione parallela, ogni processo scrive il proprio log in `/tmp/riptide_chunks_<timestamp>/chunk_N.log`. In caso di errore su un chunk, lo script segnala quale log consultare:
-
-```
-[ERROR] Chunk 2 fallito (vedi /tmp/riptide_chunks_20260315_094512/chunk_2.log)
-```
-
-### Nota sui config_id
-
-I `config_id` nel file finale sono globalmente unici e contigui grazie agli offset calcolati dallo script. Il TTree `Configurations` del file merged contiene tutte le coppie `(x1, x2)` con gli stessi indici che avrebbe un run singolo — gli strumenti di analisi funzionano senza modifiche.
+I `config_id` e `run_id` nel file finale sono globalmente unici e contigui grazie agli offset calcolati dallo script.
 
 ---
 
 ## Strumenti di analisi
 
-Tutti e tre gli eseguibili di analisi si compilano insieme al progetto principale e si trovano in `build/analysis/`.
-
 ### plot2D
 
-**Legge**: `output/events.root`
-
-Genera una mappa 2D di efficienza geometrica in funzione delle posizioni delle lenti x1 e x2, filtrando i valori tra i percentili configurati in `config.json` (`lower_percentile`, `upper_percentile`).
+Genera la mappa 2D di efficienza geometrica da `output/events.root`.
 
 ```bash
 ./build/analysis/Release/plot2D
-# Output: output/efficiency2D.png
+# → output/efficiency2D.png
 ```
 
 ### beam\_scan\_plot
 
-**Legge**: `output/lens_simulation/lens.root`
-
-Per una coppia (x1, x2) fissata, calcola la posizione media e la deviazione standard dei fotoni sul fotocatodo al variare della posizione della sorgente. Produce un grafico Y e uno Z con barre d'errore. Applica un filtro outlier a 2σ iterativo.
+Per una coppia (x1, x2) fissata, calcola posizione media e deviazione standard dei fotoni al variare della posizione sorgente. Applica filtro outlier 2σ iterativo.
 
 ```bash
-./build/analysis/Release/beam_scan_plot <x1> <x2> [percorso_file.root]
-
-# Esempio:
+./build/analysis/Release/beam_scan_plot <x1> <x2> [file.root]
 ./build/analysis/Release/beam_scan_plot 94.9 186.4
-# Output: output/lens_simulation/beam_x1_94.90_x2_186.40.png
+# → output/lens_simulation/beam_x1_94.90_x2_186.40.png
 ```
 
 ### m\_c\_creator
 
-**Legge**: `output/lens_simulation/lens.root`
-
-Per una terna (x1, x2, y0) fissata, raccoglie tutte le hit del run corrispondente e genera un istogramma 2D (y vs z) sul piano del fotocatodo. Applica un filtro outlier a 2σ iterativo per rimuovere fotoni diffusi.
+Istogramma 2D delle hit per una terna (x1, x2, y0) fissata.
 
 ```bash
-./build/analysis/Release/m_c_creator <x1_target> <x2_target> <y0_target>
-
-# Esempio:
+./build/analysis/Release/m_c_creator <x1> <x2> <y0>
 ./build/analysis/Release/m_c_creator 94.9 186.4 5.0
-# Output: output/mean_covariance_maps/detector_hits_config_<id>_y0_5.0.png
+# → output/mean_covariance_maps/detector_hits_config_<id>_y0_5.0.png
 ```
 
 ### psf\_extractor
 
-**Legge**: `output/lens_simulation/lens.root` (o qualsiasi file lens prodotto da `lens_simulation`)
-
-Processa in batch tutti i run presenti nel file di input e, per ognuno, calcola media bidimensionale (μ_y, μ_z) e matrice di covarianza 2×2 della PSF applicando un filtro outlier a 2σ iterativo (2 iterazioni). Salva i risultati in un file ROOT separato per l'analisi successiva.
+Estrae media bidimensionale e matrice di covarianza della PSF per tutti i run. Applica filtro outlier ellittico a 2σ (4 iterazioni).
 
 ```bash
 ./build/analysis/Release/psf_extractor [input.root] [output.root]
-
-# Con path di default
-./build/analysis/Release/psf_extractor
-#    → output/psf/psf_data.root
-
-# Con path espliciti
 ./build/analysis/Release/psf_extractor \
     output/lens_simulation/lens.root \
     output/psf/psf_data.root
 ```
 
-Il file di output contiene un TTree `PSF` con una riga per ogni run:
+Output `psf_data.root` — TTree `PSF`:
 
 | Branch | Tipo | Descrizione |
 |---|---|---|
 | `config_id` | `Int_t` | Indice configurazione |
 | `x1`, `x2` | `Double_t` | Posizioni lenti [mm] |
-| `y_source` | `Double_t` | Posizione sorgente [mm] |
-| `mu_y`, `mu_z` | `Double_t` | Media PSF [mm] |
+| `y_source` | `Float_t` | Posizione sorgente [mm] |
+| `mean_y`, `mean_z` | `Double_t` | Media PSF [mm] |
 | `cov_yy`, `cov_yz`, `cov_zz` | `Double_t` | Matrice di covarianza [mm²] |
-| `n_hits` | `Int_t` | Hit usate dopo filtro 2σ |
-| `n_hits_raw` | `Int_t` | Hit raw prima del filtro |
+| `n_hits_filtered` | `Int_t` | Hit dopo filtro 2σ |
+| `n_hits_raw` | `Int_t` | Hit prima del filtro |
 
-La matrice di covarianza campionaria (divisione per N−1) è:
+---
 
+## Libreria psf\_analysis
+
+La libreria `psf_analysis` (in `analysis/psf_analysis/`) implementa la catena analitica PSF-based descritta nella documentazione di tesi. È compilata come libreria statica e usata da `trace_viewer` e `test_fit_trace`.
+
+### API pubblica (`psf_interpolator.hpp`)
+
+#### Strutture dati principali
+
+| Struttura | Descrizione |
+|---|---|
+| `PSFPoint` | Un punto del database PSF: `y_source`, `mu_y`, `mu_z`, covarianza |
+| `Cov2` | Matrice di covarianza 2×2: `yy`, `yz`, `zz` |
+| `PSFValue` | Risultato interpolato: `mu_y`, `mu_z`, `cov` |
+| `TracePoint` | Punto della traccia sul detector: `t`, `r`, `mu_y`, `mu_z`, `cov` |
+| `LensConfig` | Chiave di configurazione `(x1, x2)` con confronto a tolleranza 1e-4 mm |
+| `LineFitResult` | Risultato completo del fit ODR (vedi sotto) |
+
+#### Funzioni
+
+**`load_psf_database(path)`** — carica `psf_data.root` in memoria come `PSFDatabase`.
+
+**`find_nearest_config(cfg, db)`** — trova la configurazione più vicina nel database (distanza euclidea in `(x1, x2)`).
+
+**`interpolate(r, cfg, db)`** — interpola `mu_y`, `mu_z` e `Sigma` per un raggio `r` arbitrario. Usa interpolazione lineare tra i due punti della griglia adiacenti; clamp agli estremi senza estrapolazione.
+
+**`build_trace(y0, cfg, db, L=10, dt=0.1)`** — costruisce la traccia media sul detector per una traccia ideale a distanza `y0` dall'asse ottico, parametrizzata da `t ∈ [-L/2, +L/2]` con step `dt`.
+
+**`fit_trace(trace, max_iter=20, tol=1e-8)`** — fit lineare pesato ODR della traccia (vedi sezione dedicata).
+
+#### `fit_trace` — Fit ODR iterativo
+
+Esegue il fit della retta `z = a·y + b` sui punti `{(mu_y_i, mu_z_i)}` usando le matrici di covarianza `Σ_i` come peso statistico, tramite Orthogonal Distance Regression (ODR) con schema IRLS.
+
+**Algoritmo:**
+
+1. Stima iniziale `(a, b)` con OLS non pesato.
+2. Per ogni iterazione:
+   - Calcola il vettore normale `n̂ = (-a, 1)ᵀ / √(1+a²)`
+   - Calcola i pesi `w_i = 1 / (n̂ᵀ Σ_i n̂) = 1 / (n_y²·σ²_y + 2·n_y·n_z·σ_yz + n_z²·σ²_z)`
+   - Risolve il sistema normale 2×2 pesato in forma chiusa per `(a, b)` — costo O(N)
+   - Controlla convergenza su `|Δa| < tol`
+3. Calcola χ², residui e pull finali con distanza perpendicolare esatta.
+
+**`LineFitResult` — campi:**
+
+| Campo | Tipo | Descrizione |
+|---|---|---|
+| `a`, `b` | `double` | Parametri della retta `z = a·y + b` |
+| `sigma_a`, `sigma_b` | `double` | Incertezze sui parametri |
+| `cov_ab` | `double` | Covarianza tra `a` e `b` |
+| `chi2` | `double` | χ² totale |
+| `ndof` | `int` | Gradi di libertà = N − 2 |
+| `chi2_ndof` | `double` | χ² ridotto = χ²/ndof |
+| `n_iter` | `int` | Iterazioni eseguite |
+| `converged` | `bool` | `true` se `\|Δa\| < tol` |
+| `residuals` | `vector<double>` | Distanza perpendicolare `d_i` [mm] |
+| `residual_sig` | `vector<double>` | `σ_{d,i} = √(n̂ᵀ Σ_i n̂)` [mm] |
+| `pull` | `vector<double>` | Pull normalizzato `d_i / σ_{d,i}` |
+
+**Utilizzo tipico:**
+
+```cpp
+#include "psf_interpolator.hpp"
+
+// Carica il database PSF (una volta sola)
+auto db = riptide::load_psf_database("output/psf/psf_data.root");
+
+// Trova la configurazione disponibile più vicina
+riptide::LensConfig cfg{94.9, 186.4};
+auto actual = riptide::find_nearest_config(cfg, db);
+
+// Costruisce la traccia media per y0 = 5.0 mm
+auto trace = riptide::build_trace(5.0, actual, db);
+
+// Fit lineare pesato ODR
+auto result = riptide::fit_trace(trace);
+
+std::cout << "a = " << result.a << " ± " << result.sigma_a << "\n";
+std::cout << "b = " << result.b << " ± " << result.sigma_b << " mm\n";
+std::cout << "chi2/ndof = " << result.chi2_ndof << "\n";
 ```
-Σ = | cov_yy  cov_yz |
-    | cov_yz  cov_zz |
+
+### trace\_viewer
+
+Visualizza la traccia media sul detector con ellissi di covarianza, colorate per parametro `t` lungo la traccia (palette Rainbow: blu = inizio, rosso = fine).
+
+```bash
+./build/analysis/psf_analysis/Release/trace_viewer \
+    --x1 94.9 --x2 186.4 --y0 5.0
+
+# Opzioni complete:
+./build/analysis/psf_analysis/Release/trace_viewer \
+    --x1 94.9 --x2 186.4 --y0 5.0    \
+    --psf    output/psf/psf_data.root  \
+    --output output/psf_analysis/mia_traccia.png \
+    --dt 0.1   \
+    --L  10.0  \
+    --sigma 1.0
+
+# → output/psf_analysis/trace_x1_94.9_x2_186.4_y0_5.0.png
 ```
+
+| Opzione | Default | Descrizione |
+|---|---|---|
+| `--x1`, `--x2` | — | **Obbligatori.** Posizioni lenti [mm] |
+| `--y0` | — | **Obbligatorio.** Distanza radiale sorgente [mm] |
+| `--psf` | `output/psf/psf_data.root` | Database PSF |
+| `--output` | auto (con timestamp) | Path immagine PNG |
+| `--dt` | `0.1` | Step traccia [mm] |
+| `--L` | `10.0` | Lunghezza traccia [mm] |
+| `--sigma` | `1.0` | Scala delle ellissi di covarianza (in unità σ) |
+
+---
+
+## Test unitari
+
+### Esecuzione
+
+```bash
+# Esegue solo i test PSF
+./build/analysis/psf_analysis/Release/test_fit_trace
+
+# Oppure tramite CTest dalla directory di build
+cd build && ctest -R fit_trace_unit -V
+```
+
+L'eseguibile ritorna `0` se tutti i test passano, `1` altrimenti.
+
+### Casi di test (`test_fit_trace.cpp`)
+
+I test costruiscono `TracePoint` sintetici con soluzione analitica nota — nessun file ROOT necessario.
+
+| Test | Scenario | Verifica |
+|---|---|---|
+| **T1** | Retta `z = y`, cov isotropa uniforme | `a=1`, `b=0`, `χ²≈0`, pull tutti ≈ 0 |
+| **T2** | Retta `z = 0.5y + 3`, cov isotropa | `a=0.5`, `b=3`, `χ²≈0`, `σ_a > 0` |
+| **T3** | Retta `z = 2y − 1`, cov anisotropa (`σ_y >> σ_z`) | Parametri invariati: con residui nulli la soluzione non dipende dai pesi |
+| **T4** | Retta `z = 0` con outlier `Δz = 0.5 mm` al centro | Pull outlier ≈ `Δz/σ`, pull degli altri < 2, `χ²/ndof` dominato dall'outlier |
+| **T5** | Traccia con 0, 2 o 3 punti | Eccezione `std::invalid_argument` per N < 3; nessuna eccezione per N = 3 |
+| **T6** | Covarianza degenere (`var = 0`) | Nessun crash grazie al floor `sd²_floor = 1e-6 mm²`; convergenza e parametri corretti |
+| **T7** | Retta `z = 0`, cov non diagonale; outlier `Δz` al centro | `σ_{d,outlier} ≈ √(cov_zz)` (verifica formula `n̂ᵀ Σ n̂` con `a ≈ 0`) |
 
 ---
 
@@ -595,28 +510,35 @@ La matrice di covarianza campionaria (divisione per N−1) è:
 
 ```json
 {
-  "x_min": 33.0,       // Posizione minima ammessa per x1 [mm]
-  "x_max": 171.0,      // Posizione massima ammessa per x2 [mm]
-  "dx": 3.0,           // Passo della scansione [mm]
-  "r1": 38.6,          // Raggio della lente 75mm [mm]
-  "h1": 12.5,          // Spessore della lente 75mm [mm]
-  "r2": 30.9,          // Raggio della lente 60mm [mm]
-  "h2": 16.3,          // Spessore della lente 60mm [mm]
-  "lower_percentile":  0.45,  // Soglia bassa per plot2D (esclude il 45% inferiore)
-  "upper_percentile":  0.0    // Soglia alta per plot2D (0 = nessun taglio superiore)
+  "x_min": 33.0,
+  "x_max": 171.0,
+  "dx": 3.0,
+  "r1": 38.6,
+  "h1": 12.5,
+  "r2": 30.9,
+  "h2": 16.3,
+  "lower_percentile": 0.45,
+  "upper_percentile": 0.0
 }
 ```
+
+| Parametro | Descrizione |
+|---|---|
+| `x_min`, `x_max` | Range di scansione [mm] |
+| `dx` | Passo della scansione [mm] |
+| `r1`, `h1` | Raggio e spessore della lente 75mm [mm] |
+| `r2`, `h2` | Raggio e spessore della lente 60mm [mm] |
+| `lower_percentile` | Soglia bassa per `plot2D` (esclude il 45% inferiore) |
+| `upper_percentile` | Soglia alta per `plot2D` (0 = nessun taglio superiore) |
 
 I vincoli geometrici applicati durante la scansione sono:
 
 ```
-x1_min = x_min - r1 + h1          (lente 75mm non esce a sinistra)
-x1_max = x_max - h2 - 1 - r1      (lente 75mm non collide con lente 60mm)
-x2_min = x1 + r1 + r2 + 1         (gap minimo di 1mm tra le lenti)
-x2_max = x_max + r2 - h2          (lente 60mm non esce a destra)
+x1_min = x_min - r1 + h1
+x1_max = x_max - h2 - 1 - r1
+x2_min = x1 + r1 + r2 + 1       (gap minimo 1 mm tra le lenti)
+x2_max = x_max + r2 - h2
 ```
-
-Con i valori di default (dx=3 mm), la scansione genera **~703 configurazioni** e **~71.000 run** totali per `lens_simulation`.
 
 ---
 
@@ -626,50 +548,44 @@ Con i valori di default (dx=3 mm), la scansione genera **~703 configurazioni** e
 
 ```
 events.root
-└── TTree "events"    (~14M righe stimate con efficienza 20%)
-    ├── x1        Double_t   posizione lente 75mm [mm]
-    ├── x2        Double_t   posizione lente 60mm [mm]
-    └── config_id Int_t      indice configurazione
+└── TTree "events"
+    ├── x1        Double_t
+    ├── x2        Double_t
+    └── config_id Int_t
 ```
 
 ### lens.root (lens_simulation)
 
 ```
 lens.root
-├── TTree "Configurations"    (703 righe)
+├── TTree "Configurations"    (≈703 righe)
 │   ├── config_id  Int_t
 │   ├── x1         Double_t  [mm]
 │   └── x2         Double_t  [mm]
 │
-├── TTree "Runs"              (~71.000 righe)
+├── TTree "Runs"              (≈71 000 righe)
 │   ├── run_id     Int_t
 │   ├── config_id  Int_t
-│   ├── x_source   Float_t   posizione Y sorgente [mm]
-│   └── n_hits     Int_t     fotoni rilevati in questo run
+│   ├── x_source   Float_t   [mm]
+│   └── n_hits     Int_t
 │
-└── TTree "Hits"              (~14M righe stimate)
-    ├── y_hit      Float_t   coordinata Y sul fotocatodo [mm]
-    └── z_hit      Float_t   coordinata Z sul fotocatodo [mm]
+└── TTree "Hits"              (≈14M righe)
+    ├── y_hit      Float_t   [mm]
+    └── z_hit      Float_t   [mm]
 ```
-
-La compressione è impostata con `SetCompressionLevel(404)` (LZ4 livello 4, se supportato dalla versione di Geant4/ROOT installata).
 
 ### psf\_data.root (psf\_extractor)
 
 ```
 psf_data.root
-└── TTree "PSF"    (~71.000 righe, una per run)
-    ├── config_id   Int_t      indice configurazione
-    ├── x1          Double_t   posizione lente 75mm [mm]
-    ├── x2          Double_t   posizione lente 60mm [mm]
-    ├── y_source    Double_t   posizione sorgente [mm]
-    ├── mu_y        Double_t   media y PSF [mm]
-    ├── mu_z        Double_t   media z PSF [mm]
-    ├── cov_yy      Double_t   varianza y [mm²]
-    ├── cov_yz      Double_t   covarianza y-z [mm²]
-    ├── cov_zz      Double_t   varianza z [mm²]
-    ├── n_hits      Int_t      hit dopo filtro outlier 2σ
-    └── n_hits_raw  Int_t      hit raw prima del filtro
+└── TTree "PSF"    (≈71 000 righe)
+    ├── config_id         Int_t
+    ├── x1, x2            Double_t   [mm]
+    ├── y_source          Float_t    [mm]
+    ├── mean_y, mean_z    Double_t   [mm]
+    ├── cov_yy, cov_yz, cov_zz  Double_t  [mm²]
+    ├── n_hits_filtered   Int_t
+    └── n_hits_raw        Int_t
 ```
 
 ---
@@ -681,42 +597,41 @@ psf_data.root
 cmake -S . -B build/ -G "Ninja Multi-Config"
 cmake --build build/ --config Release
 
-# 2a. Scansione efficienza grezza — output locale
+# 2. Test unitari (verifica che fit_trace funzioni correttamente)
+./build/analysis/psf_analysis/Release/test_fit_trace
+# oppure: cd build && ctest -R fit_trace_unit -V
+
+# 3a. Scansione efficienza — output locale
 ./build/Release/optimization_main -g geometry/main.gdml -o
-#    → output/events.root
+# → output/events.root
 
-# 2a. Scansione efficienza grezza — output su SSD esterna
-sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
-./scripts/run.sh opt ssd
-#    → /mnt/external_ssd/riptide/runs/run_<timestamp>/events.root
-
-# 2b. Analisi mappa 2D efficienza
+# 3b. Mappa 2D efficienza
 ./build/analysis/Release/plot2D
-#    → output/efficiency2D.png
+# → output/efficiency2D.png
 
-# 3a. Beam scan dettagliato — output locale
-./build/Release/lens_simulation_main -g geometry/main.gdml -l
-#    → output/lens_simulation/lens.root
+# 4a. Beam scan dettagliato — output locale (parallelizzato)
+./scripts/run.sh lens local --jobs $(nproc --all)
+# → output/lens_simulation/lens_<timestamp>.root
 
-# 3a. Beam scan dettagliato — output su SSD esterna
-./scripts/run.sh lens ssd
-#    → /mnt/external_ssd/riptide/runs/run_<timestamp>/lens.root
-
-# 3b. Grafico risposta sistema ottico per una configurazione
-./build/analysis/Release/beam_scan_plot 94.9 186.4
-#    → output/lens_simulation/beam_x1_94.90_x2_186.40.png
-
-# 3c. Istogramma 2D hit per una configurazione e posizione sorgente specifica
-./build/analysis/Release/m_c_creator 94.9 186.4 5.0
-#    → output/mean_covariance_maps/detector_hits_config_<id>_y0_5.0.png
-
-# 3d. Estrazione PSF completa (media + covarianza per tutti i run)
+# 4b. Estrazione PSF
 ./build/analysis/Release/psf_extractor \
     output/lens_simulation/lens.root \
     output/psf/psf_data.root
-#    → output/psf/psf_data.root
+# → output/psf/psf_data.root
 
-# 4. Visualizzazione interattiva della geometria
-./build/Release/optimization_main -g geometry/main.gdml -v
+# 4c. Visualizzazione traccia con ellissi di covarianza
+./build/analysis/psf_analysis/Release/trace_viewer \
+    --x1 94.9 --x2 186.4 --y0 5.0
+# → output/psf_analysis/trace_x1_94.9_x2_186.4_y0_5.0.png
+
+# 4d. Fit ODR della traccia (uso programmatico della libreria)
+#     Vedere esempio in sezione "Libreria psf_analysis"
+
+# 5. Strumenti di diagnostica
+./build/analysis/Release/beam_scan_plot 94.9 186.4
+./build/analysis/Release/m_c_creator   94.9 186.4 5.0
+
+# 6. Visualizzazione interattiva geometria
+./build/Release/optimization_main    -g geometry/main.gdml -v
 ./build/Release/lens_simulation_main -g geometry/main.gdml -v
 ```
