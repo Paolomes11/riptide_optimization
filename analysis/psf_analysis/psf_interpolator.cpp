@@ -25,7 +25,7 @@
 
 namespace riptide {
 
-//  Caricamento database
+//  Caricamento database ────────────────────────────────────────────────────────
 
 PSFDatabase load_psf_database(const std::string& root_path) {
   TFile* f = TFile::Open(root_path.c_str(), "READ");
@@ -36,7 +36,6 @@ PSFDatabase load_psf_database(const std::string& root_path) {
   if (!tree)
     throw std::runtime_error("load_psf_database: TTree 'PSF' non trovato in " + root_path);
 
-  // Branch del TTree PSF — y_source è Float_t, il resto Double_t
   Int_t config_id;
   Double_t x1, x2;
   Float_t y_source_f;
@@ -55,45 +54,36 @@ PSFDatabase load_psf_database(const std::string& root_path) {
   tree->SetBranchAddress("cov_zz", &cov_zz);
   tree->SetBranchAddress("n_hits_filtered", &n_hits_filtered);
 
-  // Retrocompatibilità: branch on_detector potrebbe non esistere nei file vecchi.
-  // In quel caso lo calcoliamo da n_hits_filtered >= 10.
   bool on_det_branch_exists = (tree->GetBranch("on_detector") != nullptr);
-  bool on_det_val           = true; // valore letto o calcolato
-
+  bool on_det_val           = true;
   if (on_det_branch_exists) {
     tree->SetBranchAddress("on_detector", &on_det_val);
-    std::cout << "load_psf_database: branch 'on_detector' trovato nel file.\n";
+    std::cout << "load_psf_database: branch 'on_detector' trovato.\n";
   } else {
     std::cout << "load_psf_database: branch 'on_detector' assente, "
-              << "uso fallback n_hits_filtered >= 10.\n";
+                 "uso fallback n_hits_filtered >= 10.\n";
   }
 
   PSFDatabase db;
-  const Long64_t N = tree->GetEntries();
-
-  for (Long64_t i = 0; i < N; ++i) {
+  for (Long64_t i = 0; i < tree->GetEntries(); ++i) {
     tree->GetEntry(i);
-
     bool on_det = on_det_branch_exists ? on_det_val : (n_hits_filtered >= 10);
-
     LensConfig cfg{x1, x2};
     db[cfg].push_back(
         {static_cast<double>(y_source_f), mean_y, mean_z, cov_yy, cov_yz, cov_zz, on_det});
   }
 
-  // Ordina ogni vettore per y_source crescente (necessario per la ricerca binaria)
-  for (auto& [cfg, pts] : db) {
+  for (auto& [cfg, pts] : db)
     std::sort(pts.begin(), pts.end(),
               [](const PSFPoint& a, const PSFPoint& b) { return a.y_source < b.y_source; });
-  }
 
   f->Close();
-
   std::cout << "PSF database caricato: " << db.size() << " configurazioni\n";
   return db;
 }
 
-//  Ricerca configurazione più vicina
+//  Ricerca configurazione più vicina ───────────────────────────────────────────
+
 LensConfig find_nearest_config(const LensConfig& cfg, const PSFDatabase& db) {
   if (db.empty())
     throw std::runtime_error("find_nearest_config: database vuoto");
@@ -102,32 +92,28 @@ LensConfig find_nearest_config(const LensConfig& cfg, const PSFDatabase& db) {
   double best_dist       = std::numeric_limits<double>::max();
 
   for (const auto& [key, _] : db) {
-    double dx1  = key.x1 - cfg.x1;
-    double dx2  = key.x2 - cfg.x2;
-    double dist = std::sqrt(dx1 * dx1 + dx2 * dx2);
-    if (dist < best_dist) {
-      best_dist = dist;
+    double d = std::hypot(key.x1 - cfg.x1, key.x2 - cfg.x2);
+    if (d < best_dist) {
+      best_dist = d;
       best      = &key;
     }
   }
 
-  if (best_dist > 1e-4) {
-    std::cout << "[WARNING] Configurazione (x1=" << cfg.x1 << ", x2=" << cfg.x2
-              << ") non trovata nel database.\n"
-              << "          Configurazione più vicina: (x1=" << best->x1 << ", x2=" << best->x2
-              << "), distanza=" << best_dist << " mm\n";
-  }
+  if (best_dist > 1e-4)
+    std::cout << "[WARNING] Config (x1=" << cfg.x1 << ", x2=" << cfg.x2
+              << ") non trovata. Più vicina: (x1=" << best->x1 << ", x2=" << best->x2
+              << "), dist=" << best_dist << " mm\n";
 
   return *best;
 }
 
-//  Interpolazione
+//  Interpolazione ──────────────────────────────────────────────────────────────
+
 PSFValue interpolate(double r, const LensConfig& cfg, const PSFDatabase& db) {
   auto it = db.find(cfg);
   if (it == db.end()) {
     std::ostringstream oss;
-    oss << "interpolate: configurazione (x1=" << cfg.x1 << ", x2=" << cfg.x2
-        << ") non trovata nel database";
+    oss << "interpolate: config (x1=" << cfg.x1 << ", x2=" << cfg.x2 << ") non trovata";
     throw std::out_of_range(oss.str());
   }
 
@@ -135,100 +121,69 @@ PSFValue interpolate(double r, const LensConfig& cfg, const PSFDatabase& db) {
   if (pts.empty())
     throw std::out_of_range("interpolate: nessun punto PSF per questa configurazione");
 
-  // Cerca i due punti adiacenti con ricerca binaria su y_source
-  // Lower bound: primo punto con y_source >= r
   auto upper = std::lower_bound(pts.begin(), pts.end(), r,
-                                [](const PSFPoint& p, double val) { return p.y_source < val; });
+                                [](const PSFPoint& p, double v) { return p.y_source < v; });
 
-  // Caso r <= primo punto: usa il primo punto senza estrapolazione
   if (upper == pts.begin()) {
     const auto& p = pts.front();
     return {p.mu_y, p.mu_z, {p.cov_yy, p.cov_yz, p.cov_zz}, p.on_detector};
   }
-
-  // Caso r >= ultimo punto: usa l'ultimo punto senza estrapolazione
   if (upper == pts.end()) {
     const auto& p = pts.back();
     return {p.mu_y, p.mu_z, {p.cov_yy, p.cov_yz, p.cov_zz}, p.on_detector};
   }
 
-  // Caso generale: interpolazione lineare tra lower e upper
   const PSFPoint& hi = *upper;
   const PSFPoint& lo = *std::prev(upper);
-
-  double dr    = hi.y_source - lo.y_source;
-  double alpha = (dr > 1e-12) ? (r - lo.y_source) / dr : 0.0;
-
-  auto lerp = [alpha](double a, double b) { return a + alpha * (b - a); };
-
-  // Il punto interpolato è on_detector solo se ENTRAMBI i punti adiacenti lo sono.
-  // Se anche uno solo è off-detector, il punto intermedio è marcato non valido:
-  // la PSF in quell'intervallo di y_source è parzialmente non affidabile.
-  bool on_det = lo.on_detector && hi.on_detector;
+  double dr          = hi.y_source - lo.y_source;
+  double alpha       = (dr > 1e-12) ? (r - lo.y_source) / dr : 0.0;
+  auto lerp          = [alpha](double a, double b) { return a + alpha * (b - a); };
 
   return {lerp(lo.mu_y, hi.mu_y),
           lerp(lo.mu_z, hi.mu_z),
           {lerp(lo.cov_yy, hi.cov_yy), lerp(lo.cov_yz, hi.cov_yz), lerp(lo.cov_zz, hi.cov_zz)},
-          on_det};
+          lo.on_detector && hi.on_detector};
 }
 
-//  Costruzione traccia
+//  Costruzione traccia ─────────────────────────────────────────────────────────
+
 std::vector<TracePoint> build_trace(double y0, const LensConfig& cfg, const PSFDatabase& db,
                                     double L, double dt) {
-  std::vector<TracePoint> trace;
-
-  // Numero di passi: da -L/2 a +L/2 con step dt
   const int N = static_cast<int>(std::round(L / dt)) + 1;
+  std::vector<TracePoint> trace;
   trace.reserve(N);
 
   for (int i = 0; i < N; ++i) {
-    double t = -L / 2.0 + i * dt;
-    // Clamp t all'intervallo [-L/2, L/2] per evitare errori floating point
-    if (t > L / 2.0)
-      t = L / 2.0;
-
-    double r = std::sqrt(y0 * y0 + t * t);
-
+    double t     = std::min(-L / 2.0 + i * dt, L / 2.0);
+    double r     = std::hypot(y0, t);
     PSFValue psf = interpolate(r, cfg, db);
-
     trace.push_back({t, r, psf.mu_y, psf.mu_z, psf.cov, psf.on_detector});
   }
-
   return trace;
 }
 
-// Validità traccia
+//  Validità traccia ────────────────────────────────────────────────────────────
+
 bool is_trace_valid(const std::vector<TracePoint>& trace, double point_valid_fraction) {
   if (trace.empty())
     return false;
-
-  int n_valid = 0;
-  for (const auto& pt : trace) {
+  int nv = 0;
+  for (const auto& pt : trace)
     if (pt.valid)
-      ++n_valid;
-  }
-
-  double frac = static_cast<double>(n_valid) / static_cast<double>(trace.size());
-  return frac >= point_valid_fraction;
+      ++nv;
+  return static_cast<double>(nv) / static_cast<double>(trace.size()) >= point_valid_fraction;
 }
 
-// Fit lineare pesato ODR della traccia media
+// ─── Fit lineare pesato ODR ───────────────────────────────────────────────────
+
 static bool solve_wls(const std::vector<double>& y, const std::vector<double>& z,
                       const std::vector<double>& w, double& a_out, double& b_out, double& var_a,
-                      double& var_b, double& cov_ab_out) {
+                      double& var_b, double& cov_ab) {
   const int N = static_cast<int>(y.size());
   if (N < 2)
     return false;
 
-  // Accumula le somme pesate per il sistema normale 2x2:
-  //   [S_yy  S_y ] [a]   [S_yz]
-  //   [S_y   S_1 ] [b] = [S_z ]
-  double S1  = 0.0; // sum w_i
-  double Sy  = 0.0; // sum w_i * y_i
-  double Sz  = 0.0; // sum w_i * z_i
-  double Syy = 0.0; // sum w_i * y_i^2
-  double Syz = 0.0; // sum w_i * y_i * z_i
-
+  double S1 = 0, Sy = 0, Sz = 0, Syy = 0, Syz = 0;
   for (int i = 0; i < N; ++i) {
     S1 += w[i];
     Sy += w[i] * y[i];
@@ -236,33 +191,25 @@ static bool solve_wls(const std::vector<double>& y, const std::vector<double>& z
     Syy += w[i] * y[i] * y[i];
     Syz += w[i] * y[i] * z[i];
   }
-
-  // Determinante della matrice normale (deve essere > 0 per sistema non degenere)
   double det = Syy * S1 - Sy * Sy;
   if (std::abs(det) < 1e-30)
-    return false; // sistema singolare (tutti y_i uguali o N < 2)
+    return false;
 
-  // Soluzione di Cramer
-  a_out = (Syz * S1 - Sz * Sy) / det;
-  b_out = (Syy * Sz - Sy * Syz) / det;
-
-  // Matrice di covarianza dei parametri: C = (X^T W X)^{-1}
-  //   X^T W X = [[Syy, Sy], [Sy, S1]]
-  var_a      = S1 / det;
-  var_b      = Syy / det;
-  cov_ab_out = -Sy / det;
-
+  a_out  = (Syz * S1 - Sz * Sy) / det;
+  b_out  = (Syy * Sz - Sy * Syz) / det;
+  var_a  = S1 / det;
+  var_b  = Syy / det;
+  cov_ab = -Sy / det;
   return true;
 }
 
 LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter, double tol) {
-  // Estrai solo i punti validi per il fit
+  // Estrai solo i punti validi
   std::vector<double> vy, vz;
   std::vector<Cov2> vcov;
   vy.reserve(trace.size());
   vz.reserve(trace.size());
   vcov.reserve(trace.size());
-
   for (const auto& pt : trace) {
     if (pt.valid) {
       vy.push_back(pt.mu_y);
@@ -273,115 +220,132 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter, doub
 
   const int N = static_cast<int>(vy.size());
   if (N < 3)
-    throw std::invalid_argument("fit_trace: punti validi insufficienti per il fit (trovati: "
+    throw std::invalid_argument("fit_trace: punti validi insufficienti (trovati: "
                                 + std::to_string(N)
-                                + ", richiesti: 3). Verifica le soglie point_valid_fraction.");
+                                + ", richiesti: 3). Verifica point_valid_fraction.");
 
   LineFitResult res{};
   res.n_iter        = 0;
   res.converged     = false;
   res.n_points_used = N;
 
-  // Step 1: stima iniziale con OLS non pesato
+  // Stima iniziale OLS
   {
-    std::vector<double> w_unit(N, 1.0);
-    double var_a_tmp, var_b_tmp, cov_ab_tmp;
-    bool ok = solve_wls(vy, vz, w_unit, res.a, res.b, var_a_tmp, var_b_tmp, cov_ab_tmp);
-    if (!ok) {
+    std::vector<double> w1(N, 1.0);
+    double va, vb, cab;
+    if (!solve_wls(vy, vz, w1, res.a, res.b, va, vb, cab)) {
       res.a = 0.0;
       res.b = vz[0];
     }
   }
 
-  // Step 2–3: loop IRLS (Iteratively Reweighted Least Squares)
-  std::vector<double> weights(N);
-
+  // Loop IRLS
+  std::vector<double> ww(N);
   for (int iter = 0; iter < max_iter; ++iter) {
-    res.n_iter = iter + 1;
+    res.n_iter    = iter + 1;
+    double a_prev = res.a;
+    double norm   = std::sqrt(1.0 + res.a * res.a);
+    double ny     = -res.a / norm;
+    double nz     = 1.0 / norm;
 
-    double a_prev  = res.a;
-    double norm_sq = 1.0 + res.a * res.a;
-    double norm    = std::sqrt(norm_sq);
-
-    // Componenti del vettore normale alla retta z = a*y + b
-    double n_y = -res.a / norm; //  n_y = -a / sqrt(1+a^2)
-    double n_z = 1.0 / norm;    //  n_z =  1 / sqrt(1+a^2)
-
-    // Calcola pesi w_i = 1 / sigma_{d,i}^2
     for (int i = 0; i < N; ++i) {
-      double sd2 = n_y * n_y * vcov[i].yy + 2.0 * n_y * n_z * vcov[i].yz + n_z * n_z * vcov[i].zz;
-      const double sd2_floor = 1e-6;
-      weights[i]             = 1.0 / std::max(sd2, sd2_floor);
+      double sd2 = ny * ny * vcov[i].yy + 2.0 * ny * nz * vcov[i].yz + nz * nz * vcov[i].zz;
+      ww[i]      = 1.0 / std::max(sd2, 1e-6);
     }
 
-    // Risolvi il WLS con i pesi aggiornati
     double new_a, new_b;
-    bool ok = solve_wls(vy, vz, weights, new_a, new_b, res.sigma_a, res.sigma_b, res.cov_ab);
-    if (!ok) {
-      std::cerr << "[fit_trace] WARNING: sistema WLS singolare all'iterazione " << iter + 1 << "\n";
+    if (!solve_wls(vy, vz, ww, new_a, new_b, res.sigma_a, res.sigma_b, res.cov_ab)) {
+      std::cerr << "[fit_trace] WLS singolare iter=" << iter + 1 << "\n";
       break;
     }
-
     res.a = new_a;
     res.b = new_b;
-
-    // Controlla convergenza su variazione di a
     if (std::abs(res.a - a_prev) < tol) {
       res.converged = true;
       break;
     }
   }
 
-  // Step 4: calcolo finale di chi^2, residui e pull
-  double norm_final = std::sqrt(1.0 + res.a * res.a);
-  double n_y_final  = -res.a / norm_final;
-  double n_z_final  = 1.0 / norm_final;
-
-  res.chi2 = 0.0;
+  // χ², residui, pull
+  double normf = std::sqrt(1.0 + res.a * res.a);
+  double nyf   = -res.a / normf;
+  double nzf   = 1.0 / normf;
+  res.chi2     = 0.0;
   res.residuals.resize(N);
   res.residual_sig.resize(N);
   res.pull.resize(N);
 
   for (int i = 0; i < N; ++i) {
-    // Distanza perpendicolare con segno (positivo se il punto e' "sopra" la retta)
-    double d_i = (res.a * vy[i] - vz[i] + res.b) / norm_final;
-
-    // sigma_{d,i} con il vettore normale finale
-    double sd2 = n_y_final * n_y_final * vcov[i].yy + 2.0 * n_y_final * n_z_final * vcov[i].yz
-               + n_z_final * n_z_final * vcov[i].zz;
-
-    const double sd2_floor = 1e-6;
-    double sd_i            = std::sqrt(std::max(sd2, sd2_floor));
-
-    res.residuals[i]    = d_i;
-    res.residual_sig[i] = sd_i;
-    res.pull[i]         = d_i / sd_i;
-
-    res.chi2 += (d_i * d_i) / std::max(sd2, sd2_floor);
+    double d   = (res.a * vy[i] - vz[i] + res.b) / normf;
+    double sd2 = nyf * nyf * vcov[i].yy + 2.0 * nyf * nzf * vcov[i].yz + nzf * nzf * vcov[i].zz;
+    double sd  = std::sqrt(std::max(sd2, 1e-6));
+    res.residuals[i]    = d;
+    res.residual_sig[i] = sd;
+    res.pull[i]         = d / sd;
+    res.chi2 += d * d / std::max(sd2, 1e-6);
   }
-
-  // Gradi di liberta' e chi^2 ridotto
   res.ndof      = N - 2;
-  res.chi2_ndof = (res.ndof > 0) ? res.chi2 / static_cast<double>(res.ndof) : 0.0;
-
-  // Trasforma sigma_a, sigma_b da varianza a deviazione standard
-  res.sigma_a = std::sqrt(std::max(res.sigma_a, 0.0));
-  res.sigma_b = std::sqrt(std::max(res.sigma_b, 0.0));
-
+  res.chi2_ndof = (res.ndof > 0) ? res.chi2 / res.ndof : 0.0;
+  res.sigma_a   = std::sqrt(std::max(res.sigma_a, 0.0));
+  res.sigma_b   = std::sqrt(std::max(res.sigma_b, 0.0));
   return res;
 }
 
-// compute_Q
+// ─── Temporal unfolding ───────────────────────────────────────────────────────
+//
+// Perché l'approccio i·δz funziona (e perché il codice precedente era rotto)
+// ──────────────────────────────────────────────────────────────────────────────
+// Se una traccia si ripiega: μ_y = [2,4,6,4,2], μ_z ≈ [0,0,0,0,0]
+// Con unfolding z̃_i = μ_z_i + i·δz  i punti diventano (nel piano y,z̃):
+//   (2,0) (4,δz) (6,2δz) (4,3δz) (2,4δz)
+// I punti (2,0) e (2,4δz) hanno la stessa y ma z̃ diverse: nessuna retta
+// z̃ = a·y + b può passare per entrambi → χ² elevato. ✓
+//
+// Per una traccia monotona non ripiegata i punti ruotano ma rimangono
+// approssimativamente collineari — il fit ODR troverà una retta con χ² piccolo.
+// Questo è il comportamento DESIDERATO: premiamo le tracce che si mappano
+// in modo monotono e regolare sul detector.
+//
+// Il bug nel codice precedente era una dangling reference:
+//   const auto& trace_for_fit = apply_unfolding(trace, qcfg);  // temporaneo distrutto!
+// trace_for_fit puntava a memoria già liberata, quindi fit_trace riceveva dati
+// casuali (o la traccia originale se il compilatore riutilizzava lo stack).
+// La correzione: usare sempre una variabile std::vector con lifetime esplicita.
+//
+// Il parametro z_unfold_step controlla δz:
+//   = 0 (default): δz = trace_L / (N-1)  → offset totale = trace_L mm
+//   > 0: δz fisso in mm
+// Disabilita con apply_temporal_unfolding = false.
+
+static std::vector<TracePoint> apply_unfolding(const std::vector<TracePoint>& trace,
+                                               const QConfig& qcfg) {
+  std::vector<TracePoint> unfolded = trace; // COPIA esplicita, lifetime garantita
+  const int N                      = static_cast<int>(unfolded.size());
+  if (N < 2)
+    return unfolded;
+
+  double dz =
+      (qcfg.z_unfold_step > 0.0) ? qcfg.z_unfold_step : qcfg.trace_L / static_cast<double>(N - 1);
+
+  for (int i = 0; i < N; ++i)
+    unfolded[i].mu_z += static_cast<double>(i) * dz;
+  //  Cov invariata: l'offset i·dz è deterministico, non stocastico.
+  //  Cov(z̃_i, z̃_j) = Cov(z_i + i·dz, z_j + j·dz) = Cov(z_i, z_j)
+
+  return unfolded;
+}
+
+// ─── compute_Q ───────────────────────────────────────────────────────────────
+
 QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& qcfg,
                   bool include_non_converged) {
   if (db.find(cfg) == db.end()) {
     std::ostringstream oss;
-    oss << "compute_Q: configurazione (x1=" << cfg.x1 << ", x2=" << cfg.x2
-        << ") non trovata nel database.";
+    oss << "compute_Q: config (x1=" << cfg.x1 << ", x2=" << cfg.x2 << ") non trovata.";
     throw std::invalid_argument(oss.str());
   }
 
-  // Costruisce la lista di y0
+  // Lista y0
   std::vector<double> y0_list;
   if (!qcfg.y0_values.empty()) {
     y0_list = qcfg.y0_values;
@@ -400,24 +364,20 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
   res.n_traces     = 0;
   res.n_failed     = 0;
   res.n_invalid    = 0;
-  res.config_valid = true; // verrà aggiornato alla fine
+  res.config_valid = true;
   res.y0_used.reserve(total_y0);
   res.chi2_per_y0.reserve(total_y0);
   res.chi2_ndof_per_y0.reserve(total_y0);
   res.trace_valid_flags.reserve(total_y0);
 
   for (double y0 : y0_list) {
-    // build_trace
+    // 1. Traccia fisica
     std::vector<TracePoint> trace;
     try {
       trace = build_trace(y0, cfg, db, qcfg.trace_L, qcfg.trace_dt);
     } catch (const std::exception& e) {
-      QWarning w;
-      w.kind    = QWarning::Kind::BuildTraceFailed;
-      w.y0      = y0;
-      w.a_final = std::numeric_limits<double>::quiet_NaN();
-      w.message = e.what();
-      res.warnings.push_back(std::move(w));
+      res.warnings.push_back({QWarning::Kind::BuildTraceFailed, y0,
+                              std::numeric_limits<double>::quiet_NaN(), e.what()});
       if (qcfg.verbose)
         std::cerr << "[compute_Q] build_trace failed y0=" << y0 << ": " << e.what() << "\n";
       ++res.n_failed;
@@ -425,60 +385,56 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
       continue;
     }
 
-    // Validità traccia
+    // 2. Validità traccia (sulla traccia fisica)
     bool trace_ok = is_trace_valid(trace, qcfg.point_valid_fraction);
     res.trace_valid_flags.push_back(trace_ok);
-
     if (!trace_ok) {
-      QWarning w;
-      w.kind    = QWarning::Kind::TraceInvalid;
-      w.y0      = y0;
-      w.a_final = std::numeric_limits<double>::quiet_NaN();
-
-      // Conta i punti validi per il messaggio diagnostico
-      int n_valid_pts = 0;
+      int nv = 0;
       for (const auto& pt : trace)
         if (pt.valid)
-          ++n_valid_pts;
-      double frac = static_cast<double>(n_valid_pts) / static_cast<double>(trace.size());
-
-      w.message = "traccia y0=" + std::to_string(y0) + " ha solo "
-                + std::to_string(static_cast<int>(frac * 100)) + "% punti on_detector (soglia: "
-                + std::to_string(static_cast<int>(qcfg.point_valid_fraction * 100)) + "%)";
-      res.warnings.push_back(std::move(w));
+          ++nv;
+      double frac = static_cast<double>(nv) / static_cast<double>(trace.size());
+      res.warnings.push_back(
+          {QWarning::Kind::TraceInvalid, y0, std::numeric_limits<double>::quiet_NaN(),
+           "y0=" + std::to_string(y0) + " ha solo " + std::to_string(static_cast<int>(frac * 100))
+               + "% punti on_detector"});
       if (qcfg.verbose)
         std::cerr << "[compute_Q] " << res.warnings.back().message << "\n";
       ++res.n_invalid;
       continue;
     }
 
-    // fit_trace
+    // 3. Temporal unfolding: z̃_i = μ_z_i + i·δz
+    //    Operazione su una copia locale (trace fisica NON modificata).
+    //    Il vettore `unfolded` ha lifetime garantita fino alla fine del blocco.
+    std::vector<TracePoint> unfolded;         // lifetime esplicita — nessuna dangling ref
+    const std::vector<TracePoint>* fit_input; // punta a trace o unfolded
+    if (qcfg.apply_temporal_unfolding) {
+      unfolded  = apply_unfolding(trace, qcfg);
+      fit_input = &unfolded;
+    } else {
+      fit_input = &trace;
+    }
+
+    // 4. Fit ODR pesato
     LineFitResult fit;
     try {
-      fit = fit_trace(trace, qcfg.fit_max_iter, qcfg.fit_tol);
+      fit = fit_trace(*fit_input, qcfg.fit_max_iter, qcfg.fit_tol);
     } catch (const std::exception& e) {
-      QWarning w;
-      w.kind    = QWarning::Kind::FitFailed;
-      w.y0      = y0;
-      w.a_final = std::numeric_limits<double>::quiet_NaN();
-      w.message = e.what();
-      res.warnings.push_back(std::move(w));
+      res.warnings.push_back(
+          {QWarning::Kind::FitFailed, y0, std::numeric_limits<double>::quiet_NaN(), e.what()});
       if (qcfg.verbose)
         std::cerr << "[compute_Q] fit_trace threw y0=" << y0 << ": " << e.what() << "\n";
       ++res.n_failed;
       continue;
     }
 
-    // Convergenza
+    // 5. Convergenza
     if (!fit.converged && !include_non_converged) {
-      QWarning w;
-      w.kind    = QWarning::Kind::FitNotConverged;
-      w.y0      = y0;
-      w.a_final = fit.a;
-      w.message = "fit non convergente dopo " + std::to_string(fit.n_iter) + " iterazioni";
-      res.warnings.push_back(std::move(w));
+      res.warnings.push_back({QWarning::Kind::FitNotConverged, y0, fit.a,
+                              "fit non convergente dopo " + std::to_string(fit.n_iter) + " iter"});
       if (qcfg.verbose)
-        std::cerr << "[compute_Q] " << w.message << " y0=" << y0 << " a=" << fit.a << "\n";
+        std::cerr << "[compute_Q] " << res.warnings.back().message << " y0=" << y0 << "\n";
       ++res.n_failed;
       continue;
     }
@@ -490,21 +446,15 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
     ++res.n_traces;
   }
 
-  // Validità configurazione: almeno qcfg.trace_valid_fraction tracce valide tra quelle tentate
-  int n_attempted = total_y0 - res.n_failed;
-  if (n_attempted > 0) {
-    double valid_frac = static_cast<double>(res.n_traces) / static_cast<double>(n_attempted);
-    res.config_valid  = (valid_frac >= qcfg.trace_valid_fraction);
-
+  // Validità configurazione
+  int n_att = total_y0 - res.n_failed;
+  if (n_att > 0) {
+    double vf        = static_cast<double>(res.n_traces) / static_cast<double>(n_att);
+    res.config_valid = (vf >= qcfg.trace_valid_fraction);
     if (!res.config_valid) {
-      QWarning w;
-      w.kind    = QWarning::Kind::ConfigInvalid;
-      w.y0      = -1.0;
-      w.a_final = std::numeric_limits<double>::quiet_NaN();
-      w.message = "configurazione invalida: solo "
-                + std::to_string(static_cast<int>(valid_frac * 100)) + "% tracce valide (soglia: "
-                + std::to_string(static_cast<int>(qcfg.trace_valid_fraction * 100)) + "%)";
-      res.warnings.push_back(std::move(w));
+      res.warnings.push_back(
+          {QWarning::Kind::ConfigInvalid, -1.0, std::numeric_limits<double>::quiet_NaN(),
+           "solo " + std::to_string(static_cast<int>(vf * 100)) + "% tracce valide"});
       if (qcfg.verbose)
         std::cerr << "[compute_Q] " << res.warnings.back().message << "\n";
     }

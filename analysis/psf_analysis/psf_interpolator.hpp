@@ -206,6 +206,15 @@ struct QConfig {
   double point_valid_fraction = 0.75; // frazione minima di punti on_detector per traccia valida
   double trace_valid_fraction = 0.75; // frazione minima di tracce valide per config valida
 
+  // Temporal unfolding
+  // Se > 0: offset fisso in mm applicato per passo della traccia.
+  // Se == 0 (default): calcolato automaticamente come trace_L / N_punti,
+  //   in modo che l'offset totale sull'intera traccia sia sempre trace_L mm,
+  //   indipendentemente dalla risoluzione di campionamento.
+  // Disabilita l'unfolding impostando apply_temporal_unfolding = false.
+  double z_unfold_step          = 0.0;  // [mm/passo], 0 = automatico
+  bool apply_temporal_unfolding = true; // default attivo
+
   bool verbose = false;
 };
 

@@ -15,16 +15,30 @@
 /*
  * q_map — Mappa 2D della funzione di qualità Q(x1, x2)
  *
+ * TEMPORAL UNFOLDING (attivo per default)
+ *
+ * Per default il calcolo di Q utilizza il temporal unfolding: a ogni punto i
+ * della traccia viene aggiunto un offset artificiale in z:
+ *
+ *     z̃_i = μ_{z,i} + i · δz_unfold
+ *
+ * con δz_unfold = trace_L / (N-1) per default (offset totale = trace_L mm).
+ * Questo rende visibile qualsiasi non-linearità (curvatura, ripiegamento)
+ * che sarebbe altrimenti mascherata dalla simmetria z≈0.
+ *
+ * Opzioni:
+ *   --unfold-dz <val>   passo di srotolamento fisso [mm/passo] (0 = automatico)
+ *   --no-unfold         disabilita il temporal unfolding (usa z fisico)
+ *
  * Gestione celle invalide:
- *   Una configurazione è invalida se QResult::config_valid = false, ovvero se
- *   meno del 75% delle tracce (y0) che la compongono è valida.
- *   Una traccia è valida se almeno il 75% dei suoi TracePoint ha on_detector=true.
- *   Le celle invalide vengono disegnate in grigio scuro invece di restare bianche.
+ *   Celle grigie = configurazioni in cui meno del 75% delle tracce è on_detector.
  *
  * Uso:
  *   q_map [--psf <path>] [--config <path>] [--output <path>]
  *         [--y0-min <val>] [--y0-max <val>] [--dy0 <val>]
  *         [--L <val>] [--dt <val>]
+ *         [--unfold-dz <val>]
+ *         [--no-unfold]
  *         [--point-frac <val>]   (soglia punti on_detector per traccia, default 0.75)
  *         [--trace-frac <val>]   (soglia tracce valide per config, default 0.75)
  *         [--log] [--norm] [--tsv <path>]
@@ -56,7 +70,7 @@
 #include <string>
 #include <vector>
 
-// ─── Parsing CLI ─────────────────────────────────────────────────────────────
+// Parsing CLI
 struct CliConfig {
   std::string psf_path    = "output/psf/psf_data.root";
   std::string config_path = "config/config.json";
@@ -69,8 +83,12 @@ struct CliConfig {
   double L      = 10.0;
   double dt     = 0.1;
 
-  double point_frac = 0.75; // soglia punti on_detector per traccia valida
-  double trace_frac = 0.75; // soglia tracce valide per configurazione valida
+  double point_frac = 0.75;
+  double trace_frac = 0.75;
+
+  // Temporal unfolding
+  double unfold_dz = 0.0;   // 0 = automatico
+  bool no_unfold   = false; // se true, disabilita l'unfolding
 
   bool log_scale = false;
   bool normalize = false;
@@ -109,6 +127,10 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.point_frac = std::stod(next());
     else if (key == "--trace-frac")
       cfg.trace_frac = std::stod(next());
+    else if (key == "--unfold-dz")
+      cfg.unfold_dz = std::stod(next());
+    else if (key == "--no-unfold")
+      cfg.no_unfold = true;
     else if (key == "--log")
       cfg.log_scale = true;
     else if (key == "--norm")
@@ -121,7 +143,7 @@ static CliConfig parse_args(int argc, char** argv) {
   return cfg;
 }
 
-// ─── Stile ROOT ──────────────────────────────────────────────────────────────
+// Stile ROOT
 static void apply_style() {
   gStyle->Reset();
   gStyle->SetTextFont(42);
@@ -163,7 +185,7 @@ static std::string fmt(double v, int n = 1) {
   return o.str();
 }
 
-// ─── main ────────────────────────────────────────────────────────────────────
+// main
 int main(int argc, char** argv) {
   CliConfig cli = parse_args(argc, argv);
 
@@ -190,7 +212,7 @@ int main(int argc, char** argv) {
   const double x2_lo = x1_lo + r1 + r2 + 3.0;
   const double x2_hi = xmax + r2 - h2;
 
-  // 2. Parametri di campionamento y0 e soglie di validità
+  // 2. Parametri QConfig
   riptide::QConfig qcfg;
   qcfg.y0_min               = (cli.y0_min >= 0.0) ? cli.y0_min : 0.0;
   qcfg.y0_max               = (cli.y0_max >= 0.0) ? cli.y0_max : 10.0;
@@ -202,11 +224,29 @@ int main(int argc, char** argv) {
   qcfg.point_valid_fraction = cli.point_frac;
   qcfg.trace_valid_fraction = cli.trace_frac;
 
+  // Temporal unfolding
+  qcfg.apply_temporal_unfolding = !cli.no_unfold;
+  qcfg.z_unfold_step            = cli.unfold_dz;
+
   int n_y0 = static_cast<int>(std::round((qcfg.y0_max - qcfg.y0_min) / qcfg.dy0)) + 1;
+
+  // Calcola il dz effettivo per la stampa diagnostica
+  int n_trace_pts     = static_cast<int>(std::round(qcfg.trace_L / qcfg.trace_dt)) + 1;
+  double dz_effective = (qcfg.z_unfold_step > 0.0)
+                          ? qcfg.z_unfold_step
+                          : qcfg.trace_L / static_cast<double>(n_trace_pts - 1);
+
   std::cout << "Campionamento y0: [" << qcfg.y0_min << ", " << qcfg.y0_max << "] passo " << qcfg.dy0
             << " mm  →  " << n_y0 << " tracce per configurazione\n";
   std::cout << "Soglie validità: punti " << cli.point_frac * 100 << "% | tracce "
             << cli.trace_frac * 100 << "%\n";
+  if (qcfg.apply_temporal_unfolding) {
+    std::cout << "Temporal unfolding: ATTIVO  δz = " << fmt(dz_effective, 4)
+              << " mm/passo  (offset totale ≈ " << fmt(dz_effective * (n_trace_pts - 1), 2)
+              << " mm)\n";
+  } else {
+    std::cout << "Temporal unfolding: DISATTIVATO\n";
+  }
 
   // 3. Carica PSF database
   riptide::PSFDatabase db;
@@ -224,7 +264,7 @@ int main(int argc, char** argv) {
     double Q;
     int n_traces;
     int n_failed;
-    int n_invalid; // tracce invalide per on_detector
+    int n_invalid;
     bool config_valid;
   };
   std::vector<QEntry> entries;
@@ -273,7 +313,7 @@ int main(int argc, char** argv) {
   std::cout << "\nConfigurazioni valide:   " << total_cfgs - n_cfg_invalid << "\n";
   std::cout << "Configurazioni invalide: " << n_cfg_invalid << "\n";
 
-  // 5. Minimo di Q (solo configurazioni valide con Q > 0)
+  // 5. Minimo di Q
   auto it_best =
       std::min_element(entries.begin(), entries.end(), [](const QEntry& a, const QEntry& b) {
         if (!a.config_valid)
@@ -304,10 +344,10 @@ int main(int argc, char** argv) {
     std::cout << "TSV salvato in: " << cli.tsv_path << "\n";
   }
 
-  // ─── Sezione grafica ───────────────────────────────────────────────────────
+  // Sezione grafica
   apply_style();
 
-  // 7. TH2D valide + TH2D invalide (disegnate in grigio)
+  // 7. TH2D valide + TH2D invalide
   int bins_x = std::max(1, static_cast<int>(std::round((x1_hi - x1_lo) / dx)) + 1);
   int bins_y = std::max(1, static_cast<int>(std::round((x2_hi - x2_lo) / dx)) + 1);
   double hx  = dx / 2.0;
@@ -317,11 +357,9 @@ int main(int argc, char** argv) {
 
   TH2D h_Q("h_Q", "", bins_x, ax_x1_lo, ax_x1_hi, bins_y, ax_x2_lo, ax_x2_hi);
   TH2D h_inv("h_inv", "", bins_x, ax_x1_lo, ax_x1_hi, bins_y, ax_x2_lo, ax_x2_hi);
-
   h_Q.Reset();
   h_inv.Reset();
 
-  // Riempi con SetBinContent diretto (evita accumuli da Fill con peso)
   for (const auto& e : entries) {
     int bx = h_Q.GetXaxis()->FindFixBin(e.x1);
     int by = h_Q.GetYaxis()->FindFixBin(e.x2);
@@ -331,7 +369,6 @@ int main(int argc, char** argv) {
       h_inv.SetBinContent(bx, by, 1.0);
   }
 
-  // Assi h_Q
   h_Q.GetXaxis()->SetTitle("x_{1}  [mm]  (lente 75 mm)");
   h_Q.GetYaxis()->SetTitle("x_{2}  [mm]  (lente 60 mm)");
   h_Q.GetXaxis()->CenterTitle(true);
@@ -341,7 +378,7 @@ int main(int argc, char** argv) {
   h_Q.GetXaxis()->SetNdivisions(506);
   h_Q.GetYaxis()->SetNdivisions(505);
 
-  // Range colori: percentili 5–95 sulle sole celle valide
+  // Range colori: percentili 5–95
   {
     std::vector<double> q_vals;
     q_vals.reserve(entries.size());
@@ -356,7 +393,6 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Colore grigio scuro per le celle invalide
   Int_t invalid_color = TColor::GetColor(80, 80, 80);
   h_inv.SetFillColor(invalid_color);
   h_inv.SetLineColor(invalid_color);
@@ -399,8 +435,6 @@ int main(int argc, char** argv) {
 
   // 9. Plot principale
   pad_plot->cd();
-
-  // Prima h_Q (valide, palette kBird), poi h_inv sovrapposto (invalide, grigio)
   h_Q.Draw("COL");
   h_inv.Draw("BOX same");
 
@@ -420,15 +454,20 @@ int main(int argc, char** argv) {
                   (" #bf{min} (" + fmt(it_best->x1, 1) + ", " + fmt(it_best->x2, 1) + ")").c_str());
   }
 
-  // Etichetta celle invalide (angolo in alto a destra del pad, NDC)
+  // Etichetta unfolding (angolo in alto a sinistra del pad)
   {
-    TLatex leg;
-    leg.SetNDC(true);
-    leg.SetTextFont(42);
-    leg.SetTextSize(0.030);
-    leg.SetTextColor(invalid_color);
-    leg.SetTextAlign(32); // right-align
-    leg.DrawLatex(0.975, 0.915, "#square  PSF fuori detector  ");
+    TLatex unf_lbl;
+    unf_lbl.SetNDC(true);
+    unf_lbl.SetTextFont(42);
+    unf_lbl.SetTextSize(0.028);
+    unf_lbl.SetTextColor(kGray + 2);
+    unf_lbl.SetTextAlign(12);
+    if (qcfg.apply_temporal_unfolding) {
+      unf_lbl.DrawLatex(0.145, 0.915,
+                        ("#delta z_{unfold} = " + fmt(dz_effective, 6) + " mm/passo").c_str());
+    } else {
+      unf_lbl.DrawLatex(0.145, 0.915, "temporal unfolding: OFF");
+    }
   }
 
   // Titolo
@@ -436,7 +475,7 @@ int main(int argc, char** argv) {
     TLatex title;
     title.SetNDC();
     title.SetTextFont(42);
-    title.SetTextSize(0.048);
+    title.SetTextSize(0.046);
     title.SetTextAlign(22);
     title.SetTextColor(kBlack);
     const std::string z_lbl = cli.normalize ? "Q / n_{tracce}" : "Q(x_{1}, x_{2})";
@@ -466,7 +505,7 @@ int main(int argc, char** argv) {
     box->Draw();
   }
 
-  // Rettangolino grigio + etichetta "N/A" sotto la color bar
+  // Rettangolino grigio per N/A
   {
     double inv_y0 = std::max(0.0, cb_y0 - 0.09);
     double inv_y1 = cb_y0 - 0.01;
@@ -475,7 +514,6 @@ int main(int argc, char** argv) {
       inv_box->SetFillColor(invalid_color);
       inv_box->SetLineColor(invalid_color);
       inv_box->Draw();
-
       TLatex inv_lbl;
       inv_lbl.SetNDC();
       inv_lbl.SetTextFont(42);
@@ -513,7 +551,7 @@ int main(int argc, char** argv) {
   info.SetNDC(true);
   info.SetTextFont(42);
 
-  const double col1 = 0.03, col2 = 0.54;
+  const double col1 = 0.03, col2 = 0.52;
   const double hdr = 0.82, row1 = 0.52, row2 = 0.18;
 
   info.SetTextSize(0.13);
@@ -534,8 +572,8 @@ int main(int argc, char** argv) {
                      .c_str());
   info.DrawLatex(col1, row2,
                  ("L = " + fmt(qcfg.trace_L, 1) + " mm   #Deltat = " + fmt(qcfg.trace_dt, 2)
-                  + " mm   soglie: " + fmt(cli.point_frac * 100, 0) + "% punti | "
-                  + fmt(cli.trace_frac * 100, 0) + "% tracce")
+                  + " mm   soglie: " + fmt(cli.point_frac * 100, 0) + "% pts | "
+                  + fmt(cli.trace_frac * 100, 0) + "% tr.")
                      .c_str());
 
   info.DrawLatex(col2, row1,
