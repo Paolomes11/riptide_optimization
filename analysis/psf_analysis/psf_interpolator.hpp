@@ -99,8 +99,8 @@ struct LineFitResult {
   double chi2_ndof; // chi^2 ridotto
 
   // Valori per iterazione del fit
-  int n_iter; // numero di iterazioni fatte
-  bool converged;   // se è convergente
+  int n_iter;     // numero di iterazioni fatte
+  bool converged; // se è convergente
 
   // Residui perpendicolari pesati per ciascun punto
   // d_i = distanza perpendicolare del punto i dalla retta stimata [mm]
@@ -188,6 +188,71 @@ std::vector<TracePoint> build_trace(double y0, const LensConfig& cfg, const PSFD
  * @throws std::invalid_argument se trace ha meno di 3 punti
  */
 LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter = 20, double tol = 1e-8);
+
+// Funzione di qualità Q(x1, x2)
+// Parametri di configurazione per il calcolo di Q.
+struct QConfig {
+  // Valori di y0 su cui sommare (coordinata radiale della traccia)
+  // Se vuoto, viene generato automaticamente l'intervallo [y0_min, y0_max] con passo dy0.
+  std::vector<double> y0_values{};
+
+  double y0_min = 0.0;  // [mm] — valore minimo di y0 (se y0_values è vuoto)
+  double y0_max = 10.0; // [mm] — valore massimo di y0
+  double dy0    = 0.1;  // [mm] — passo di campionamento in y0
+
+  double trace_L  = 10.0; // [mm] — lunghezza della traccia ideale
+  double trace_dt = 0.1;  // [mm] — step di campionamento lungo la traccia
+
+  int fit_max_iter = 1000; // iterazioni massime IRLS in fit_trace
+  double fit_tol   = 1e-8; // soglia di convergenza fit_trace
+
+  bool verbose = false; // se true, stampa informazioni dettagliate durante il calcolo di Q
+};
+
+// Descrizione di una singola esclusione all'interno di compute_Q
+struct QWarning {
+  enum class Kind { FitNotConverged, BuildTraceFailed, FitFailed };
+  Kind kind;
+  double y0;
+  double a_final; // pendenza al momento dell'esclusione (solo per FitNotConverged)
+  std::string message;
+};
+
+// Risultato del calcolo di Q per una singola configurazione lenti.
+struct QResult {
+  double Q;     // Funzione di qualità totale: sum_tracce chi^2(y0, x1, x2)
+  int n_traces; // Numero di tracce effettivamente usate nella somma
+  int n_failed; // Tracce scartate (fit non convergente o dati mancanti)
+
+  // Contributi per-traccia (stessa lunghezza di y0_used)
+  std::vector<double> y0_used;          // y0 effettivamente usati
+  std::vector<double> chi2_per_y0;      // chi^2 del fit ODR per ogni y0
+  std::vector<double> chi2_ndof_per_y0; // chi^2/ndof per ogni y0
+
+  std::vector<QWarning> warnings; // eventuali avvisi su tracce scartate o problemi
+};
+
+/**
+ * Calcola la funzione di qualità Q(x1, x2) per una configurazione di lenti.
+ *
+ * Per ogni valore di y0 in QConfig::y0_values (o generato dall'intervallo):
+ *   1. Costruisce la traccia media build_trace(y0, cfg, db, L, dt)
+ *   2. Esegue il fit ODR pesato fit_trace(trace)
+ *   3. Accumula chi^2 → Q = sum_i chi^2(y0_i)
+ *
+ * Le tracce con fit non convergente vengono conteggiate in QResult::n_failed
+ * ma NON contribuiscono a Q (comportamento configurabile tramite
+ * include_non_converged — se true, vengono sommate comunque).
+ *
+ * @param cfg                  Configurazione lenti (deve essere presente nel db)
+ * @param db                   Database PSF caricato con load_psf_database()
+ * @param qcfg                 Parametri di campionamento e fit
+ * @param include_non_converged Se true, include chi^2 anche di fit non convergenti
+ * @return                     QResult con il valore di Q e i contributi per-traccia
+ * @throws std::invalid_argument se db non contiene cfg
+ */
+QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& qcfg = QConfig{},
+                  bool include_non_converged = false);
 
 } // namespace riptide
 

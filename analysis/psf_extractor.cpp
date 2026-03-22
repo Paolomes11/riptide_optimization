@@ -17,7 +17,7 @@
  *
  * Per ogni combinazione (config_id, y_source) presente nel file lens.root,
  * calcola:
- *   - media y e z (con filtro outlier 2-sigma, 2 iterazioni)
+ *   - media y e z (con filtro outlier 3-sigma, 2 iterazioni)
  *   - matrice di covarianza 2x2: cov_yy, cov_yz, cov_zz
  *   - numero di hit dopo filtraggio
  *
@@ -44,7 +44,7 @@ struct Hit {
   double y, z;
 };
 
-// Calcola media e matrice di covarianza con filtro outlier iterativo (2-sigma)
+// Calcola media e matrice di covarianza con filtro outlier iterativo (3-sigma)
 // Restituisce false se non ci sono hit sufficienti
 struct PSFResult {
   double mean_y, mean_z;
@@ -53,8 +53,8 @@ struct PSFResult {
   int n_hits_filtered; // hit dopo il filtro
 };
 
-bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sigma_cut = 2.0,
-                 int n_iter = 4) {
+bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sigma_cut = 3.0,
+                 int n_iter = 2) {
   if (raw_hits.empty())
     return false;
 

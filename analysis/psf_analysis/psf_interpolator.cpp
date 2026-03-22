@@ -342,4 +342,93 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter, doub
   return res;
 }
 
+// compute_Q
+QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& qcfg,
+                  bool include_non_converged) {
+  if (db.find(cfg) == db.end()) {
+    std::ostringstream oss;
+    oss << "compute_Q: configurazione (x1=" << cfg.x1 << ", x2=" << cfg.x2
+        << ") non trovata nel database.";
+    throw std::invalid_argument(oss.str());
+  }
+
+  // Costruisce la lista di y0
+  std::vector<double> y0_list;
+  if (!qcfg.y0_values.empty()) {
+    y0_list = qcfg.y0_values;
+  } else {
+    const double eps = qcfg.dy0 * 1e-9;
+    for (double y0 = qcfg.y0_min; y0 <= qcfg.y0_max + eps; y0 += qcfg.dy0)
+      y0_list.push_back(y0);
+  }
+  if (y0_list.empty())
+    throw std::invalid_argument("compute_Q: lista di y0 vuota");
+
+  QResult res{};
+  res.Q        = 0.0;
+  res.n_traces = 0;
+  res.n_failed = 0;
+  res.y0_used.reserve(y0_list.size());
+  res.chi2_per_y0.reserve(y0_list.size());
+  res.chi2_ndof_per_y0.reserve(y0_list.size());
+
+  for (double y0 : y0_list) {
+    // build_trace
+    std::vector<TracePoint> trace;
+    try {
+      trace = build_trace(y0, cfg, db, qcfg.trace_L, qcfg.trace_dt);
+    } catch (const std::exception& e) {
+      QWarning w;
+      w.kind    = QWarning::Kind::BuildTraceFailed;
+      w.y0      = y0;
+      w.a_final = std::numeric_limits<double>::quiet_NaN();
+      w.message = e.what();
+      res.warnings.push_back(std::move(w));
+      if (qcfg.verbose)
+        std::cerr << "[compute_Q] build_trace failed y0=" << y0 << ": " << e.what() << "\n";
+      ++res.n_failed;
+      continue;
+    }
+
+    // fit_trace
+    LineFitResult fit;
+    try {
+      fit = fit_trace(trace, qcfg.fit_max_iter, qcfg.fit_tol);
+    } catch (const std::exception& e) {
+      QWarning w;
+      w.kind    = QWarning::Kind::FitFailed;
+      w.y0      = y0;
+      w.a_final = std::numeric_limits<double>::quiet_NaN();
+      w.message = e.what();
+      res.warnings.push_back(std::move(w));
+      if (qcfg.verbose)
+        std::cerr << "[compute_Q] fit_trace threw y0=" << y0 << ": " << e.what() << "\n";
+      ++res.n_failed;
+      continue;
+    }
+
+    // Convergenza
+    if (!fit.converged && !include_non_converged) {
+      QWarning w;
+      w.kind    = QWarning::Kind::FitNotConverged;
+      w.y0      = y0;
+      w.a_final = fit.a;
+      w.message = "fit non convergente dopo " + std::to_string(fit.n_iter) + " iterazioni";
+      res.warnings.push_back(std::move(w));
+      if (qcfg.verbose)
+        std::cerr << "[compute_Q] " << w.message << " y0=" << y0 << " a=" << fit.a << "\n";
+      ++res.n_failed;
+      continue;
+    }
+
+    res.Q += fit.chi2;
+    res.y0_used.push_back(y0);
+    res.chi2_per_y0.push_back(fit.chi2);
+    res.chi2_ndof_per_y0.push_back(fit.chi2_ndof);
+    ++res.n_traces;
+  }
+
+  return res;
+}
+
 } // namespace riptide

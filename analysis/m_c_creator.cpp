@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
   double y0_target = std::stod(argv[3]);
 
   // apri file ROOT
-  TFile* file = TFile::Open("output/lens_simulation/lens_20260319_170944.root");
+  TFile* file = TFile::Open("output/lens_simulation/lens_20260320_152738.root");
   if (!file || file->IsZombie()) {
     std::cerr << "Errore nell'aprire il file ROOT\n";
     return 1;

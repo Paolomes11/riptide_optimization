@@ -1,6 +1,6 @@
 # riptide_optimization
 
-Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende due programmi principali — `optimization` e `lens_simulation` — quattro strumenti di analisi ROOT, e una libreria di analisi PSF (`psf_analysis`) con test unitari integrati.
+Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende due programmi principali — `optimization` e `lens_simulation` — cinque strumenti di analisi ROOT, e una libreria di analisi PSF (`psf_analysis`) con test unitari integrati.
 
 ---
 
@@ -41,26 +41,26 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 
 ```
 riptide_optimization/
-├── scripts/                             # Script di lancio e monitoraggio
+├── scripts/
 │   ├── run.sh                           # Lancia lens_simulation o optimization (locale o SSD)
 │   └── monitor.sh                       # Monitoraggio progresso chunk paralleli
 │
-├── programs/                        # Entry point dei due eseguibili
-│   ├── optimization_main.cpp        # Main per la scansione di efficienza
-│   └── lens_simulation_main.cpp     # Main per la simulazione beam scan
+├── programs/
+│   ├── optimization_main.cpp            # Main per la scansione di efficienza geometrica
+│   └── lens_simulation_main.cpp         # Main per la simulazione beam scan PSF
 │
 ├── src/
-│   ├── common/                      # Codice condiviso tra i due programmi
+│   ├── common/                          # Codice condiviso
 │   │   ├── physics_list.cpp
 │   │   └── primary_generator_action.cpp
-│   ├── optimization/                # Sorgenti del programma optimization
+│   ├── optimization/                    # Sorgenti programma optimization
 │   │   ├── detector_construction.cpp
 │   │   ├── action_initialization.cpp
 │   │   ├── event_action.cpp
 │   │   ├── run_action.cpp
 │   │   ├── sensitive_detector.cpp
 │   │   └── optimizer.cpp
-│   └── lens_simulation/             # Sorgenti del programma lens_simulation
+│   └── lens_simulation/                 # Sorgenti programma lens_simulation
 │       ├── detector_construction.cpp
 │       ├── action_initialization.cpp
 │       ├── event_action.cpp
@@ -68,25 +68,26 @@ riptide_optimization/
 │       ├── sensitive_detector.cpp
 │       └── lens_scan.cpp
 │
-├── include/                         # Header files (specchi di src/)
+├── include/                             # Header files (specchi di src/)
 │   ├── common/
 │   ├── optimization/
 │   └── lens_simulation/
 │
-├── analysis/                        # Strumenti di analisi ROOT (standalone)
-│   ├── plot2D.cpp                   # Mappa 2D efficienza geometrica
-│   ├── beam_scan_plot.cpp           # Grafici posizione fotoni vs posizione sorgente
-│   ├── m_c_creator.cpp              # Istogramma 2D hit su detector per un run
-│   ├── psf_extractor.cpp            # Media e matrice di covarianza PSF per tutti i run
+├── analysis/
+│   ├── plot2D.cpp                       # Mappa 2D efficienza geometrica
+│   ├── beam_scan_plot.cpp               # Posizione fotoni vs posizione sorgente
+│   ├── m_c_creator.cpp                  # Istogramma 2D hit su detector per un run
+│   ├── psf_extractor.cpp                # Estrazione media e covarianza PSF per tutti i run
 │   ├── CMakeLists.txt
-│   └── psf_analysis/                # Libreria PSF + analisi traccia
-│       ├── psf_interpolator.hpp     # API pubblica: strutture dati, dichiarazioni
-│       ├── psf_interpolator.cpp     # Implementazione: load, interpolate, build_trace, fit_trace
-│       ├── trace_viewer.cpp         # Eseguibile: visualizza traccia media con ellissi di cov
-│       ├── test_fit_trace.cpp       # Test unitari analitici per fit_trace()
+│   └── psf_analysis/                    # Libreria PSF + analisi traccia + ottimizzazione
+│       ├── psf_interpolator.hpp         # API pubblica: strutture dati, dichiarazioni
+│       ├── psf_interpolator.cpp         # load, interpolate, build_trace, fit_trace, compute_Q
+│       ├── trace_viewer.cpp             # Visualizza traccia media con ellissi di covarianza
+│       ├── q_map.cpp                    # ★ Mappa 2D di Q(x1,x2) — ottimizzazione PSF-based
+│       ├── test_fit_trace.cpp           # Test unitari per fit_trace() e compute_Q()
 │       └── CMakeLists.txt
 │
-├── geometry/                        # Geometria GDML
+├── geometry/
 │   ├── main.gdml
 │   ├── define.xml
 │   ├── materials.xml
@@ -107,12 +108,15 @@ riptide_optimization/
 │
 └── output/
     ├── events.root
+    ├── efficiency2D.png
     ├── lens_simulation/
     │   └── lens.root
     ├── mean_covariance_maps/
-    └── psf/
-        ├── psf_data.root
-        └── psf_analysis/            # Output di trace_viewer
+    ├── psf/
+    │   └── psf_data.root
+    └── psf_analysis/
+        ├── q_map.png                    # ★ output di q_map
+        └── trace_*.png
 ```
 
 ---
@@ -146,7 +150,7 @@ cmake -S . -B build/ -G "Ninja Multi-Config"
 # Compilazione
 cmake --build build/ --config Release
 
-# Gli eseguibili vengono creati in:
+# Eseguibili prodotti:
 #   build/Release/optimization_main
 #   build/Release/lens_simulation_main
 #   build/analysis/Release/plot2D
@@ -154,6 +158,7 @@ cmake --build build/ --config Release
 #   build/analysis/Release/m_c_creator
 #   build/analysis/Release/psf_extractor
 #   build/analysis/psf_analysis/Release/trace_viewer
+#   build/analysis/psf_analysis/Release/q_map           ★ nuovo
 #   build/analysis/psf_analysis/Release/test_fit_trace
 ```
 
@@ -266,13 +271,11 @@ File ROOT: `output/lens_simulation/lens.root` — tre TTree:
 ### Trovare e montare il device
 
 ```bash
-lsblk                                          # identifica il device
+lsblk
 sudo mkdir -p /mnt/external_ssd
 sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
 mountpoint -q /mnt/external_ssd && echo "OK"
 ```
-
-Opzioni di mount consigliate per I/O intensivo: `noatime,nodiratime,discard`.
 
 ### Utilizzo con `--ssd`
 
@@ -362,7 +365,7 @@ Output `psf_data.root` — TTree `PSF`:
 
 ## Libreria psf\_analysis
 
-La libreria `psf_analysis` (in `analysis/psf_analysis/`) implementa la catena analitica PSF-based descritta nella documentazione di tesi. È compilata come libreria statica e usata da `trace_viewer` e `test_fit_trace`.
+La libreria `psf_analysis` (in `analysis/psf_analysis/`) implementa la catena analitica PSF-based. È compilata come libreria statica e usata da `trace_viewer`, `q_map` e `test_fit_trace`.
 
 ### API pubblica (`psf_interpolator.hpp`)
 
@@ -375,7 +378,9 @@ La libreria `psf_analysis` (in `analysis/psf_analysis/`) implementa la catena an
 | `PSFValue` | Risultato interpolato: `mu_y`, `mu_z`, `cov` |
 | `TracePoint` | Punto della traccia sul detector: `t`, `r`, `mu_y`, `mu_z`, `cov` |
 | `LensConfig` | Chiave di configurazione `(x1, x2)` con confronto a tolleranza 1e-4 mm |
-| `LineFitResult` | Risultato completo del fit ODR (vedi sotto) |
+| `LineFitResult` | Risultato completo del fit ODR |
+| `QConfig` | Parametri di campionamento per `compute_Q` |
+| `QResult` | Risultato di `compute_Q`: valore di Q, contributi per-traccia |
 
 #### Funzioni
 
@@ -383,11 +388,13 @@ La libreria `psf_analysis` (in `analysis/psf_analysis/`) implementa la catena an
 
 **`find_nearest_config(cfg, db)`** — trova la configurazione più vicina nel database (distanza euclidea in `(x1, x2)`).
 
-**`interpolate(r, cfg, db)`** — interpola `mu_y`, `mu_z` e `Sigma` per un raggio `r` arbitrario. Usa interpolazione lineare tra i due punti della griglia adiacenti; clamp agli estremi senza estrapolazione.
+**`interpolate(r, cfg, db)`** — interpola `mu_y`, `mu_z` e `Σ` per un raggio `r` arbitrario. Usa interpolazione lineare; clamp agli estremi senza estrapolazione.
 
 **`build_trace(y0, cfg, db, L=10, dt=0.1)`** — costruisce la traccia media sul detector per una traccia ideale a distanza `y0` dall'asse ottico, parametrizzata da `t ∈ [-L/2, +L/2]` con step `dt`.
 
-**`fit_trace(trace, max_iter=20, tol=1e-8)`** — fit lineare pesato ODR della traccia (vedi sezione dedicata).
+**`fit_trace(trace, max_iter=20, tol=1e-8)`** — fit lineare pesato ODR della traccia.
+
+**`compute_Q(cfg, db, qcfg, include_non_converged=false)`** — calcola la funzione di qualità Q(x1,x2).
 
 #### `fit_trace` — Fit ODR iterativo
 
@@ -396,50 +403,66 @@ Esegue il fit della retta `z = a·y + b` sui punti `{(mu_y_i, mu_z_i)}` usando l
 **Algoritmo:**
 
 1. Stima iniziale `(a, b)` con OLS non pesato.
-2. Per ogni iterazione:
-   - Calcola il vettore normale `n̂ = (-a, 1)ᵀ / √(1+a²)`
-   - Calcola i pesi `w_i = 1 / (n̂ᵀ Σ_i n̂) = 1 / (n_y²·σ²_y + 2·n_y·n_z·σ_yz + n_z²·σ²_z)`
-   - Risolve il sistema normale 2×2 pesato in forma chiusa per `(a, b)` — costo O(N)
-   - Controlla convergenza su `|Δa| < tol`
+2. Per ogni iterazione: calcola `n̂`, poi i pesi `w_i = 1/(n̂ᵀ Σ_i n̂)`, risolve il WLS 2×2 in forma chiusa, controlla convergenza su `|Δa| < tol`.
 3. Calcola χ², residui e pull finali con distanza perpendicolare esatta.
 
-**`LineFitResult` — campi:**
+#### `compute_Q` — Funzione di qualità
 
-| Campo | Tipo | Descrizione |
+Implementa la funzione di qualità definita nella tesi (Sez. 8):
+
+```
+Q(x1, x2) = Σ_{y0} chi²(y0, x1, x2)
+```
+
+Per ogni valore di `y0` nel campionamento: costruisce la traccia con `build_trace`, esegue `fit_trace`, accumula χ².
+
+**`QConfig` — campi:**
+
+| Campo | Default | Descrizione |
 |---|---|---|
-| `a`, `b` | `double` | Parametri della retta `z = a·y + b` |
-| `sigma_a`, `sigma_b` | `double` | Incertezze sui parametri |
-| `cov_ab` | `double` | Covarianza tra `a` e `b` |
-| `chi2` | `double` | χ² totale |
-| `ndof` | `int` | Gradi di libertà = N − 2 |
-| `chi2_ndof` | `double` | χ² ridotto = χ²/ndof |
-| `n_iter` | `int` | Iterazioni eseguite |
-| `converged` | `bool` | `true` se `\|Δa\| < tol` |
-| `residuals` | `vector<double>` | Distanza perpendicolare `d_i` [mm] |
-| `residual_sig` | `vector<double>` | `σ_{d,i} = √(n̂ᵀ Σ_i n̂)` [mm] |
-| `pull` | `vector<double>` | Pull normalizzato `d_i / σ_{d,i}` |
+| `y0_values` | `{}` | Lista esplicita di y0; se vuota, usa l'intervallo sotto |
+| `y0_min` | `0.0` | Inizio intervallo y0 [mm] |
+| `y0_max` | `10.0` | Fine intervallo y0 [mm] |
+| `dy0` | `0.1` | Passo di campionamento [mm] |
+| `trace_L` | `10.0` | Lunghezza traccia [mm] |
+| `trace_dt` | `0.1` | Step traccia [mm] |
+| `fit_max_iter` | `20` | Iterazioni massime IRLS |
+| `fit_tol` | `1e-8` | Soglia convergenza |
 
-**Utilizzo tipico:**
+**`QResult` — campi:**
+
+| Campo | Descrizione |
+|---|---|
+| `Q` | Valore totale della funzione di qualità |
+| `n_traces` | Numero di tracce usate nella somma |
+| `n_failed` | Tracce scartate (fit non convergente o dati mancanti) |
+| `y0_used` | Valori di y0 effettivamente usati |
+| `chi2_per_y0` | χ² del fit ODR per ogni y0 |
+| `chi2_ndof_per_y0` | χ²/ndof per ogni y0 |
+
+**Nota di design:** `compute_Q` richiede che la configurazione sia *esatta* nel database. Usa `find_nearest_config` prima se operi su configurazioni non campionate.
+
+**Utilizzo tipico** in un loop di ottimizzazione:
 
 ```cpp
-#include "psf_interpolator.hpp"
-
-// Carica il database PSF (una volta sola)
 auto db = riptide::load_psf_database("output/psf/psf_data.root");
 
-// Trova la configurazione disponibile più vicina
-riptide::LensConfig cfg{94.9, 186.4};
-auto actual = riptide::find_nearest_config(cfg, db);
+riptide::QConfig qcfg;
+qcfg.y0_min = 0.0;  qcfg.y0_max = 10.0;  qcfg.dy0 = 0.1;
 
-// Costruisce la traccia media per y0 = 5.0 mm
-auto trace = riptide::build_trace(5.0, actual, db);
+double Q_best = std::numeric_limits<double>::max();
+riptide::LensConfig best_cfg{};
 
-// Fit lineare pesato ODR
-auto result = riptide::fit_trace(trace);
-
-std::cout << "a = " << result.a << " ± " << result.sigma_a << "\n";
-std::cout << "b = " << result.b << " ± " << result.sigma_b << " mm\n";
-std::cout << "chi2/ndof = " << result.chi2_ndof << "\n";
+for (const auto& [cfg, _] : db) {
+    auto res = riptide::compute_Q(cfg, db, qcfg);
+    if (res.n_traces > 0 && res.Q < Q_best) {
+        Q_best   = res.Q;
+        best_cfg = cfg;
+    }
+}
+std::cout << "Ottimale: x1=" << best_cfg.x1
+          << " x2=" << best_cfg.x2
+          << "  Q=" << Q_best << "\n";
 ```
 
 ### trace\_viewer
@@ -450,7 +473,6 @@ Visualizza la traccia media sul detector con ellissi di covarianza, colorate per
 ./build/analysis/psf_analysis/Release/trace_viewer \
     --x1 94.9 --x2 186.4 --y0 5.0
 
-# Opzioni complete:
 ./build/analysis/psf_analysis/Release/trace_viewer \
     --x1 94.9 --x2 186.4 --y0 5.0    \
     --psf    output/psf/psf_data.root  \
@@ -458,7 +480,6 @@ Visualizza la traccia media sul detector con ellissi di covarianza, colorate per
     --dt 0.1   \
     --L  10.0  \
     --sigma 1.0
-
 # → output/psf_analysis/trace_x1_94.9_x2_186.4_y0_5.0.png
 ```
 
@@ -467,10 +488,50 @@ Visualizza la traccia media sul detector con ellissi di covarianza, colorate per
 | `--x1`, `--x2` | — | **Obbligatori.** Posizioni lenti [mm] |
 | `--y0` | — | **Obbligatorio.** Distanza radiale sorgente [mm] |
 | `--psf` | `output/psf/psf_data.root` | Database PSF |
-| `--output` | auto (con timestamp) | Path immagine PNG |
+| `--output` | auto | Path immagine PNG |
 | `--dt` | `0.1` | Step traccia [mm] |
 | `--L` | `10.0` | Lunghezza traccia [mm] |
 | `--sigma` | `1.0` | Scala delle ellissi di covarianza (in unità σ) |
+
+### q\_map ★
+
+Genera la mappa 2D della funzione di qualità `Q(x1, x2)` su tutte le configurazioni presenti nel database PSF. Individua e marca automaticamente il minimo globale di Q.
+
+```bash
+# Uso minimo (tutti i parametri dai default)
+./build/analysis/psf_analysis/Release/q_map
+
+# Uso completo
+./build/analysis/psf_analysis/Release/q_map \
+    --psf    output/psf/psf_data.root        \
+    --config config/config.json              \
+    --output output/psf_analysis/q_map.png   \
+    --y0-min 0.0  --y0-max 10.0  --dy0 0.1  \
+    --L 10.0  --dt 0.1                       \
+    --log                                    \
+    --norm                                   \
+    --tsv output/psf_analysis/q_map.tsv
+# → output/psf_analysis/q_map.png
+# → output/psf_analysis/q_map.tsv  (se --tsv specificato)
+```
+
+| Opzione | Default | Descrizione |
+|---|---|---|
+| `--psf` | `output/psf/psf_data.root` | Database PSF |
+| `--config` | `config/config.json` | Parametri griglia lenti |
+| `--output` | `output/psf_analysis/q_map.png` | Immagine PNG di output |
+| `--tsv` | (disabilitato) | Esporta valori Q in formato TSV |
+| `--y0-min` | `0.0` | Minimo y0 per il campionamento tracce [mm] |
+| `--y0-max` | `10.0` | Massimo y0 [mm] |
+| `--dy0` | `0.1` | Passo di campionamento y0 [mm] |
+| `--L` | `10.0` | Lunghezza traccia ideale [mm] |
+| `--dt` | `0.1` | Step di campionamento della traccia [mm] |
+| `--log` | off | Scala logaritmica sull'asse Z (colori) |
+| `--norm` | off | Normalizza Q per numero di tracce (mostra χ² medio) |
+
+**Output grafico:** mappa TH2D con palette `kBird`, scala colori troncata ai percentili 5–95 per massimizzare il contrasto nell'area di interesse. Marker rosso a stella sulla configurazione ottimale. Info panel inferiore con parametri di campionamento e coordinate del minimo.
+
+**Output TSV** (con `--tsv`): tabella `x1 \t x2 \t Q \t n_traces \t n_failed` — compatibile con qualsiasi tool di analisi esterno (Python, gnuplot, Excel).
 
 ---
 
@@ -479,18 +540,20 @@ Visualizza la traccia media sul detector con ellissi di covarianza, colorate per
 ### Esecuzione
 
 ```bash
-# Esegue solo i test PSF
+# Esecuzione diretta
 ./build/analysis/psf_analysis/Release/test_fit_trace
 
-# Oppure tramite CTest dalla directory di build
+# Tramite CTest
 cd build && ctest -R fit_trace_unit -V
 ```
 
 L'eseguibile ritorna `0` se tutti i test passano, `1` altrimenti.
 
-### Casi di test (`test_fit_trace.cpp`)
+### Casi di test
 
 I test costruiscono `TracePoint` sintetici con soluzione analitica nota — nessun file ROOT necessario.
+
+#### Suite T — `fit_trace`
 
 | Test | Scenario | Verifica |
 |---|---|---|
@@ -502,11 +565,20 @@ I test costruiscono `TracePoint` sintetici con soluzione analitica nota — ness
 | **T6** | Covarianza degenere (`var = 0`) | Nessun crash grazie al floor `sd²_floor = 1e-6 mm²`; convergenza e parametri corretti |
 | **T7** | Retta `z = 0`, cov non diagonale; outlier `Δz` al centro | `σ_{d,outlier} ≈ √(cov_zz)` (verifica formula `n̂ᵀ Σ n̂` con `a ≈ 0`) |
 
+#### Suite TQ — `compute_Q`
+
+| Test | Scenario | Verifica |
+|---|---|---|
+| **TQ1** | PSF ideale (`mu_y = r`, `mu_z = 0`), 11 tracce | `Q ≈ 0`, `n_traces = 11`, `n_failed = 0`, `Q == Σ chi2_per_y0` |
+| **TQ2** | Lista `y0_values` esplicita con 3 valori | `n_traces = 3`, `Q ≈ 0` |
+| **TQ3** | Configurazione non presente nel database | Eccezione `std::invalid_argument` |
+| **TQ4** | PSF con curvatura quadratica in z; due DB con σ_z diversa | `Q(σ_piccola) > Q(σ_grande)` — PSF stretta penalizza di più la non-linearità |
+
 ---
 
 ## File di configurazione
 
-`config/config.json` — letto da entrambi i programmi di simulazione e da `plot2D`:
+`config/config.json` — letto da tutti i programmi di simulazione e analisi:
 
 ```json
 {
@@ -528,15 +600,15 @@ I test costruiscono `TracePoint` sintetici con soluzione analitica nota — ness
 | `dx` | Passo della scansione [mm] |
 | `r1`, `h1` | Raggio e spessore della lente 75mm [mm] |
 | `r2`, `h2` | Raggio e spessore della lente 60mm [mm] |
-| `lower_percentile` | Soglia bassa per `plot2D` (esclude il 45% inferiore) |
+| `lower_percentile` | Soglia bassa per `plot2D` (esclude il 45% inferiore dell'efficienza) |
 | `upper_percentile` | Soglia alta per `plot2D` (0 = nessun taglio superiore) |
 
-I vincoli geometrici applicati durante la scansione sono:
+I vincoli geometrici applicati durante la scansione:
 
 ```
 x1_min = x_min - r1 + h1
-x1_max = x_max - h2 - 1 - r1
-x2_min = x1 + r1 + r2 + 1       (gap minimo 1 mm tra le lenti)
+x1_max = x_max - h2 - 3 - r1
+x2_min = x1 + r1 + r2 + 3       (gap minimo 3 mm tra le lenti)
 x2_max = x_max + r2 - h2
 ```
 
@@ -593,45 +665,49 @@ psf_data.root
 ## Workflow completo
 
 ```bash
-# 1. Build
+# ── 1. Build ────────────────────────────────────────────────────────────────
 cmake -S . -B build/ -G "Ninja Multi-Config"
 cmake --build build/ --config Release
 
-# 2. Test unitari (verifica che fit_trace funzioni correttamente)
+# ── 2. Test unitari ─────────────────────────────────────────────────────────
 ./build/analysis/psf_analysis/Release/test_fit_trace
 # oppure: cd build && ctest -R fit_trace_unit -V
 
-# 3a. Scansione efficienza — output locale
+# ── 3. Scansione efficienza geometrica (opzionale, complementare a Q) ───────
 ./build/Release/optimization_main -g geometry/main.gdml -o
-# → output/events.root
-
-# 3b. Mappa 2D efficienza
 ./build/analysis/Release/plot2D
 # → output/efficiency2D.png
 
-# 4a. Beam scan dettagliato — output locale (parallelizzato)
+# ── 4. Beam scan PSF (parallelizzato) ───────────────────────────────────────
 ./scripts/run.sh lens local --jobs $(nproc --all)
 # → output/lens_simulation/lens_<timestamp>.root
 
-# 4b. Estrazione PSF
+# ── 5. Estrazione PSF ────────────────────────────────────────────────────────
 ./build/analysis/Release/psf_extractor \
     output/lens_simulation/lens.root \
     output/psf/psf_data.root
 # → output/psf/psf_data.root
 
-# 4c. Visualizzazione traccia con ellissi di covarianza
+# ── 6. Mappa Q — ottimizzazione PSF-based ★ ─────────────────────────────────
+./build/analysis/psf_analysis/Release/q_map \
+    --y0-min 0.0 --y0-max 10.0 --dy0 0.1
+# → output/psf_analysis/q_map.png
+# Stampa su stdout: x1*, x2*, Q_min
+
+# Con scala log e normalizzazione per una visione alternativa:
+./build/analysis/psf_analysis/Release/q_map --log --norm \
+    --output output/psf_analysis/q_map_norm_log.png
+
+# ── 7. Analisi traccia per la configurazione ottimale ───────────────────────
+# (sostituisci x1* e x2* con i valori stampati da q_map)
 ./build/analysis/psf_analysis/Release/trace_viewer \
-    --x1 94.9 --x2 186.4 --y0 5.0
-# → output/psf_analysis/trace_x1_94.9_x2_186.4_y0_5.0.png
+    --x1 <x1*> --x2 <x2*> --y0 5.0
+# → output/psf_analysis/trace_x1_<x1*>_x2_<x2*>_y0_5.0.png
 
-# 4d. Fit ODR della traccia (uso programmatico della libreria)
-#     Vedere esempio in sezione "Libreria psf_analysis"
+# ── 8. Strumenti di diagnostica ─────────────────────────────────────────────
+./build/analysis/Release/beam_scan_plot <x1*> <x2*>
+./build/analysis/Release/m_c_creator   <x1*> <x2*> 5.0
 
-# 5. Strumenti di diagnostica
-./build/analysis/Release/beam_scan_plot 94.9 186.4
-./build/analysis/Release/m_c_creator   94.9 186.4 5.0
-
-# 6. Visualizzazione interattiva geometria
-./build/Release/optimization_main    -g geometry/main.gdml -v
+# ── 9. Visualizzazione interattiva geometria ─────────────────────────────────
 ./build/Release/lens_simulation_main -g geometry/main.gdml -v
 ```

@@ -29,7 +29,21 @@ target_include_directories(trace_viewer
 )
 target_compile_features(trace_viewer PRIVATE cxx_std_17)
 
-# Test unitari fit_trace
+# Eseguibile q_map
+add_executable(q_map
+    q_map.cpp
+)
+target_link_libraries(q_map
+    PRIVATE psf_analysis ${ROOT_LIBRARIES} spdlog::spdlog
+)
+target_include_directories(q_map
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${ROOT_INCLUDE_DIRS}
+    ${JSON_INCLUDE_DIR}
+)
+target_compile_features(q_map PRIVATE cxx_std_17)
+
+# Test unitari fit_trace e compute_Q
 add_executable(test_fit_trace
     test_fit_trace.cpp
 )

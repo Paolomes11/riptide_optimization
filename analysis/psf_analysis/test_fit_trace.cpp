@@ -341,6 +341,175 @@ static void test_T7() {
         T);
 }
 
+// Test TQ: compute_Q
+// Non possiamo usare un PSFDatabase reale (nessun file ROOT disponibile nel
+// test runner), ma possiamo costruire un PSFDatabase sintetico in memoria
+// e verificare le proprietà analitiche di Q.
+//
+// Setup sintetico:
+//   - Una sola configurazione lenti: x1=50, x2=120
+//   - PSF "ideale": mu_y = y_source, mu_z = 0, cov = diag(eps, 0, eps)
+//     (sistema che mappa perfettamente la posizione radiale sull'asse y)
+//   - Traccia ideale a y0=5: r(t) = sqrt(25 + t^2)
+//     → mu_y(t) = r(t), mu_z(t) = 0  → traccia curva su y, piatta su z
+//     → fit z = a*y + b con tutti i z=0: b=0, a=0, chi2 ≈ 0
+//   - Q = sum_y0 chi2 ≈ 0
+
+// Costruisce un PSFDatabase sintetico con PSF mu_y = y_source, mu_z = 0.
+static riptide::PSFDatabase make_synthetic_db(double x1 = 50.0, double x2 = 120.0,
+                                              double r_max = 16.0, double dr = 0.1,
+                                              double cov_val = 1e-6) {
+  riptide::PSFDatabase db;
+  riptide::LensConfig cfg{x1, x2};
+  auto& pts = db[cfg];
+
+  const double eps = dr * 1e-9;
+  for (double r = 0.0; r <= r_max + eps; r += dr) {
+    riptide::PSFPoint p;
+    p.y_source = r;
+    p.mu_y     = r;   // mappa lineare: mu_y = r
+    p.mu_z     = 0.0; // nessuna deflessione in z
+    p.cov_yy   = cov_val;
+    p.cov_yz   = 0.0;
+    p.cov_zz   = cov_val;
+    pts.push_back(p);
+  }
+  return db;
+}
+
+static void test_TQ1() {
+  std::cout << "\n[TQ1] compute_Q con PSF ideale (chi2 ≈ 0 per ogni traccia)\n";
+  const std::string T = "TQ1";
+
+  auto db = make_synthetic_db();
+  riptide::LensConfig cfg{50.0, 120.0};
+
+  riptide::QConfig qcfg;
+  qcfg.y0_min   = 0.0;
+  qcfg.y0_max   = 10.0;
+  qcfg.dy0      = 1.0; // 11 tracce: y0 = 0, 1, ..., 10
+  qcfg.trace_L  = 10.0;
+  qcfg.trace_dt = 0.5; // 21 punti per traccia
+
+  riptide::QResult res;
+  bool threw = false;
+  try {
+    res = riptide::compute_Q(cfg, db, qcfg);
+  } catch (const std::exception& e) {
+    std::cerr << "  ECCEZIONE: " << e.what() << "\n";
+    threw = true;
+  }
+  check(!threw, "nessuna eccezione", T);
+  if (threw)
+    return;
+
+  check(res.n_traces == 11, "n_traces = 11", T);
+  check(res.n_failed == 0, "n_failed = 0", T);
+
+  // Con PSF ideale (tutti i punti su una retta z=0), chi2 deve essere ≈ 0
+  // La tolleranza è generosa perché cov_val=1e-6 porta chi2/ndof ≈ 0 ma Q = sum chi2
+  near(res.Q, 0.0, 1e-4, "Q ≈ 0 (PSF ideale)", T);
+
+  // Verifica struttura vettori per-traccia
+  check(res.y0_used.size() == 11, "y0_used.size() == 11", T);
+  check(res.chi2_per_y0.size() == 11, "chi2_per_y0.size() == 11", T);
+  check(res.chi2_ndof_per_y0.size() == 11, "chi2_ndof.size() == 11", T);
+
+  // Q deve essere la somma esatta dei chi2 per-traccia
+  double Q_sum = 0.0;
+  for (double c : res.chi2_per_y0)
+    Q_sum += c;
+  near(res.Q, Q_sum, 1e-12, "Q == sum(chi2_per_y0)", T);
+}
+
+static void test_TQ2() {
+  std::cout << "\n[TQ2] compute_Q con y0_values esplicito\n";
+  const std::string T = "TQ2";
+
+  auto db = make_synthetic_db();
+  riptide::LensConfig cfg{50.0, 120.0};
+
+  riptide::QConfig qcfg;
+  qcfg.y0_values = {2.0, 5.0, 8.0}; // solo 3 tracce
+  qcfg.trace_L   = 10.0;
+  qcfg.trace_dt  = 0.5;
+
+  auto res = riptide::compute_Q(cfg, db, qcfg);
+
+  check(res.n_traces == 3, "n_traces == 3", T);
+  check(res.y0_used.size() == 3, "y0_used.size() == 3", T);
+  near(res.Q, 0.0, 1e-4, "Q ≈ 0", T);
+}
+
+static void test_TQ3() {
+  std::cout << "\n[TQ3] compute_Q con configurazione non presente nel db → eccezione\n";
+  const std::string T = "TQ3";
+
+  auto db = make_synthetic_db(50.0, 120.0);
+  riptide::LensConfig cfg_wrong{99.0, 199.0}; // non esiste nel db
+
+  bool threw = false;
+  try {
+    riptide::compute_Q(cfg_wrong, db);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  check(threw, "eccezione std::invalid_argument per cfg non presente", T);
+}
+
+static void test_TQ4() {
+  std::cout << "\n[TQ4] Q monotona: PSF con dispersione crescente → Q cresce con cov\n";
+  const std::string T = "TQ4";
+
+  // PSF con cov_zz = sigma^2: mu_y = r, mu_z linearmente crescente con r
+  // → le tracce non sono più piatte in z → chi2 > 0, proporzionale a 1/sigma^2
+  // Costruiamo due DB: uno con sigma piccola (cov=1e-4) e uno con sigma grande (cov=1.0)
+  // Con sigma piccola i pesi sono grandi → chi2 grande per lo stesso residuo
+  // Con sigma grande i pesi sono piccoli → chi2 piccolo
+  // Quindi Q_small_sigma > Q_large_sigma  [se i residui sono non nulli]
+
+  // PSF con mu_z = 0.1 * y_source  (introduce curvatura non lineare)
+  auto make_curved_db = [](double cov_zz_val) {
+    riptide::PSFDatabase db;
+    riptide::LensConfig cfg{50.0, 120.0};
+    auto& pts = db[cfg];
+    for (double r = 0.0; r <= 16.0 + 1e-9; r += 0.1) {
+      riptide::PSFPoint p;
+      p.y_source = r;
+      p.mu_y     = r;
+      p.mu_z     = 0.05 * r * r; // curvatura quadratica in z → non lineare
+      p.cov_yy   = 1e-6;
+      p.cov_yz   = 0.0;
+      p.cov_zz   = cov_zz_val;
+      pts.push_back(p);
+    }
+    return db;
+  };
+
+  riptide::LensConfig cfg{50.0, 120.0};
+  riptide::QConfig qcfg;
+  qcfg.y0_min   = 2.0;
+  qcfg.y0_max   = 8.0;
+  qcfg.dy0      = 2.0;
+  qcfg.trace_L  = 10.0;
+  qcfg.trace_dt = 0.5;
+
+  auto db_tight = make_curved_db(1e-4);
+  auto db_loose = make_curved_db(1.0);
+
+  auto res_tight = riptide::compute_Q(cfg, db_tight, qcfg);
+  auto res_loose = riptide::compute_Q(cfg, db_loose, qcfg);
+
+  // Con PSF più "stretta" (cov_zz piccolo) i residui di curvatura pesano di più → Q maggiore
+  check(res_tight.Q > res_loose.Q,
+        "Q(sigma_piccola) > Q(sigma_grande) per traccia curva: " + std::to_string(res_tight.Q)
+            + " > " + std::to_string(res_loose.Q),
+        T);
+  // Entrambe devono avere n_failed == 0
+  check(res_tight.n_failed == 0, "n_failed == 0 (tight)", T);
+  check(res_loose.n_failed == 0, "n_failed == 0 (loose)", T);
+}
+
 //  main
 int main() {
   std::cout << "  test_fit_trace — riptide::fit_trace() unit tests\n";
@@ -352,6 +521,10 @@ int main() {
   test_T5();
   test_T6();
   test_T7();
+  test_TQ1();
+  test_TQ2();
+  test_TQ3();
+  test_TQ4();
 
   std::cout << "  Risultato: " << g_n_pass << " PASS, " << g_n_fail << " FAIL\n";
 

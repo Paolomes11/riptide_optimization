@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
 
   // Calcolo medie e deviazioni robuste (filtro 3σ) con debug compatto
   std::vector<double> xs_vec, y_mean_vec, y_err_vec, z_mean_vec, z_err_vec;
-  const double max_sigma = 2.0;
+  const double max_sigma = 3.0;
 
   for (auto& [xs, yvec_orig] : y_hits_map) {
     auto& zvec_orig = z_hits_map[xs];
