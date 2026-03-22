@@ -17,9 +17,10 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 9. [Strumenti di analisi](#strumenti-di-analisi)
 10. [Libreria psf\_analysis](#libreria-psf_analysis)
 11. [Test unitari](#test-unitari)
-12. [File di configurazione](#file-di-configurazione)
-13. [Formato dei file ROOT](#formato-dei-file-root)
-14. [Workflow completo](#workflow-completo)
+12. [Configurazione raccomandata per 'q_map'](#Configurazione-raccomandata-per-`q_map`)
+13. [File di configurazione](#file-di-configurazione)
+14. [Formato dei file ROOT](#formato-dei-file-root)
+15. [Workflow completo](#workflow-completo)
 
 ---
 
@@ -549,30 +550,72 @@ cd build && ctest -R fit_trace_unit -V
 
 L'eseguibile ritorna `0` se tutti i test passano, `1` altrimenti.
 
+### Note sull'inizializzazione dei dati sintetici
+
+I test costruiscono `TracePoint` e `PSFPoint` sintetici in memoria, bypassando i file ROOT. Due invarianti sono **essenziali**:
+
+- **`TracePoint::valid = true`** — `fit_trace()` filtra i punti con `valid == false` (li considera fuori dal fotocatodo). Se non impostato esplicitamente, rimane `false` per zero-inizializzazione e `fit_trace()` lancia `std::invalid_argument` per assenza di punti utilizzabili.
+- **`PSFPoint::on_detector = true`** — `build_trace()` copia questo flag in `TracePoint::valid`. Se `false`, `is_trace_valid()` ritorna `false` e `compute_Q()` non accumula nessun χ².
+
 ### Casi di test
 
-I test costruiscono `TracePoint` sintetici con soluzione analitica nota — nessun file ROOT necessario.
+I test costruiscono dati sintetici con soluzione analitica nota — nessun file ROOT necessario.
 
 #### Suite T — `fit_trace`
 
 | Test | Scenario | Verifica |
 |---|---|---|
-| **T1** | Retta `z = y`, cov isotropa uniforme | `a=1`, `b=0`, `χ²≈0`, pull tutti ≈ 0 |
-| **T2** | Retta `z = 0.5y + 3`, cov isotropa | `a=0.5`, `b=3`, `χ²≈0`, `σ_a > 0` |
+| **T1** | Retta `z = y`, cov isotropa uniforme | `a=1`, `b=0`, `χ²≈0`, pull tutti ≈ 0, `n_points_used=21` |
+| **T2** | Retta `z = 0.5y + 3`, cov isotropa | `a=0.5`, `b=3`, `χ²≈0`, `σ_a > 0`, `n_points_used=31` |
 | **T3** | Retta `z = 2y − 1`, cov anisotropa (`σ_y >> σ_z`) | Parametri invariati: con residui nulli la soluzione non dipende dai pesi |
 | **T4** | Retta `z = 0` con outlier `Δz = 0.5 mm` al centro | Pull outlier ≈ `Δz/σ`, pull degli altri < 2, `χ²/ndof` dominato dall'outlier |
-| **T5** | Traccia con 0, 2 o 3 punti | Eccezione `std::invalid_argument` per N < 3; nessuna eccezione per N = 3 |
+| **T5** | Traccia con 0, 2 punti validi, o N punti con tutti `valid=false` | Eccezione `std::invalid_argument`; nessuna eccezione per N≥3 con `valid=true` |
 | **T6** | Covarianza degenere (`var = 0`) | Nessun crash grazie al floor `sd²_floor = 1e-6 mm²`; convergenza e parametri corretti |
 | **T7** | Retta `z = 0`, cov non diagonale; outlier `Δz` al centro | `σ_{d,outlier} ≈ √(cov_zz)` (verifica formula `n̂ᵀ Σ n̂` con `a ≈ 0`) |
+
+#### Suite TV — `is_trace_valid`
+
+| Test | Scenario | Verifica |
+|---|---|---|
+| **TV1** | Tutti i punti `valid=true` | Valida per soglie 0.75 e 1.0 |
+| **TV2** | 4 punti su 10 `valid=false` (60% validi) | Valida per soglia 50%, invalida per 75% e 100% |
+| **TV3** | Traccia vuota | Ritorna `false` |
 
 #### Suite TQ — `compute_Q`
 
 | Test | Scenario | Verifica |
 |---|---|---|
-| **TQ1** | PSF ideale (`mu_y = r`, `mu_z = 0`), 11 tracce | `Q ≈ 0`, `n_traces = 11`, `n_failed = 0`, `Q == Σ chi2_per_y0` |
-| **TQ2** | Lista `y0_values` esplicita con 3 valori | `n_traces = 3`, `Q ≈ 0` |
+| **TQ1** | PSF ideale (`mu_y = r`, `mu_z = 0`, `on_detector=true`), 11 tracce, unfolding OFF | `Q ≈ 0`, `n_traces = 11`, `n_failed = 0`, `Q == Σ chi2_per_y0` |
+| **TQ2** | Lista `y0_values` esplicita con 3 valori, unfolding OFF | `n_traces = 3`, `Q ≈ 0` |
 | **TQ3** | Configurazione non presente nel database | Eccezione `std::invalid_argument` |
-| **TQ4** | PSF con curvatura quadratica in z; due DB con σ_z diversa | `Q(σ_piccola) > Q(σ_grande)` — PSF stretta penalizza di più la non-linearità |
+| **TQ4** | PSF con curvatura quadratica in z; due DB con σ_z diversa, unfolding OFF | `Q(σ_piccola) > Q(σ_grande)` — PSF stretta penalizza di più la non-linearità |
+| **TQ5** | DB ripiegato (`mu_y` non monotona) vs DB lineare; confronto con/senza unfolding | `Q(ripiegata) > Q(lineare)` con unfolding ON; differenza ridotta con unfolding OFF |
+
+---
+
+## Configurazione raccomandata per `q_map`
+
+Dopo ottimizzazione empirica sul dataset reale (`psf_data.root`), la configurazione seguente produce mappe stabili e sensibili alle non-linearità ottiche:
+
+```bash
+./build/analysis/psf_analysis/Release/q_map \
+    --psf    output/psf/psf_data_1.root \
+    --dy0    0.1                        \
+    --unfold-dz 0.000002                \
+    --point-frac 0.5                    \
+    --trace-frac 0.50                   \
+    --log
+```
+
+| Parametro | Valore | Motivazione |
+|---|---|---|
+| `--dy0 0.1` | Passo 0.1 mm su y₀ | Campionamento denso: ≈142 tracce per configurazione, sufficiente per mediare le fluttuazioni statistiche della PSF |
+| `--unfold-dz 0.000002` | δz = 2×10⁻⁶ mm/passo | Valore molto piccolo rispetto al passo di campionamento della traccia: introduce un segnale di srotolamento appena sufficiente a rompere la degenerazione delle tracce ripiegate, senza distorcere il χ² delle tracce lineari. Con `trace_dt = 0.1` mm e ~101 punti, l'offset totale è ≈ 0.0002 mm, molto inferiore alla σ tipica della PSF (~0.1–0.5 mm) |
+| `--point-frac 0.5` | Soglia 50% punti on-detector | Permette di valutare configurazioni in cui la PSF è parzialmente fuori dal fotocatodo — utile per mappare l'intera griglia senza perdere troppe celle |
+| `--trace-frac 0.50` | Soglia 50% tracce valide | Coerente con `--point-frac`; filtra le configurazioni chiaramente inutilizzabili mantenendo quelle borderline |
+| `--log` | Scala logaritmica | Q copre tipicamente 2–3 ordini di grandezza tra la configurazione ottimale e quelle scadenti; la scala log rende leggibile l'intera mappa |
+
+> **Nota sul valore di `--unfold-dz`:** il default automatico (`δz = trace_L / (N-1) ≈ 0.1 mm`) è ottimale per rilevare ripiegamenti netti ma può sovrastimare Q per configurazioni con leggere curvature. Il valore `0.000002` è conservativo: preserva il ranking relativo delle configurazioni senza modificare significativamente i valori assoluti di Q.
 
 ---
 
