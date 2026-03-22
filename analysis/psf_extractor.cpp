@@ -20,13 +20,18 @@
  *   - media y e z (con filtro outlier 3-sigma, 2 iterazioni)
  *   - matrice di covarianza 2x2: cov_yy, cov_yz, cov_zz
  *   - numero di hit dopo filtraggio
+ *   - flag on_detector: true se n_hits_filtered >= min_hits (default 150)
  *
- * Output: psf_data.root con un TTree "PSF" contenente una riga per run.
+ * Il flag on_detector marca i run in cui i fotoni hanno effettivamente
+ * raggiunto il fotocatodo in numero sufficiente per una stima statistica
+ * affidabile. Run con pochi hit corrispondono a configurazioni in cui la
+ * PSF cade parzialmente o totalmente fuori dal fotocatodo.
  *
  * Uso:
- *   ./psf_extractor [input.root] [output.root]
- *   default input:  output/lens_simulation/lens.root
- *   default output: output/psf/psf_data.root
+ *   ./psf_extractor [input.root] [output.root] [min_hits]
+ *   default input:    output/lens_simulation/lens.root
+ *   default output:   output/psf/psf_data.root
+ *   default min_hits: 150
  */
 
 #include <TFile.h>
@@ -54,7 +59,7 @@ struct PSFResult {
 };
 
 bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sigma_cut = 3.0,
-                 int n_iter = 2) {
+                 int n_iter = 4) {
   if (raw_hits.empty())
     return false;
 
@@ -62,14 +67,13 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
   std::vector<Hit> hits = raw_hits;
 
   double mean_y = 0, mean_z = 0;
-  double sig_y = 0, sig_z = 0;
 
   for (int iter = 0; iter < n_iter; ++iter) {
     size_t n = hits.size();
     if (n < 2)
       return false;
 
-    // ===== MEDIA =====
+    // MEDIA
     mean_y = 0;
     mean_z = 0;
     for (auto& h : hits) {
@@ -79,7 +83,7 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
     mean_y /= n;
     mean_z /= n;
 
-    // ===== COVARIANZA =====
+    // COVARIANZA
     double var_y = 0, var_z = 0, cov_yz = 0;
     for (auto& h : hits) {
       double dy = h.y - mean_y;
@@ -93,10 +97,7 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
     var_z /= n;
     cov_yz /= n;
 
-    sig_y = std::sqrt(var_y);
-    sig_z = std::sqrt(var_z);
-
-    // ===== INVERSA COVARIANZA =====
+    // INVERSA COVARIANZA
     double det = var_y * var_z - cov_yz * cov_yz;
     if (det < 1e-12)
       det = 1e-12;
@@ -105,7 +106,7 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
     double inv_zz = var_y / det;
     double inv_yz = -cov_yz / det;
 
-    // ===== FILTRO ELLITTICO =====
+    // FILTRO ELLITTICO
     std::vector<Hit> filtered;
     filtered.reserve(hits.size());
 
@@ -129,7 +130,7 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
   if (n < 3)
     return false;
 
-  // ===== MEDIA FINALE =====
+  // MEDIA FINALE
   mean_y = 0;
   mean_z = 0;
   for (auto& h : hits) {
@@ -139,7 +140,7 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
   mean_y /= n;
   mean_z /= n;
 
-  // ===== COVARIANZA FINALE (stimatore campionario) =====
+  // COVARIANZA FINALE (stimatore campionario)
   double cov_yy = 0, cov_yz = 0, cov_zz = 0;
   for (auto& h : hits) {
     double dy = h.y - mean_y;
@@ -165,11 +166,16 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
 int main(int argc, char** argv) {
   std::string input_path  = "output/lens_simulation/lens.root";
   std::string output_path = "output/psf/psf_data.root";
+  int min_hits            = 150;
 
   if (argc > 1)
     input_path = argv[1];
   if (argc > 2)
     output_path = argv[2];
+  if (argc > 3)
+    min_hits = std::stoi(argv[3]);
+
+  std::cout << "Soglia on_detector: n_hits_filtered >= " << min_hits << "\n";
 
   // Apri file di input
   TFile* fin = TFile::Open(input_path.c_str(), "READ");
@@ -249,6 +255,7 @@ int main(int argc, char** argv) {
   double out_mean_y, out_mean_z;
   double out_cov_yy, out_cov_yz, out_cov_zz;
   int out_n_hits_raw, out_n_hits_filtered;
+  bool out_on_detector;
 
   tPSF->Branch("config_id", &out_config_id, "config_id/I");
   tPSF->Branch("x1", &out_x1, "x1/D");
@@ -261,9 +268,11 @@ int main(int argc, char** argv) {
   tPSF->Branch("cov_zz", &out_cov_zz, "cov_zz/D");
   tPSF->Branch("n_hits_raw", &out_n_hits_raw, "n_hits_raw/I");
   tPSF->Branch("n_hits_filtered", &out_n_hits_filtered, "n_hits_filtered/I");
+  tPSF->Branch("on_detector", &out_on_detector, "on_detector/O");
 
   // Loop su tutti i run
-  int skipped = 0;
+  int skipped     = 0;
+  int flagged_off = 0;
   std::vector<Hit> hits_buf;
   hits_buf.reserve(1000);
 
@@ -284,14 +293,52 @@ int main(int argc, char** argv) {
       hits_buf.push_back({static_cast<double>(y_hit_r), static_cast<double>(z_hit_r)});
     }
 
-    // Calcola PSF
-    PSFResult res{};
-    if (!compute_psf(hits_buf, res)) {
-      ++skipped;
+    // Caso run con zero hit: salva la riga comunque con on_detector = false
+    // e statistiche nulle, così il database è completo per y_source
+    if (hits_buf.empty()) {
+      out_config_id       = run.config_id;
+      out_x1              = it->second.first;
+      out_x2              = it->second.second;
+      out_y_source        = run.y_source;
+      out_mean_y          = 0.0;
+      out_mean_z          = 0.0;
+      out_cov_yy          = 0.0;
+      out_cov_yz          = 0.0;
+      out_cov_zz          = 0.0;
+      out_n_hits_raw      = 0;
+      out_n_hits_filtered = 0;
+      out_on_detector     = false;
+      tPSF->Fill();
+      ++flagged_off;
       continue;
     }
 
-    // Riempi rami output
+    // Calcola PSF
+    PSFResult res{};
+    bool ok = compute_psf(hits_buf, res);
+
+    if (!ok) {
+      // Meno di 3 hit dopo il filtro: salva con on_detector = false
+      out_config_id       = run.config_id;
+      out_x1              = it->second.first;
+      out_x2              = it->second.second;
+      out_y_source        = run.y_source;
+      out_mean_y          = 0.0;
+      out_mean_z          = 0.0;
+      out_cov_yy          = 0.0;
+      out_cov_yz          = 0.0;
+      out_cov_zz          = 0.0;
+      out_n_hits_raw      = static_cast<int>(hits_buf.size());
+      out_n_hits_filtered = 0;
+      out_on_detector     = false;
+      tPSF->Fill();
+      ++flagged_off;
+      continue;
+    }
+
+    // Imposta il flag: on_detector solo se ci sono abbastanza hit
+    bool on_det = (res.n_hits_filtered >= min_hits);
+
     out_config_id       = run.config_id;
     out_x1              = it->second.first;
     out_x2              = it->second.second;
@@ -303,7 +350,11 @@ int main(int argc, char** argv) {
     out_cov_zz          = res.cov_zz;
     out_n_hits_raw      = res.n_hits_raw;
     out_n_hits_filtered = res.n_hits_filtered;
+    out_on_detector     = on_det;
     tPSF->Fill();
+
+    if (!on_det)
+      ++flagged_off;
 
     // Progresso ogni 5000 run
     if ((r + 1) % 5000 == 0)
@@ -315,8 +366,9 @@ int main(int argc, char** argv) {
   fout->Close();
   fin->Close();
 
-  std::cout << "\nRun processati: " << runs.size() - skipped << "\n";
-  std::cout << "Run saltati (hit insufficienti): " << skipped << "\n";
+  std::cout << "\nRun processati:                        " << runs.size() - skipped << "\n";
+  std::cout << "Run saltati (config non trovata):      " << skipped << "\n";
+  std::cout << "Run con on_detector = false:           " << flagged_off << "\n";
   std::cout << "Output salvato in: " << output_path << "\n";
 
   return 0;

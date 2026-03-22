@@ -55,17 +55,30 @@ PSFDatabase load_psf_database(const std::string& root_path) {
   tree->SetBranchAddress("cov_zz", &cov_zz);
   tree->SetBranchAddress("n_hits_filtered", &n_hits_filtered);
 
+  // Retrocompatibilità: branch on_detector potrebbe non esistere nei file vecchi.
+  // In quel caso lo calcoliamo da n_hits_filtered >= 10.
+  bool on_det_branch_exists = (tree->GetBranch("on_detector") != nullptr);
+  bool on_det_val           = true; // valore letto o calcolato
+
+  if (on_det_branch_exists) {
+    tree->SetBranchAddress("on_detector", &on_det_val);
+    std::cout << "load_psf_database: branch 'on_detector' trovato nel file.\n";
+  } else {
+    std::cout << "load_psf_database: branch 'on_detector' assente, "
+              << "uso fallback n_hits_filtered >= 10.\n";
+  }
+
   PSFDatabase db;
   const Long64_t N = tree->GetEntries();
 
   for (Long64_t i = 0; i < N; ++i) {
     tree->GetEntry(i);
 
-    if (n_hits_filtered < 10)
-      continue;
+    bool on_det = on_det_branch_exists ? on_det_val : (n_hits_filtered >= 10);
 
     LensConfig cfg{x1, x2};
-    db[cfg].push_back({static_cast<double>(y_source_f), mean_y, mean_z, cov_yy, cov_yz, cov_zz});
+    db[cfg].push_back(
+        {static_cast<double>(y_source_f), mean_y, mean_z, cov_yy, cov_yz, cov_zz, on_det});
   }
 
   // Ordina ogni vettore per y_source crescente (necessario per la ricerca binaria)
@@ -81,7 +94,6 @@ PSFDatabase load_psf_database(const std::string& root_path) {
 }
 
 //  Ricerca configurazione più vicina
-
 LensConfig find_nearest_config(const LensConfig& cfg, const PSFDatabase& db) {
   if (db.empty())
     throw std::runtime_error("find_nearest_config: database vuoto");
@@ -110,7 +122,6 @@ LensConfig find_nearest_config(const LensConfig& cfg, const PSFDatabase& db) {
 }
 
 //  Interpolazione
-
 PSFValue interpolate(double r, const LensConfig& cfg, const PSFDatabase& db) {
   auto it = db.find(cfg);
   if (it == db.end()) {
@@ -132,13 +143,13 @@ PSFValue interpolate(double r, const LensConfig& cfg, const PSFDatabase& db) {
   // Caso r <= primo punto: usa il primo punto senza estrapolazione
   if (upper == pts.begin()) {
     const auto& p = pts.front();
-    return {p.mu_y, p.mu_z, {p.cov_yy, p.cov_yz, p.cov_zz}};
+    return {p.mu_y, p.mu_z, {p.cov_yy, p.cov_yz, p.cov_zz}, p.on_detector};
   }
 
   // Caso r >= ultimo punto: usa l'ultimo punto senza estrapolazione
   if (upper == pts.end()) {
     const auto& p = pts.back();
-    return {p.mu_y, p.mu_z, {p.cov_yy, p.cov_yz, p.cov_zz}};
+    return {p.mu_y, p.mu_z, {p.cov_yy, p.cov_yz, p.cov_zz}, p.on_detector};
   }
 
   // Caso generale: interpolazione lineare tra lower e upper
@@ -150,13 +161,18 @@ PSFValue interpolate(double r, const LensConfig& cfg, const PSFDatabase& db) {
 
   auto lerp = [alpha](double a, double b) { return a + alpha * (b - a); };
 
+  // Il punto interpolato è on_detector solo se ENTRAMBI i punti adiacenti lo sono.
+  // Se anche uno solo è off-detector, il punto intermedio è marcato non valido:
+  // la PSF in quell'intervallo di y_source è parzialmente non affidabile.
+  bool on_det = lo.on_detector && hi.on_detector;
+
   return {lerp(lo.mu_y, hi.mu_y),
           lerp(lo.mu_z, hi.mu_z),
-          {lerp(lo.cov_yy, hi.cov_yy), lerp(lo.cov_yz, hi.cov_yz), lerp(lo.cov_zz, hi.cov_zz)}};
+          {lerp(lo.cov_yy, hi.cov_yy), lerp(lo.cov_yz, hi.cov_yz), lerp(lo.cov_zz, hi.cov_zz)},
+          on_det};
 }
 
 //  Costruzione traccia
-
 std::vector<TracePoint> build_trace(double y0, const LensConfig& cfg, const PSFDatabase& db,
                                     double L, double dt) {
   std::vector<TracePoint> trace;
@@ -175,14 +191,28 @@ std::vector<TracePoint> build_trace(double y0, const LensConfig& cfg, const PSFD
 
     PSFValue psf = interpolate(r, cfg, db);
 
-    trace.push_back({t, r, psf.mu_y, psf.mu_z, psf.cov});
+    trace.push_back({t, r, psf.mu_y, psf.mu_z, psf.cov, psf.on_detector});
   }
 
   return trace;
 }
 
-// Fit lineare pesato ODR della traccia media
+// Validità traccia
+bool is_trace_valid(const std::vector<TracePoint>& trace, double point_valid_fraction) {
+  if (trace.empty())
+    return false;
 
+  int n_valid = 0;
+  for (const auto& pt : trace) {
+    if (pt.valid)
+      ++n_valid;
+  }
+
+  double frac = static_cast<double>(n_valid) / static_cast<double>(trace.size());
+  return frac >= point_valid_fraction;
+}
+
+// Fit lineare pesato ODR della traccia media
 static bool solve_wls(const std::vector<double>& y, const std::vector<double>& z,
                       const std::vector<double>& w, double& a_out, double& b_out, double& var_a,
                       double& var_b, double& cov_ab_out) {
@@ -226,30 +256,38 @@ static bool solve_wls(const std::vector<double>& y, const std::vector<double>& z
 }
 
 LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter, double tol) {
-  const int N = static_cast<int>(trace.size());
-  if (N < 3)
-    throw std::invalid_argument(
-        "fit_trace: la traccia deve contenere almeno 3 punti (trovati: " + std::to_string(N) + ")");
+  // Estrai solo i punti validi per il fit
+  std::vector<double> vy, vz;
+  std::vector<Cov2> vcov;
+  vy.reserve(trace.size());
+  vz.reserve(trace.size());
+  vcov.reserve(trace.size());
 
-  // Estrai i vettori di coordinate dalla traccia
-  std::vector<double> vy(N), vz(N);
-  for (int i = 0; i < N; ++i) {
-    vy[i] = trace[i].mu_y;
-    vz[i] = trace[i].mu_z;
+  for (const auto& pt : trace) {
+    if (pt.valid) {
+      vy.push_back(pt.mu_y);
+      vz.push_back(pt.mu_z);
+      vcov.push_back(pt.cov);
+    }
   }
 
+  const int N = static_cast<int>(vy.size());
+  if (N < 3)
+    throw std::invalid_argument("fit_trace: punti validi insufficienti per il fit (trovati: "
+                                + std::to_string(N)
+                                + ", richiesti: 3). Verifica le soglie point_valid_fraction.");
+
   LineFitResult res{};
-  res.n_iter    = 0;
-  res.converged = false;
+  res.n_iter        = 0;
+  res.converged     = false;
+  res.n_points_used = N;
 
   // Step 1: stima iniziale con OLS non pesato
-  // Risolvi z = a*y + b con pesi unitari per ottenere la direzione iniziale
   {
     std::vector<double> w_unit(N, 1.0);
     double var_a_tmp, var_b_tmp, cov_ab_tmp;
     bool ok = solve_wls(vy, vz, w_unit, res.a, res.b, var_a_tmp, var_b_tmp, cov_ab_tmp);
     if (!ok) {
-      // Fallback: retta orizzontale
       res.a = 0.0;
       res.b = vz[0];
     }
@@ -271,14 +309,8 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter, doub
 
     // Calcola pesi w_i = 1 / sigma_{d,i}^2
     for (int i = 0; i < N; ++i) {
-      const Cov2& cov = trace[i].cov;
-      // sigma^2_{d,i} = n_hat^T Sigma_i n_hat
-      double sd2 = n_y * n_y * cov.yy + 2.0 * n_y * n_z * cov.yz + n_z * n_z * cov.zz;
-
-      // Protezione contro covarianza degenerata o nulla:
-      // se sd2 e' troppo piccola usiamo un floor pari a (0.001 mm)^2
-      // per evitare pesi infiniti che destabilizzerebbero il fit.
-      const double sd2_floor = 1e-6; // (0.001 mm)^2
+      double sd2 = n_y * n_y * vcov[i].yy + 2.0 * n_y * n_z * vcov[i].yz + n_z * n_z * vcov[i].zz;
+      const double sd2_floor = 1e-6;
       weights[i]             = 1.0 / std::max(sd2, sd2_floor);
     }
 
@@ -286,9 +318,7 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter, doub
     double new_a, new_b;
     bool ok = solve_wls(vy, vz, weights, new_a, new_b, res.sigma_a, res.sigma_b, res.cov_ab);
     if (!ok) {
-      // Il sistema e' diventato singolare: mantieni la stima precedente
-      std::cerr << "[fit_trace] WARNING: sistema WLS singolare all'iterazione " << iter + 1
-                << ", uso stima precedente.\n";
+      std::cerr << "[fit_trace] WARNING: sistema WLS singolare all'iterazione " << iter + 1 << "\n";
       break;
     }
 
@@ -317,9 +347,8 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter, doub
     double d_i = (res.a * vy[i] - vz[i] + res.b) / norm_final;
 
     // sigma_{d,i} con il vettore normale finale
-    const Cov2& cov = trace[i].cov;
-    double sd2      = n_y_final * n_y_final * cov.yy + 2.0 * n_y_final * n_z_final * cov.yz
-               + n_z_final * n_z_final * cov.zz;
+    double sd2 = n_y_final * n_y_final * vcov[i].yy + 2.0 * n_y_final * n_z_final * vcov[i].yz
+               + n_z_final * n_z_final * vcov[i].zz;
 
     const double sd2_floor = 1e-6;
     double sd_i            = std::sqrt(std::max(sd2, sd2_floor));
@@ -364,13 +393,18 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
   if (y0_list.empty())
     throw std::invalid_argument("compute_Q: lista di y0 vuota");
 
+  const int total_y0 = static_cast<int>(y0_list.size());
+
   QResult res{};
-  res.Q        = 0.0;
-  res.n_traces = 0;
-  res.n_failed = 0;
-  res.y0_used.reserve(y0_list.size());
-  res.chi2_per_y0.reserve(y0_list.size());
-  res.chi2_ndof_per_y0.reserve(y0_list.size());
+  res.Q            = 0.0;
+  res.n_traces     = 0;
+  res.n_failed     = 0;
+  res.n_invalid    = 0;
+  res.config_valid = true; // verrà aggiornato alla fine
+  res.y0_used.reserve(total_y0);
+  res.chi2_per_y0.reserve(total_y0);
+  res.chi2_ndof_per_y0.reserve(total_y0);
+  res.trace_valid_flags.reserve(total_y0);
 
   for (double y0 : y0_list) {
     // build_trace
@@ -387,6 +421,34 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
       if (qcfg.verbose)
         std::cerr << "[compute_Q] build_trace failed y0=" << y0 << ": " << e.what() << "\n";
       ++res.n_failed;
+      res.trace_valid_flags.push_back(false);
+      continue;
+    }
+
+    // Validità traccia
+    bool trace_ok = is_trace_valid(trace, qcfg.point_valid_fraction);
+    res.trace_valid_flags.push_back(trace_ok);
+
+    if (!trace_ok) {
+      QWarning w;
+      w.kind    = QWarning::Kind::TraceInvalid;
+      w.y0      = y0;
+      w.a_final = std::numeric_limits<double>::quiet_NaN();
+
+      // Conta i punti validi per il messaggio diagnostico
+      int n_valid_pts = 0;
+      for (const auto& pt : trace)
+        if (pt.valid)
+          ++n_valid_pts;
+      double frac = static_cast<double>(n_valid_pts) / static_cast<double>(trace.size());
+
+      w.message = "traccia y0=" + std::to_string(y0) + " ha solo "
+                + std::to_string(static_cast<int>(frac * 100)) + "% punti on_detector (soglia: "
+                + std::to_string(static_cast<int>(qcfg.point_valid_fraction * 100)) + "%)";
+      res.warnings.push_back(std::move(w));
+      if (qcfg.verbose)
+        std::cerr << "[compute_Q] " << res.warnings.back().message << "\n";
+      ++res.n_invalid;
       continue;
     }
 
@@ -426,6 +488,28 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
     res.chi2_per_y0.push_back(fit.chi2);
     res.chi2_ndof_per_y0.push_back(fit.chi2_ndof);
     ++res.n_traces;
+  }
+
+  // Validità configurazione: almeno qcfg.trace_valid_fraction tracce valide tra quelle tentate
+  int n_attempted = total_y0 - res.n_failed;
+  if (n_attempted > 0) {
+    double valid_frac = static_cast<double>(res.n_traces) / static_cast<double>(n_attempted);
+    res.config_valid  = (valid_frac >= qcfg.trace_valid_fraction);
+
+    if (!res.config_valid) {
+      QWarning w;
+      w.kind    = QWarning::Kind::ConfigInvalid;
+      w.y0      = -1.0;
+      w.a_final = std::numeric_limits<double>::quiet_NaN();
+      w.message = "configurazione invalida: solo "
+                + std::to_string(static_cast<int>(valid_frac * 100)) + "% tracce valide (soglia: "
+                + std::to_string(static_cast<int>(qcfg.trace_valid_fraction * 100)) + "%)";
+      res.warnings.push_back(std::move(w));
+      if (qcfg.verbose)
+        std::cerr << "[compute_Q] " << res.warnings.back().message << "\n";
+    }
+  } else {
+    res.config_valid = false;
   }
 
   return res;

@@ -27,12 +27,13 @@ namespace riptide {
 
 // Un punto PSF: media e matrice di covarianza 2x2 per un dato raggio r
 struct PSFPoint {
-  double y_source; // raggio (= y_source dalla simulazione) [mm]
-  double mu_y;     // media y sul detector [mm]
-  double mu_z;     // media z sul detector [mm]
-  double cov_yy;   // varianza y [mm^2]
-  double cov_yz;   // covarianza y-z [mm^2]
-  double cov_zz;   // varianza z [mm^2]
+  double y_source;  // raggio (= y_source dalla simulazione) [mm]
+  double mu_y;      // media y sul detector [mm]
+  double mu_z;      // media z sul detector [mm]
+  double cov_yy;    // varianza y [mm^2]
+  double cov_yz;    // covarianza y-z [mm^2]
+  double cov_zz;    // varianza z [mm^2]
+  bool on_detector; // se true, la PSF è interamente sul fotocatodo
 };
 
 // Matrice di covarianza 2x2
@@ -45,6 +46,7 @@ struct PSFValue {
   double mu_y;
   double mu_z;
   Cov2 cov;
+  bool on_detector;
 };
 
 // Un punto della traccia sul detector
@@ -54,10 +56,10 @@ struct TracePoint {
   double mu_y; // posizione media y sul detector [mm]
   double mu_z; // posizione media z sul detector [mm]
   Cov2 cov;    // matrice di covarianza associata [mm^2]
+  bool valid;  // true se on_detector per questo punto
 };
 
-// Chiave di configurazione lenti (x1, x2) con confronto per std::map
-// Usa una tolleranza di 1e-4 mm per evitare problemi di floating point
+// Chiave di configurazione lenti (x1, x2)
 struct LensConfig {
   double x1, x2;
   bool operator<(const LensConfig& o) const {
@@ -75,39 +77,27 @@ using PSFDatabase = std::map<LensConfig, std::vector<PSFPoint>>;
 
 /**
  * Risultato del fit ODR pesato della traccia media sul detector.
- *
  * Modello: z = a*y + b
- *
- * Il fit minimizza il chi^2 con distanza perpendicolare pesata dalla matrice
- * di covarianza di ciascun punto (Orthogonal Distance Regression con Sigma_i
- * completa). Il problema e' non lineare perche' il vettore normale n_hat
- * dipende da 'a'; si risolve per iterazione.
  */
 struct LineFitResult {
-  // Parametri della retta
-  double a; // pendenza [adimensionale]
-  double b; // intercetta [mm]
-
-  // Incertezza sui parametri
-  double sigma_a; // incertezza su a
-  double sigma_b; // incertezza su b
-  double cov_ab;  // covarianza tra a e b
-
-  // Chi^2 del fit
+  double a;
+  double b;
+  double sigma_a;
+  double sigma_b;
+  double cov_ab;
   double chi2;
-  int ndof;         // gradi di libertà
-  double chi2_ndof; // chi^2 ridotto
+  int ndof;
+  double chi2_ndof;
+  int n_iter;
+  bool converged;
 
-  // Valori per iterazione del fit
-  int n_iter;     // numero di iterazioni fatte
-  bool converged; // se è convergente
+  // Residui perpendicolari
+  std::vector<double> residuals;
+  std::vector<double> residual_sig;
+  std::vector<double> pull;
 
-  // Residui perpendicolari pesati per ciascun punto
-  // d_i = distanza perpendicolare del punto i dalla retta stimata [mm]
-  // sigma_d_i = sqrt(n_hat^T Sigma_i n_hat) [mm]
-  std::vector<double> residuals;    // d_i
-  std::vector<double> residual_sig; // sigma_{d,i}
-  std::vector<double> pull;         // d_i / sigma_{d,i}
+  // Quanti punti validi sono stati usati nel fit
+  int n_points_used;
 };
 
 //  Funzioni pubbliche
@@ -155,6 +145,14 @@ std::vector<TracePoint> build_trace(double y0, const LensConfig& cfg, const PSFD
                                     double L = 10.0, double dt = 0.1);
 
 /**
+ * Verifica se una traccia è valida in base alla frazione di punti on_detector.
+ * @param trace              Traccia da verificare
+ * @param point_valid_fraction  Frazione minima di punti on_detector
+ * @return                   true se la traccia è valida, false altrimenti
+ */
+bool is_trace_valid(const std::vector<TracePoint>& trace, double point_valid_fraction = 0.75);
+
+/**
  * Fit lineare pesato ODR della traccia media sul detector.
  *
  * Esegue il fit della retta z = a*y + b sui punti {(mu_y_i, mu_z_i)}
@@ -192,44 +190,48 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter = 20,
 // Funzione di qualità Q(x1, x2)
 // Parametri di configurazione per il calcolo di Q.
 struct QConfig {
-  // Valori di y0 su cui sommare (coordinata radiale della traccia)
-  // Se vuoto, viene generato automaticamente l'intervallo [y0_min, y0_max] con passo dy0.
   std::vector<double> y0_values{};
 
-  double y0_min = 0.0;  // [mm] — valore minimo di y0 (se y0_values è vuoto)
-  double y0_max = 10.0; // [mm] — valore massimo di y0
-  double dy0    = 0.1;  // [mm] — passo di campionamento in y0
+  double y0_min = 0.0;
+  double y0_max = 10.0;
+  double dy0    = 0.1;
 
-  double trace_L  = 10.0; // [mm] — lunghezza della traccia ideale
-  double trace_dt = 0.1;  // [mm] — step di campionamento lungo la traccia
+  double trace_L  = 10.0;
+  double trace_dt = 0.1;
 
-  int fit_max_iter = 1000; // iterazioni massime IRLS in fit_trace
-  double fit_tol   = 1e-8; // soglia di convergenza fit_trace
+  int fit_max_iter = 20;
+  double fit_tol   = 1e-8;
 
-  bool verbose = false; // se true, stampa informazioni dettagliate durante il calcolo di Q
+  // Soglie di validità 75%/75%
+  double point_valid_fraction = 0.75; // frazione minima di punti on_detector per traccia valida
+  double trace_valid_fraction = 0.75; // frazione minima di tracce valide per config valida
+
+  bool verbose = false;
 };
 
 // Descrizione di una singola esclusione all'interno di compute_Q
 struct QWarning {
-  enum class Kind { FitNotConverged, BuildTraceFailed, FitFailed };
+  enum class Kind { FitNotConverged, BuildTraceFailed, FitFailed, TraceInvalid, ConfigInvalid };
   Kind kind;
   double y0;
-  double a_final; // pendenza al momento dell'esclusione (solo per FitNotConverged)
+  double a_final;
   std::string message;
 };
 
 // Risultato del calcolo di Q per una singola configurazione lenti.
 struct QResult {
-  double Q;     // Funzione di qualità totale: sum_tracce chi^2(y0, x1, x2)
-  int n_traces; // Numero di tracce effettivamente usate nella somma
-  int n_failed; // Tracce scartate (fit non convergente o dati mancanti)
+  double Q;
+  int n_traces;      // tracce valide usate nella somma
+  int n_failed;      // tracce scartate per errore nel fit
+  int n_invalid;     // tracce scartate per validità PSF insufficiente
+  bool config_valid; // false se la config non supera la soglia trace_valid_fraction
 
-  // Contributi per-traccia (stessa lunghezza di y0_used)
-  std::vector<double> y0_used;          // y0 effettivamente usati
-  std::vector<double> chi2_per_y0;      // chi^2 del fit ODR per ogni y0
-  std::vector<double> chi2_ndof_per_y0; // chi^2/ndof per ogni y0
+  std::vector<double> y0_used;
+  std::vector<double> chi2_per_y0;
+  std::vector<double> chi2_ndof_per_y0;
+  std::vector<bool> trace_valid_flags; // una entry per ogni y0 campionato
 
-  std::vector<QWarning> warnings; // eventuali avvisi su tracce scartate o problemi
+  std::vector<QWarning> warnings;
 };
 
 /**
