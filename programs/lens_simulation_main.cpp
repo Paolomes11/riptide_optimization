@@ -41,6 +41,8 @@ int main(int argc, char** argv) {
   std::filesystem::path macro_vis   = "macros/vis.mac";             // macro grafica standard
   std::filesystem::path macro_run   = "macros/lens_simulation.mac"; // macro simulazione standard
   std::filesystem::path config_file = "config/config.json";
+  std::string lens75_id;
+  std::string lens60_id;
   bool visualize                    = false;
   bool batch                        = false;
   bool lens_sim                     = false;
@@ -57,6 +59,8 @@ int main(int argc, char** argv) {
            | lyra::opt(macro_file, "macro")["-m"]["--macro"]("Path to macro file (default: none)")
            | lyra::opt(config_file, "config")["--config"](
                  "Path to config JSON file (default: config/config.json)")
+           | lyra::opt(lens75_id, "id")["--lens75-id"]("Thorlabs ID for lens 1 (75mm)")
+           | lyra::opt(lens60_id, "id")["--lens60-id"]("Thorlabs ID for lens 2 (60mm)")
            | lyra::opt(root_output_file, "output")["--output"]("Path to ROOT output file")
            | lyra::opt(ssd_mount, "ssd-mount")["--ssd-mount"](
                  "Mount point of external SSD (default: /mnt/external_ssd)")
@@ -104,8 +108,14 @@ int main(int argc, char** argv) {
     G4RunManager run_manager{};
 
     run_manager.GeometryHasBeenModified(true);
-    run_manager.SetUserInitialization(
-        new riptide::DetectorConstruction(geometry_path.string(), 75.9, 164.4));
+    if (!lens75_id.empty() && !lens60_id.empty()) {
+      run_manager.SetUserInitialization(
+          new riptide::DetectorConstruction(geometry_path.string(), lens75_id, lens60_id, 75.9,
+                                            164.4));
+    } else {
+      run_manager.SetUserInitialization(
+          new riptide::DetectorConstruction(geometry_path.string(), 75.9, 164.4));
+    }
     run_manager.SetUserInitialization(new riptide::PhysicsList());
     run_manager.SetUserInitialization(new riptide::ActionInitialization());
     run_manager.Initialize();

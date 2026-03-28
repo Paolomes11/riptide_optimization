@@ -33,15 +33,66 @@ struct Config {
   double x2;
 };
 
-int main() {
+struct CliConfig {
+  std::string input_file  = "output/events.root";
+  std::string config_file = "config/config.json";
+  std::string output_png  = "output/efficiency2D.png";
+  double lower_percentile = -1.0; // -1 significa "usa dal config"
+  double upper_percentile = -1.0;
+};
+
+static CliConfig parse_args(int argc, char** argv) {
+  CliConfig cfg;
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    auto next       = [&]() -> std::string {
+      if (i + 1 >= argc) {
+        std::cerr << "Argomento mancante dopo " << arg << "\n";
+        std::exit(1);
+      }
+      return argv[++i];
+    };
+
+    if (arg == "--input" || arg == "-i")
+      cfg.input_file = next();
+    else if (arg == "--config" || arg == "-c")
+      cfg.config_file = next();
+    else if (arg == "--output" || arg == "-o")
+      cfg.output_png = next();
+    else if (arg == "--low")
+      cfg.lower_percentile = std::stod(next());
+    else if (arg == "--high")
+      cfg.upper_percentile = std::stod(next());
+    else if (arg == "--help" || arg == "-h") {
+      std::cout
+          << "Uso: plot2D [opzioni]\n"
+          << "Opzioni:\n"
+          << "  -i, --input <file>    File ROOT di input (default: output/events.root)\n"
+          << "  -c, --config <file>   File JSON di configurazione (default: config/config.json)\n"
+          << "  -o, --output <file>   Nome del file PNG in uscita (default: "
+             "output/efficiency2D.png)\n"
+          << "  --low <val>           Percentile inferiore (sovrascrive config)\n"
+          << "  --high <val>          Percentile superiore (sovrascrive config)\n";
+      std::exit(0);
+    } else {
+      std::cerr << "Opzione sconosciuta: " << arg << "\n";
+      std::exit(1);
+    }
+  }
+  return cfg;
+}
+
+int main(int argc, char** argv) {
   using json = nlohmann::json;
+
+  CliConfig cli = parse_args(argc, argv);
 
   // ===============================
   // Lettura configurazione
   // ===============================
-  std::ifstream f("config/config.json");
+  std::ifstream f(cli.config_file);
   if (!f.is_open()) {
-    std::cerr << "Errore: impossibile aprire config/config.json\n";
+    std::cerr << "Errore: impossibile aprire " << cli.config_file << "\n";
     return 1;
   }
 
@@ -57,15 +108,17 @@ int main() {
   double r2 = config["r2"];
   double h2 = config["h2"];
 
-  double lower_percentile = config.value("lower_percentile", 0.0);
-  double upper_percentile = config.value("upper_percentile", 0.25);
+  double lower_percentile =
+      (cli.lower_percentile >= 0) ? cli.lower_percentile : config.value("lower_percentile", 0.0);
+  double upper_percentile =
+      (cli.upper_percentile >= 0) ? cli.upper_percentile : config.value("upper_percentile", 0.0);
 
   // ===============================
   // Apertura file ROOT
   // ===============================
-  TFile file("output/events.root", "READ");
+  TFile file(cli.input_file.c_str(), "READ");
   if (!file.IsOpen()) {
-    std::cerr << "Errore: impossibile aprire output/events.root\n";
+    std::cerr << "Errore: impossibile aprire " << cli.input_file << "\n";
     return 1;
   }
 
@@ -117,8 +170,8 @@ int main() {
   int n_bins_x2 = std::round((x2_max_all - x2_min_all) / dx) + 1;
 
   TH2D h_efficiency("h_efficiency", "Geometrical Efficiency;X1 [mm];X2 [mm]", n_bins_x1,
-                    x1_min_all - dx / 2.0, x1_max_all + dx / 2.0, n_bins_x2,
-                    x2_min_all - dx / 2.0, x2_max_all + dx / 2.0);
+                    x1_min_all - dx / 2.0, x1_max_all + dx / 2.0, n_bins_x2, x2_min_all - dx / 2.0,
+                    x2_max_all + dx / 2.0);
 
   // Riempimento istogramma
   std::vector<double> effs;
@@ -201,9 +254,9 @@ int main() {
 
   // aggiorna canvas e salva
   canvas.Update();
-  canvas.SaveAs("output/efficiency2D.png");
+  canvas.SaveAs(cli.output_png.c_str());
 
-  std::cout << "Mappa salvata in output/efficiency2D.png\n";
+  std::cout << "Mappa salvata in " << cli.output_png << "\n";
 
   file.Close();
   return 0;

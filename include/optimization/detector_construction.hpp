@@ -19,7 +19,9 @@
 #include <G4VPhysicalVolume.hh>
 #include <G4VUserDetectorConstruction.hh>
 
+#include "lens_cutter.hpp"
 #include <filesystem>
+#include <optional>
 
 namespace riptide {
 
@@ -31,6 +33,16 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   double m_lens75_x;
   double m_lens60_x;
 
+  // Dimensioni e offset (aggiornate in Construct)
+  double m_lens75_thickness     = 12.5;
+  double m_lens60_thickness     = 16.3;
+  double m_lens75_center_offset = -32.35; // (zcut1+zcut2)/2 = (-38.6-26.1)/2
+  double m_lens60_center_offset = 22.75;  // (zcut1+zcut2)/2 = (14.6+30.9)/2
+
+  // IDs per lenti Thorlabs (opzionali)
+  std::optional<std::string> m_lens75_id;
+  std::optional<std::string> m_lens60_id;
+
   // Volumi fisici
   G4VPhysicalVolume* m_world       = nullptr;
   G4VPhysicalVolume* m_lens75_phys = nullptr;
@@ -39,13 +51,26 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
  public:
   DetectorConstruction(std::filesystem::path geometry_path, double lens75_x = 83.9,
                        double lens60_x = 153.4);
+
+  // Nuovo costruttore con supporto LensCutter
+  DetectorConstruction(std::filesystem::path geometry_path, std::string lens75_id,
+                       std::string lens60_id, double lens75_x = 83.9, double lens60_x = 153.4);
   G4VPhysicalVolume* Construct() override;
   void ConstructSDandField() override;
 
   // Setter per ottimizzazione
   void SetLensPositions(double lens75_x, double lens60_x);
 
-  // Getter per ottimizzazione
+  // Getter per dimensioni e posizioni
+  double GetLens75Thickness() const;
+  double GetLens60Thickness() const;
+  
+  // Ritorna l'offset del centro del solido rispetto alla posizione x impostata
+  // Per i solidi GDML originali, non sono centrati in 0.
+  // Per i solidi Thorlabs, sono centrati in 0.
+  double GetLens75CenterOffset() const;
+  double GetLens60CenterOffset() const;
+
   double GetLens75X() const {
     return m_lens75_x;
   }

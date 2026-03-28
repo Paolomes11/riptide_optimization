@@ -455,11 +455,6 @@ int main(int argc, char** argv) {
   const double xmin = jcfg["x_min"];
   const double xmax = jcfg["x_max"];
 
-  const double x1_lo = xmin - r1 + h1;
-  const double x1_hi = xmax - h2 - 3.0 - r1;
-  const double x2_lo = x1_lo + r1 + r2 + 3.0;
-  const double x2_hi = xmax + r2 - h2;
-
   // 2. QConfig (condivisa tra le due modalità per il campionamento y0)
   riptide::QConfig qcfg;
   qcfg.y0_min               = (cli.y0_min >= 0.0) ? cli.y0_min : 0.0;
@@ -510,6 +505,24 @@ int main(int argc, char** argv) {
     return 1;
   }
   std::cout << "Configurazioni nel database: " << db.size() << "\n";
+
+  if (db.empty()) {
+    std::cerr << "Errore: database vuoto\n";
+    return 1;
+  }
+
+  // Calcola i limiti x1, x2 direttamente dal database
+  double x1_lo = std::numeric_limits<double>::max();
+  double x1_hi = -std::numeric_limits<double>::max();
+  double x2_lo = std::numeric_limits<double>::max();
+  double x2_hi = -std::numeric_limits<double>::max();
+
+  for (const auto& [cfg, _] : db) {
+    x1_lo = std::min(x1_lo, cfg.x1);
+    x1_hi = std::max(x1_hi, cfg.x1);
+    x2_lo = std::min(x2_lo, cfg.x2);
+    x2_hi = std::max(x2_hi, cfg.x2);
+  }
 
   // Dimensioni griglia istogramma
   int bins_x      = std::max(1, static_cast<int>(std::round((x1_hi - x1_lo) / dx)) + 1);

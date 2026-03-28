@@ -92,8 +92,11 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   double x_max = config["x_max"];
   double dx    = config["dx"];
 
-  double r1 = config["r1"], h1 = config["h1"];
-  double r2 = config["r2"], h2 = config["h2"];
+  // Ottieni dimensioni reali dal detector (possono essere Thorlabs o GDML default)
+  double h1      = det->GetLens75Thickness();
+  double offset1 = det->GetLens75CenterOffset();
+  double h2      = det->GetLens60Thickness();
+  double offset2 = det->GetLens60CenterOffset();
 
   // Parametri sorgente GPS
   double source_y_min = 0.0;
@@ -121,22 +124,30 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     }
     spdlog::info("Loaded {} pairs from config", pairs.size());
   } else {
-    // Loop geometrico standard
-    double x1_loop_min = x_min - r1 + h1;
-    double x1_loop_max = x_max - h2 - 3 - r1;
-    if (config.contains("x1_start"))
-      x1_loop_min = config["x1_start"];
-    if (config.contains("x1_end"))
-      x1_loop_max = config["x1_end"];
+    // Loop geometrico adattivo: evita intersezioni basandosi sulle dimensioni reali
+    // delle lenti (GDML default o Thorlabs) e mantiene l'ordine L1 < L2.
+    const double margin = 3.0; // 3mm di spazio minimo tra le lenti per lens_scan
 
-    for (double x1 = x1_loop_min; x1 <= x1_loop_max + 1e-9; x1 += dx) {
-      double x2_min = x1 + r1 + r2 + 3; // Tiene conto di 3mm di margine tra lente 1 e lente 2
-      double x2_max = x_max + r2 - h2;
-      for (double x2 = x2_min; x2 <= x2_max + 1e-9; x2 += dx) {
+    double x1_start = x_min;
+    double x1_end   = x_max;
+
+    if (config.contains("x1_start"))
+      x1_start = config["x1_start"];
+    if (config.contains("x1_end"))
+      x1_end = config["x1_end"];
+
+    for (double x1 = x1_start; x1 <= x1_end + 1e-9; x1 += dx) {
+      // Calcola x2_min per evitare collisioni:
+      // back_l1 + margin < front_l2
+      // (x1 + offset1 + h1/2) + margin < (x2 + offset2 - h2/2)
+      double x2_min_collision = x1 + (offset1 - offset2) + (h1 + h2) / 2.0 + margin;
+      double x2_start         = std::max(x1 + dx, x2_min_collision);
+
+      for (double x2 = x2_start; x2 <= x_max + 1e-9; x2 += dx) {
         pairs.push_back({x1, x2});
       }
     }
-    spdlog::info("Generated {} pairs from geometry loop", pairs.size());
+    spdlog::info("Generated {} pairs from adaptive geometry loop", pairs.size());
   }
 
   for (const auto& pair : pairs) {

@@ -2,18 +2,19 @@
 /gps/particle opticalphoton
 /gps/energy 2.5 eV
 
-# Sorgente rettangolare (60x10 mm)
+# Sorgente rettangolare (X-Z plane at Y=5mm, X: -30-30mm, Y: 0 to 10mm)
 /gps/pos/type Plane
 /gps/pos/shape Rectangle
 /gps/pos/centre 0 5 0 mm
-/gps/pos/halfx 5 mm
-/gps/pos/halfy 30 mm
-/gps/pos/rot1 0 1 0
-/gps/pos/rot2 0 0 1
+/gps/pos/halfx 30 mm
+/gps/pos/halfy 5 mm
+/gps/pos/rot1 1 0 0
+/gps/pos/rot2 0 1 0
 
 # Emissione isotropa verso il detector (+X)
 /gps/ang/type iso
-/gps/direction 1 0 0
+/gps/ang/rot1 0 -1 0   # local Z = global X
+/gps/ang/rot2 0 0 1
 /gps/ang/mintheta 0 deg
 /gps/ang/maxtheta 90 deg
 

@@ -19,7 +19,9 @@
 #include <G4VPhysicalVolume.hh>
 #include <G4VUserDetectorConstruction.hh>
 
+#include "lens_cutter.hpp"
 #include <filesystem>
+#include <optional>
 
 namespace riptide {
 
@@ -27,9 +29,19 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   G4GDMLParser m_parser{};
   std::filesystem::path m_geometry_path;
 
-  // Posizioni delle lenti (per ottimizzazione)
+  // Posizioni delle lenti (per beam scan)
   double m_lens75_x;
   double m_lens60_x;
+
+  // Dimensioni e offset (aggiornate in Construct)
+  double m_lens75_thickness     = 12.5;
+  double m_lens60_thickness     = 16.3;
+  double m_lens75_center_offset = -32.35;
+  double m_lens60_center_offset = 22.75;
+
+  // IDs per lenti Thorlabs (opzionali)
+  std::optional<std::string> m_lens75_id;
+  std::optional<std::string> m_lens60_id;
 
   // Volumi fisici
   G4VPhysicalVolume* m_world       = nullptr;
@@ -37,15 +49,25 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   G4VPhysicalVolume* m_lens60_phys = nullptr;
 
  public:
-  DetectorConstruction(std::filesystem::path geometry_path, double lens75_x = 83.9,
-                       double lens60_x = 153.4);
+  DetectorConstruction(std::filesystem::path geometry_path, double lens75_x = 75.9,
+                       double lens60_x = 164.4);
+
+  // Nuovo costruttore con supporto LensCutter
+  DetectorConstruction(std::filesystem::path geometry_path, std::string lens75_id,
+                       std::string lens60_id, double lens75_x = 75.9, double lens60_x = 164.4);
   G4VPhysicalVolume* Construct() override;
   void ConstructSDandField() override;
 
-  // Setter per ottimizzazione
+  // Setter per beam scan
   void SetLensPositions(double lens75_x, double lens60_x);
 
-  // Getter per ottimizzazione
+  // Getter per dimensioni e posizioni
+  double GetLens75Thickness() const;
+  double GetLens60Thickness() const;
+  
+  double GetLens75CenterOffset() const;
+  double GetLens60CenterOffset() const;
+
   double GetLens75X() const {
     return m_lens75_x;
   }

@@ -34,6 +34,12 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include/common
 )
 
+# Libreria lens_cutter
+file(GLOB LENS_CUTTER_SRC lens_cutter/src/*.cpp)
+add_library(lens_cutter_lib ${LENS_CUTTER_SRC})
+target_include_directories(lens_cutter_lib PUBLIC ${CMAKE_SOURCE_DIR}/lens_cutter/include)
+target_link_libraries(lens_cutter_lib PUBLIC common_lib)
+
 # Warnings comuni
 set(COMMON_WARNINGS
     -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wcast-qual
@@ -50,21 +56,42 @@ foreach(MAIN_FILE ${PROGRAM_MAIN})
 
     # Nome sottocartella sorgenti della simulazione
     string(REPLACE "_main" "" PROG_SUBDIR ${PROG_NAME})
+    
+    # Cerca i sorgenti sia in src/ che in folder/src/
     set(SRC_DIR src/${PROG_SUBDIR})
+    file(GLOB SPEC_SRC ${SRC_DIR}/*.cpp)
+    
+    if(NOT SPEC_SRC)
+        set(SRC_DIR ${PROG_SUBDIR}/src)
+        file(GLOB SPEC_SRC ${SRC_DIR}/*.cpp)
+    endif()
 
     # Libreria specifica della simulazione
-    file(GLOB SPEC_SRC ${SRC_DIR}/*.cpp)
     if(SPEC_SRC)
-        add_library(${PROG_NAME}_lib ${SPEC_SRC})
-        target_include_directories(${PROG_NAME}_lib PUBLIC ${CMAKE_SOURCE_DIR}/include/${PROG_SUBDIR})
-        target_link_libraries(${PROG_NAME}_lib PUBLIC common_lib)
-        target_compile_options(${PROG_NAME}_lib PRIVATE ${COMMON_WARNINGS})
+        # Salta se è già lens_cutter_lib (già definita fuori dal loop)
+        if(NOT PROG_NAME STREQUAL "lens_cutter_main")
+            add_library(${PROG_NAME}_lib ${SPEC_SRC})
+            
+            # Include directory per la libreria
+            if(EXISTS ${CMAKE_SOURCE_DIR}/include/${PROG_SUBDIR})
+                target_include_directories(${PROG_NAME}_lib PUBLIC ${CMAKE_SOURCE_DIR}/include/${PROG_SUBDIR})
+            endif()
+            if(EXISTS ${CMAKE_SOURCE_DIR}/${PROG_SUBDIR}/include)
+                 target_include_directories(${PROG_NAME}_lib PUBLIC ${CMAKE_SOURCE_DIR}/${PROG_SUBDIR}/include)
+            endif()
+            
+            target_link_libraries(${PROG_NAME}_lib PUBLIC common_lib lens_cutter_lib)
+            target_compile_options(${PROG_NAME}_lib PRIVATE ${COMMON_WARNINGS})
+        endif()
     endif()
 
     # Eseguibile
     add_executable(${PROG_NAME} ${MAIN_FILE})
     target_include_directories(${PROG_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/include)
-    target_link_libraries(${PROG_NAME} PRIVATE common_lib ${PROG_NAME}_lib)
+    target_link_libraries(${PROG_NAME} PRIVATE common_lib lens_cutter_lib)
+    if(TARGET ${PROG_NAME}_lib AND NOT PROG_NAME STREQUAL "lens_cutter_main")
+        target_link_libraries(${PROG_NAME} PRIVATE ${PROG_NAME}_lib)
+    endif()
     target_compile_options(${PROG_NAME} PRIVATE ${COMMON_WARNINGS})
 endforeach()
 

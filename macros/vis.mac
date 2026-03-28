@@ -14,9 +14,22 @@
 # Set viewing angle and position
 /vis/viewer/set/viewpointThetaPhi 5 90
 /vis/viewer/set/targetPoint 90 0 0 mm
-/vis/scene/add/line 0 0 0 180 0 0 mm
+
+# Add a prominent X-axis (Red, 200mm long)
+/vis/set/colour red
+/vis/set/lineWidth 3
+/vis/scene/add/line -50 0 0 250 0 0 mm
+/vis/scene/add/text 260 0 0 mm 12 0 0 X-Axis
+/vis/set/lineWidth 1
+/vis/set/colour white
 
 # Trajectories and step points
 /vis/scene/add/trajectories smooth
 /vis/scene/add/hits
 /vis/scene/endOfEventAction accumulate
+
+# Color optical photon emission points red
+/vis/set/colour red
+/vis/scene/add/gps
+/vis/viewer/set/markerScale 2
+/vis/set/colour white

@@ -17,6 +17,7 @@
 
 #include <G4LogicalVolumeStore.hh>
 #include <G4PhysicalVolumeStore.hh>
+#include <spdlog/spdlog.h>
 
 namespace riptide {
 
@@ -24,7 +25,23 @@ DetectorConstruction::DetectorConstruction(std::filesystem::path geometry_path, 
                                            double lens60_x)
     : m_geometry_path{std::move(geometry_path)}
     , m_lens75_x{lens75_x}
-    , m_lens60_x{lens60_x} {
+    , m_lens60_x{lens60_x}
+    , m_lens75_id{std::nullopt}
+    , m_lens60_id{std::nullopt} {
+  if (!std::filesystem::exists(m_geometry_path)
+      || !std::filesystem::is_regular_file(m_geometry_path)) {
+    throw std::runtime_error("Geometry path is invalid");
+  }
+}
+
+DetectorConstruction::DetectorConstruction(std::filesystem::path geometry_path,
+                                           std::string lens75_id, std::string lens60_id,
+                                           double lens75_x, double lens60_x)
+    : m_geometry_path{std::move(geometry_path)}
+    , m_lens75_x{lens75_x}
+    , m_lens60_x{lens60_x}
+    , m_lens75_id{std::move(lens75_id)}
+    , m_lens60_id{std::move(lens60_id)} {
   if (!std::filesystem::exists(m_geometry_path)
       || !std::filesystem::is_regular_file(m_geometry_path)) {
     throw std::runtime_error("Geometry path is invalid");
@@ -52,6 +69,37 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
 
     if (!m_lens75_phys || !m_lens60_phys) {
       throw std::runtime_error("Lens physical volumes not found in GDML");
+    }
+
+    // Supporto per LensCutter: sostituisci i solidi se gli ID sono forniti
+    if (m_lens75_id || m_lens60_id) {
+      LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
+
+      auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_lens75) {
+        const auto* lens = cutter.get_lens_by_id(id);
+        if (lens) {
+          auto lv        = pv->GetLogicalVolume();
+          auto new_solid = lens->to_g4_solid("_custom");
+          lv->SetSolid(new_solid);
+          
+          if (is_lens75) {
+            m_lens75_thickness     = lens->center_thickness;
+            m_lens75_center_offset = 0.0;
+          } else {
+            m_lens60_thickness     = lens->center_thickness;
+            m_lens60_center_offset = 0.0;
+          }
+          
+          spdlog::info("Replaced solid for {} with Thorlabs lens {}", pv->GetName(), id);
+        } else {
+          spdlog::warn("Thorlabs lens ID {} not found, keeping GDML solid", id);
+        }
+      };
+
+      if (m_lens75_id)
+        replace_solid(m_lens75_phys, *m_lens75_id, true);
+      if (m_lens60_id)
+        replace_solid(m_lens60_phys, *m_lens60_id, false);
     }
   }
 
@@ -87,6 +135,22 @@ void DetectorConstruction::SetLensPositions(double lens75_x, double lens60_x) {
 
   if (m_lens60_phys)
     m_lens60_phys->SetTranslation(G4ThreeVector(lens60_x, 0., 0.));
+}
+
+double DetectorConstruction::GetLens75Thickness() const {
+  return m_lens75_thickness;
+}
+
+double DetectorConstruction::GetLens60Thickness() const {
+  return m_lens60_thickness;
+}
+
+double DetectorConstruction::GetLens75CenterOffset() const {
+  return m_lens75_center_offset;
+}
+
+double DetectorConstruction::GetLens60CenterOffset() const {
+  return m_lens60_center_offset;
 }
 
 } // namespace riptide

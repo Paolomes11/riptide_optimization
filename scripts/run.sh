@@ -27,6 +27,8 @@ BINARY_LENS="$BUILD_DIR/Release/lens_simulation_main"
 BINARY_OPT="$BUILD_DIR/Release/optimization_main"
 N_JOBS=1
 CONFIG_FILE="$PROJECT_ROOT/config/config.json"
+LENS75_ID=""
+LENS60_ID=""
 
 # parsing argomenti posizionali
 MODE="${1:-lens}"    # lens | opt
@@ -43,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       SSD_MOUNT="$2"; shift 2 ;;
     --config)
       CONFIG_FILE="$2"; EXTRA_ARGS+=("--config" "$2"); shift 2 ;;
+    --lens75-id)
+      LENS75_ID="$2"; EXTRA_ARGS+=("--lens75-id" "$2"); shift 2 ;;
+    --lens60-id)
+      LENS60_ID="$2"; EXTRA_ARGS+=("--lens60-id" "$2"); shift 2 ;;
     *)
       EXTRA_ARGS+=("$1"); shift ;;
   esac
@@ -79,13 +85,8 @@ if [[ "$N_JOBS" -eq 1 ]]; then
   exit 0
 fi
 
-# run parallelo (N_JOBS > 1) — solo lens_simulation
-if [[ "$MODE" != "lens" ]]; then
-  echo "[ERROR] La parallelizzazione --jobs è supportata solo per 'lens'." >&2
-  exit 1
-fi
-
-echo "[INFO]  Avvio lens_simulation ($TARGET) con $N_JOBS processi paralleli"
+# run parallelo (N_JOBS > 1)
+echo "[INFO]  Avvio $MODE ($TARGET) con $N_JOBS processi paralleli"
 
 # Genera tutte le coppie (x1, x2) valide e le distribuisce in N chunk bilanciati
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -100,14 +101,47 @@ with open('$CONFIG_FILE') as f:
     c = json.load(f)
 
 x_min = c['x_min']; x_max = c['x_max']; dx = c['dx']
-r1 = c['r1']; h1 = c['h1']; r2 = c['r2']; h2 = c['h2']
 n_jobs = $N_JOBS
-n_runs_per_pair = 101  # y_source 0..10 step 0.1
+mode = '$MODE'
+lens75_id = '$LENS75_ID'
+lens60_id = '$LENS60_ID'
 
-# Genera tutte le coppie valide
+# Default GDML lens parameters
+h1 = 12.5; offset1 = -32.35
+h2 = 16.3; offset2 = 22.75
+margin = 3.0 if mode == 'lens' else 1.0
+
+# Load Thorlabs data if IDs are provided
+if lens75_id or lens60_id:
+    tsv_path = os.path.join('$PROJECT_ROOT', 'lens_cutter/lens_data/thorlabs_biconvex.tsv')
+    thorlabs_data = {}
+    with open(tsv_path) as f:
+        lines = f.readlines()[1:] # skip header
+        for line in lines:
+            parts = line.split('\t')
+            if len(parts) >= 5:
+                thorlabs_data[parts[0]] = float(parts[4]) # center thickness
+
+    if lens75_id in thorlabs_data:
+        h1 = thorlabs_data[lens75_id]
+        offset1 = 0.0
+    if lens60_id in thorlabs_data:
+        h2 = thorlabs_data[lens60_id]
+        offset2 = 0.0
+
+if mode == 'lens':
+    n_runs_per_pair = 101  # y_source 0..10 step 0.1
+else:
+    n_runs_per_pair = 1    # una sola esecuzione per configurazione
+
+# Genera tutte le coppie valide (Adaptive Loop)
 pairs = []
-for x1 in np.arange(x_min - r1 + h1, x_max - h2 - 1 - r1 + 1e-9, dx):
-    for x2 in np.arange(x1 + r1 + r2 + 1, x_max + r2 - h2 + 1e-9, dx):
+for x1 in np.arange(x_min, x_max + 1e-9, dx):
+    # x2_min per evitare collisioni: (x1 + offset1 + h1/2) + margin < (x2 + offset2 - h2/2)
+    x2_min_collision = x1 + (offset1 - offset2) + (h1 + h2) / 2.0 + margin
+    x2_start = max(x1 + dx, x2_min_collision)
+    
+    for x2 in np.arange(x2_start, x_max + 1e-9, dx):
         pairs.append((round(float(x1), 6), round(float(x2), 6)))
 
 total_pairs = len(pairs)
@@ -156,10 +190,18 @@ CHUNK_TOTALS=()
 for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
   CHUNK_CONFIG="$TMPDIR_CONFIGS/config_chunk_${chunk}.json"
 
+  if [[ "$MODE" == "opt" ]]; then
+    SUBDIR="optimization"
+    EXT="events"
+  else
+    SUBDIR="lens_simulation"
+    EXT="lens"
+  fi
+
   if [[ "$TARGET" == "ssd" ]]; then
     CHUNK_OUTPUT="$SSD_MOUNT/riptide/runs/run_${TIMESTAMP}/chunk_${chunk}.root"
   else
-    CHUNK_OUTPUT="$PROJECT_ROOT/output/lens_simulation/chunk_${TIMESTAMP}_${chunk}.root"
+    CHUNK_OUTPUT="$PROJECT_ROOT/output/${SUBDIR}/chunk_${TIMESTAMP}_${chunk}.root"
   fi
   CHUNK_OUTPUTS+=("$CHUNK_OUTPUT")
 
@@ -167,11 +209,23 @@ for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
   [[ -z "$CHUNK_TOTAL" || ! "$CHUNK_TOTAL" =~ ^[0-9]+$ ]] && CHUNK_TOTAL=1
   CHUNK_TOTALS+=("$CHUNK_TOTAL")
 
-  "$BINARY_LENS" -g "$GEOMETRY" -b -l \
-    --config "$CHUNK_CONFIG" \
-    --output "$CHUNK_OUTPUT" \
-    "${EXTRA_ARGS[@]}" \
-    > "$TMPDIR_CONFIGS/chunk_${chunk}.log" 2>&1 &
+  # Esegue il binario corretto con i flag corretti
+  case "$MODE" in
+    lens)
+      "$BINARY" -g "$GEOMETRY" -b -l \
+        --config "$CHUNK_CONFIG" \
+        --output "$CHUNK_OUTPUT" \
+        "${EXTRA_ARGS[@]}" \
+        > "$TMPDIR_CONFIGS/chunk_${chunk}.log" 2>&1 &
+      ;;
+    opt)
+      "$BINARY" -g "$GEOMETRY" -b -o \
+        --config "$CHUNK_CONFIG" \
+        --output "$CHUNK_OUTPUT" \
+        "${EXTRA_ARGS[@]}" \
+        > "$TMPDIR_CONFIGS/chunk_${chunk}.log" 2>&1 &
+      ;;
+  esac
   PIDS+=($!)
 done
 
@@ -198,10 +252,18 @@ done
 [[ $FAILED -eq 1 ]] && { echo "[ERROR] Uno o più chunk sono falliti. Merge annullato."; exit 1; }
 
 # Merge con hadd
-if [[ "$TARGET" == "ssd" ]]; then
-  MERGED_OUTPUT="$SSD_MOUNT/riptide/runs/run_${TIMESTAMP}/lens.root"
+if [[ "$MODE" == "opt" ]]; then
+  OUT_NAME="events"
+  OUT_DIR="optimization"
 else
-  MERGED_OUTPUT="output/lens_simulation/lens_${TIMESTAMP}.root"
+  OUT_NAME="lens"
+  OUT_DIR="lens_simulation"
+fi
+
+if [[ "$TARGET" == "ssd" ]]; then
+  MERGED_OUTPUT="$SSD_MOUNT/riptide/runs/run_${TIMESTAMP}/${OUT_NAME}.root"
+else
+  MERGED_OUTPUT="output/${OUT_DIR}/${OUT_NAME}_${TIMESTAMP}.root"
 fi
 
 echo "[INFO]  Merge dei chunk in $MERGED_OUTPUT"

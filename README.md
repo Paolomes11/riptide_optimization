@@ -4,6 +4,30 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 
 ---
 
+## Tool: lens\_cutter
+
+**Eseguibile**: `lens_cutter_main`
+
+**Scopo**: Gestione e generazione di geometrie per lenti commerciali Thorlabs. Permette di elencare le lenti disponibili e generare snippet GDML o solidi Geant4.
+
+### Utilizzo
+
+```bash
+# Elenca tutte le lenti Thorlabs disponibili
+./build/Debug/lens_cutter_main --list
+
+# Genera lo snippet GDML per una lente specifica
+./build/Debug/lens_cutter_main --id LB4592
+```
+
+### Funzionamento
+
+Il tool legge le specifiche dal file `lens_cutter/lens_data/thorlabs_biconvex.tsv`. Le lenti bi-convesse sono modellate come l'unione di un cilindro centrale (spessore di bordo) e due calotte sferiche (raggio di curvatura e spessore centrale).
+
+Le simulazioni `optimization` e `simulation` possono caricare queste lenti dinamicamente tramite i flag `--lens75-id` e `--lens60-id`. In questo caso, i solidi definiti nel file GDML vengono sostituiti a runtime con quelli generati da `LensCutter`.
+
+---
+
 ## Indice
 
 1. [Requisiti](#requisiti)
@@ -190,6 +214,8 @@ cmake --build build/ --config Release
 | `-v`, `--visualize` | flag | Visualizzazione interattiva OpenGL/Qt |
 | `-b`, `--batch` | flag | Modalità batch senza UI |
 | `-o`, `--optimize` | flag | Avvia la scansione di ottimizzazione |
+| `--lens75-id` | string | ID lente Thorlabs per L1 (es. LB4592) |
+| `--lens60-id` | string | ID lente Thorlabs per L2 (es. LB4553) |
 | `--output` | path | File ROOT di output (default: `output/events.root`) |
 | `--config` | path | File `config.json` (default: `config/config.json`) |
 | `--ssd` | flag | Output sull'SSD esterna con timestamp automatico |
@@ -240,6 +266,8 @@ Il file prodotto contiene due TTree principali per l'analisi dell'efficienza geo
 | `-v`, `--visualize` | flag | Visualizzazione interattiva |
 | `-b`, `--batch` | flag | Modalità batch |
 | `-l`, `--lens-sim` | flag | Avvia il beam scan completo |
+| `--lens75-id` | string | ID lente Thorlabs per L1 (es. LB4592) |
+| `--lens60-id` | string | ID lente Thorlabs per L2 (es. LB4553) |
 | `--output` | path | File ROOT di output (default: `output/lens_simulation/lens.root`) |
 | `--config` | path | File `config.json` (default: `config/config.json`) |
 | `--ssd` | flag | Output sull'SSD esterna |
