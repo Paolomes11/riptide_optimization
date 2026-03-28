@@ -6,6 +6,9 @@
   "h1": 12.5,
   "r2": 30.9,
   "h2": 16.3,
-  "lower_percentile": 0.45,
+  "source_width": 60.0,
+  "source_height": 10.0,
+  "n_photons": 10000,
+  "lower_percentile": 0.0,
   "upper_percentile": 0.0
 }

@@ -195,15 +195,25 @@ cmake --build build/ --config Release
 | `--ssd` | flag | Output sull'SSD esterna con timestamp automatico |
 | `--ssd-mount` | path | Mount point dell'SSD (default: `/mnt/external_ssd`) |
 
-### Output
+### Output (`events.root`)
 
-File ROOT: `output/events.root` — TTree `events` con una riga per ogni fotone rilevato:
+Il file prodotto contiene due TTree principali per l'analisi dell'efficienza geometrica.
+
+**`Configurations`**: una riga per ogni configurazione di lenti testata.
 
 | Branch | Tipo | Descrizione |
 |---|---|---|
-| `x1` | `Double_t` | Posizione della lente 75mm [mm] |
-| `x2` | `Double_t` | Posizione della lente 60mm [mm] |
-| `config_id` | `Int_t` | Indice della configurazione |
+| `config_id` | `Int_t` | Identificativo unico della configurazione |
+| `x1` | `Double_t` | Posizione della lente 1 (75mm) [mm] |
+| `x2` | `Double_t` | Posizione della lente 2 (60mm) [mm] |
+
+**`Efficiency`**: una riga per ogni configurazione, con il conteggio dei fotoni.
+
+| Branch | Tipo | Descrizione |
+|---|---|---|
+| `config_id` | `Int_t` | Identificativo della configurazione |
+| `n_photons` | `Int_t` | Numero di fotoni generati per questa configurazione |
+| `n_hits` | `Int_t` | Numero di fotoni che hanno raggiunto il detector |
 
 ---
 
@@ -235,17 +245,11 @@ File ROOT: `output/events.root` — TTree `events` con una riga per ogni fotone 
 | `--ssd` | flag | Output sull'SSD esterna |
 | `--ssd-mount` | path | Mount point dell'SSD |
 
-### Output
+### Output (`lens.root`)
 
-File ROOT: `output/lens_simulation/lens.root` — tre TTree:
+Il file prodotto contiene tre TTree per l'analisi della PSF e della profondità di campo.
 
-**`Configurations`**: una riga per coppia di posizioni lenti.
-
-| Branch | Tipo | Descrizione |
-|---|---|---|
-| `config_id` | `Int_t` | Indice configurazione |
-| `x1` | `Double_t` | Posizione lente 75mm [mm] |
-| `x2` | `Double_t` | Posizione lente 60mm [mm] |
+**`Configurations`**: (identico a sopra)
 
 **`Runs`**: una riga per ogni esecuzione (configurazione × posizione sorgente).
 

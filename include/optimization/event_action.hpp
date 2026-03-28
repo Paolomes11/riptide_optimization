@@ -21,19 +21,12 @@
 
 namespace riptide {
 
-// Struttura per un hit/fotone
-struct PhotonHit {
-  double x1;
-  double x2;
-  int config_id; // Identificatore della configurazione delle lenti
-};
-
 class EventAction : public G4UserEventAction {
   // Variabili da salvare per ogni fotone
   int config_id; // Identificatore della configurazione delle lenti
 
-  // Vector per memorizzare tutti i fotoni di un evento
-  std::vector<PhotonHit> eventHits;
+  // Per contare gli hit totali di un run (una configurazione)
+  int m_lastRunHitCount = 0;
 
   // puntatore statico
   static inline EventAction* s_currentEventAction = nullptr;
@@ -43,10 +36,19 @@ class EventAction : public G4UserEventAction {
   virtual ~EventAction() = default;
 
   // Funzione che viene chiamata dal SensitiveDetector per registrare un hit
-  void AddPhotonHit(double lens_x1, double lens_x2);
+  void AddPhotonHit();
 
   // Funzione per impostare l'identificatore della configurazione
   void SetConfigId(int config_id);
+
+  // n_hits getter e resetter
+  int GetLastRunHitCount() const {
+    return m_lastRunHitCount;
+  }
+
+  void ResetLastRunHitCount() {
+    m_lastRunHitCount = 0;
+  }
 
   virtual void EndOfEventAction(const G4Event* event) override;
   virtual void BeginOfEventAction(const G4Event* event) override;

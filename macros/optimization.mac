@@ -2,18 +2,20 @@
 /gps/particle opticalphoton
 /gps/energy 2.5 eV
 
+# Sorgente rettangolare (60x10 mm)
 /gps/pos/type Plane
-/gps/pos/shape Annulus
-/gps/pos/centre 0 0 0 cm
+/gps/pos/shape Rectangle
+/gps/pos/centre 0 5 0 mm
+/gps/pos/halfx 5 mm
+/gps/pos/halfy 30 mm
 /gps/pos/rot1 0 1 0
 /gps/pos/rot2 0 0 1
-/gps/pos/radius 10 mm
-/gps/pos/inner_radius 0 mm
 
-
-# Direzione principale lungo +X
+# Emissione isotropa verso il detector (+X)
 /gps/ang/type iso
 /gps/direction 1 0 0
+/gps/ang/mintheta 0 deg
+/gps/ang/maxtheta 90 deg
 
 # Run
 /run/beamOn 10000

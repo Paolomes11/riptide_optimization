@@ -29,14 +29,12 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* hist
 
   // Considera solo i fotoni ottici
   if (track->GetDefinition() != G4OpticalPhoton::Definition()) {
-    std::cout << "SensitiveDetector: Not an optical photon, skipping" << std::endl;
     return false;
   }
 
   // Considera solo i fotoni che attraversano la superficie del fotocatodo
   auto* pre = step->GetPreStepPoint();
   if (pre->GetStepStatus() != fGeomBoundary) {
-    std::cout << "SensitiveDetector: Not at geometry boundary, skipping" << std::endl;
     return false;
   }
 
@@ -56,11 +54,10 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* hist
     return false;
   }
 
-  double current_x1 = det->GetLens75X();
-  double current_x2 = det->GetLens60X();
-
   // Registra il fotone come "hit"
-  eventAction->AddPhotonHit(current_x1, current_x2);
+  eventAction->AddPhotonHit();
+
+  track->SetTrackStatus(fStopAndKill);
 
   return true;
 }

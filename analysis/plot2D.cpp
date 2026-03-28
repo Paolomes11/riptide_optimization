@@ -25,6 +25,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <vector>
 
 struct Config {
@@ -68,81 +69,66 @@ int main() {
     return 1;
   }
 
-  TTree* tree = (TTree*)file.Get("events");
-  if (!tree) {
-    std::cerr << "Errore: TTree 'events' non trovato\n";
+  TTree* tree_config = (TTree*)file.Get("Configurations");
+  TTree* tree_eff    = (TTree*)file.Get("Efficiency");
+  if (!tree_config || !tree_eff) {
+    std::cerr << "Errore: TTree 'Configurations' or 'Efficiency' non trovato\n";
     return 1;
   }
 
   double x1_val;
   double x2_val;
   int config_id;
+  int n_photons;
+  int n_hits;
 
-  tree->SetBranchAddress("x1", &x1_val);
-  tree->SetBranchAddress("x2", &x2_val);
-  tree->SetBranchAddress("config_id", &config_id);
+  tree_config->SetBranchAddress("x1", &x1_val);
+  tree_config->SetBranchAddress("x2", &x2_val);
+  tree_config->SetBranchAddress("config_id", &config_id);
+
+  tree_eff->SetBranchAddress("config_id", &config_id);
+  tree_eff->SetBranchAddress("n_photons", &n_photons);
+  tree_eff->SetBranchAddress("n_hits", &n_hits);
+
+  // Mappa per associare config_id a (x1, x2)
+  std::map<int, Config> config_map;
+  for (int i = 0; i < tree_config->GetEntries(); ++i) {
+    tree_config->GetEntry(i);
+    config_map[config_id] = {x1_val, x2_val};
+  }
 
   // ===============================
   // Ricostruzione configurazioni
   // ===============================
-  std::vector<Config> configs;
-  configs.reserve(10000);
-
   double x1_min_all = 1e9;
   double x1_max_all = -1e9;
   double x2_min_all = 1e9;
   double x2_max_all = -1e9;
 
-  for (double x1 = x_min - r1 + h1; x1 <= x_max - h2 - 1 - r1; x1 += dx) {
-    x1_min_all = std::min(x1_min_all, x1);
-    x1_max_all = std::max(x1_max_all, x1);
-
-    double x2_min = x1 + r1 + r2 + 1;
-    double x2_max = x_max + r2 - h2;
-
-    x2_min_all = std::min(x2_min_all, x2_min);
-    x2_max_all = std::max(x2_max_all, x2_max);
-
-    for (double x2 = x2_min; x2 <= x2_max; x2 += dx) {
-      configs.push_back({x1, x2});
-    }
+  for (auto const& [id, cfg] : config_map) {
+    x1_min_all = std::min(x1_min_all, cfg.x1);
+    x1_max_all = std::max(x1_max_all, cfg.x1);
+    x2_min_all = std::min(x2_min_all, cfg.x2);
+    x2_max_all = std::max(x2_max_all, cfg.x2);
   }
 
-  if (configs.empty()) {
-    std::cerr << "Errore: nessuna configurazione generata\n";
-    return 1;
-  }
-  std::cout << "Numero configurazioni: " << configs.size() << std::endl;
+  // Creazione istogramma
+  int n_bins_x1 = std::round((x1_max_all - x1_min_all) / dx) + 1;
+  int n_bins_x2 = std::round((x2_max_all - x2_min_all) / dx) + 1;
 
-  // ===============================
-  // Conteggio eventi
-  // ===============================
-  const double N_generated = 10000.0;
-  std::vector<int> counts(configs.size(), 0);
-  Long64_t nEntries = tree->GetEntries();
-  std::cout << "Eventi nel file: " << nEntries << std::endl;
+  TH2D h_efficiency("h_efficiency", "Geometrical Efficiency;X1 [mm];X2 [mm]", n_bins_x1,
+                    x1_min_all - dx / 2.0, x1_max_all + dx / 2.0, n_bins_x2,
+                    x2_min_all - dx / 2.0, x2_max_all + dx / 2.0);
 
-  for (Long64_t i = 0; i < nEntries; ++i) {
-    tree->GetEntry(i);
-    if (config_id >= 0 && (size_t)config_id < configs.size()) {
-      counts[config_id]++;
-    }
+  // Riempimento istogramma
+  std::vector<double> effs;
+  for (int i = 0; i < tree_eff->GetEntries(); ++i) {
+    tree_eff->GetEntry(i);
+    effs.push_back((double)n_hits / n_photons);
   }
 
-  // ===============================
-  // Calcolo efficienze
-  // ===============================
-  std::vector<double> efficiencies(configs.size());
-  for (size_t i = 0; i < configs.size(); ++i) {
-    efficiencies[i] = counts[i] / N_generated;
-  }
-
-  // ===============================
-  // Calcolo percentili
-  // ===============================
-  std::vector<double> sorted = efficiencies;
+  std::vector<double> sorted = effs;
   std::sort(sorted.begin(), sorted.end());
-
   size_t N          = sorted.size();
   size_t low_index  = static_cast<size_t>(lower_percentile * N);
   size_t high_index = static_cast<size_t>((1.0 - upper_percentile) * N);
@@ -155,30 +141,19 @@ int main() {
   std::cout << "Percentile basso : " << p_low << std::endl;
   std::cout << "Percentile alto  : " << p_high << std::endl;
 
-  // ===============================
-  // Creazione istogramma
-  // ===============================
-  int bins_x = std::ceil((x1_max_all - x1_min_all) / dx);
-  int bins_y = std::ceil((x2_max_all - x2_min_all) / dx);
-
-  TH2D h_efficiency("h_efficiency", "Geometrical Efficiency;X1 [mm];X2 [mm]", bins_x, x1_min_all,
-                    x1_max_all, bins_y, x2_min_all, x2_max_all);
-
-  // ===============================
-  // Riempimento SOLO dentro percentili
-  // ===============================
   double actual_min = 1e9;
   double actual_max = -1e9;
-
-  for (size_t i = 0; i < configs.size(); ++i) {
-    double value = efficiencies[i];
-    if (value < p_low || value > p_high)
+  for (int i = 0; i < tree_eff->GetEntries(); ++i) {
+    tree_eff->GetEntry(i);
+    double eff = (double)n_hits / n_photons;
+    if (eff < p_low || eff > p_high)
       continue;
 
-    h_efficiency.Fill(configs[i].x1, configs[i].x2, value);
-
-    actual_min = std::min(actual_min, value);
-    actual_max = std::max(actual_max, value);
+    if (config_map.count(config_id)) {
+      h_efficiency.Fill(config_map[config_id].x1, config_map[config_id].x2, eff);
+      actual_min = std::min(actual_min, eff);
+      actual_max = std::max(actual_max, eff);
+    }
   }
 
   // Aggiorna scala colori in base ai valori effettivi

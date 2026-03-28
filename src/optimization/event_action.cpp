@@ -20,12 +20,8 @@
 namespace riptide {
 
 // Funzione che viene chiamata dal SensitiveDetector per registrare un hit
-void EventAction::AddPhotonHit(double lens_x1, double lens_x2) {
-  PhotonHit photon;
-  photon.x1        = lens_x1;
-  photon.x2        = lens_x2;
-  photon.config_id = config_id;
-  eventHits.push_back(photon);
+void EventAction::AddPhotonHit() {
+  m_lastRunHitCount++;
 }
 
 // Funzione per impostare l'identificatore della configurazione
@@ -34,25 +30,12 @@ void EventAction::SetConfigId(int config_id) {
 }
 
 void EventAction::BeginOfEventAction(const G4Event* /*event*/) {
-  eventHits.clear();
   s_currentEventAction = this; // imposta il puntatore statico
 }
 
-// Alla fine dell'evento, scrivi tutti i fotoni nel TTree
-void EventAction::EndOfEventAction(const G4Event* event) {
-  (void)event; // non serve l'evento qui
-
-  auto analysisManager = G4AnalysisManager::Instance();
-
-  for (auto& photon : eventHits) {
-    analysisManager->FillNtupleDColumn(0, photon.x1);
-    analysisManager->FillNtupleDColumn(1, photon.x2);
-    analysisManager->FillNtupleIColumn(2, photon.config_id);
-
-    analysisManager->AddNtupleRow();
-  }
-
-  eventHits.clear(); // prepara per il prossimo evento
+// Alla fine dell'evento, aggiorna solo il contatore degli hit
+void EventAction::EndOfEventAction(const G4Event* /*event*/) {
+  // m_lastRunHitCount è incrementato in AddPhotonHit
 }
 
 } // namespace riptide
