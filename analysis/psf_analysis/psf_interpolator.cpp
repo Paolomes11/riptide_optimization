@@ -465,4 +465,59 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
   return res;
 }
 
+CoverageResult compute_coverage(const LensConfig& cfg, const PSFDatabase& db, const QConfig& qcfg) {
+  if (db.find(cfg) == db.end()) {
+    std::ostringstream oss;
+    oss << "compute_coverage: config (x1=" << cfg.x1 << ", x2=" << cfg.x2 << ") non trovata.";
+    throw std::invalid_argument(oss.str());
+  }
+
+  // Costruisce la lista di y0 con la stessa logica di compute_Q
+  std::vector<double> y0_list;
+  if (!qcfg.y0_values.empty()) {
+    y0_list = qcfg.y0_values;
+  } else {
+    const double eps = qcfg.dy0 * 1e-9;
+    for (double y0 = qcfg.y0_min; y0 <= qcfg.y0_max + eps; y0 += qcfg.dy0)
+      y0_list.push_back(y0);
+  }
+
+  CoverageResult res{};
+  res.coverage       = 0.0;
+  res.n_y0_requested = static_cast<int>(y0_list.size());
+  res.n_y0_evaluated = 0;
+  res.config_valid   = false;
+
+  double sum_frac = 0.0;
+
+  for (double y0 : y0_list) {
+    std::vector<TracePoint> trace;
+    try {
+      trace = build_trace(y0, cfg, db, qcfg.trace_L, qcfg.trace_dt);
+    } catch (...) {
+      // build_trace può fallire se r è fuori range; si salta silenziosamente
+      continue;
+    }
+
+    if (trace.empty())
+      continue;
+
+    // Conta punti on_detector (valid == true)
+    int n_valid = 0;
+    for (const auto& pt : trace)
+      if (pt.valid)
+        ++n_valid;
+
+    sum_frac += static_cast<double>(n_valid) / static_cast<double>(trace.size());
+    ++res.n_y0_evaluated;
+  }
+
+  if (res.n_y0_evaluated > 0) {
+    res.coverage     = sum_frac / static_cast<double>(res.n_y0_evaluated);
+    res.config_valid = true;
+  }
+
+  return res;
+}
+
 } // namespace riptide

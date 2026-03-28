@@ -265,6 +265,55 @@ struct QResult {
 QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& qcfg = QConfig{},
                   bool include_non_converged = false);
 
+/**
+ * Risultato del calcolo di copertura per una singola configurazione lenti.
+ *
+ * "Copertura" = frazione media di punti on_detector su tutte le tracce campionate
+ * e su tutti i punti di ogni traccia.  Misura quanta luce arriva effettivamente
+ * sul fotocatodo, indipendentemente dalla qualità del fit ODR.
+ *
+ * Definizione formale:
+ *
+ *   coverage(x1,x2) = (1/N_y0) * Σ_{y0} [ n_valid(y0) / N_pts_per_trace ]
+ *
+ * dove:
+ *   n_valid(y0) = numero di TracePoint con valid==true per la traccia a y0
+ *   N_pts_per_trace = numero totale di punti per traccia (= round(L/dt)+1)
+ *   N_y0 = numero di tracce per cui build_trace ha avuto successo
+ *
+ * Un valore di 1.0 significa che tutti i fotoni simulati raggiungono il
+ * fotocatodo per ogni posizione della sorgente nell'intervallo campionato.
+ * Un valore di 0.0 significa copertura nulla (lenti totalmente fuori fuoco
+ * o configurazione geometricamente impossibile).
+ */
+struct CoverageResult {
+  double coverage;    // frazione media on_detector ∈ [0, 1]
+  int n_y0_evaluated; // y0 per cui build_trace ha avuto successo
+  int n_y0_requested; // y0 totali richiesti dalla configurazione
+  bool config_valid;  // false se n_y0_evaluated == 0
+};
+
+/**
+ * Calcola la mappa di copertura geometrica per una configurazione di lenti.
+ *
+ * Per ogni valore di y0 nel campionamento (stessa griglia di compute_Q):
+ *   1. Costruisce la traccia con build_trace(y0, cfg, db, L, dt)
+ *   2. Conta i TracePoint con valid == true
+ *   3. Accumula coverage += n_valid / N_total
+ * Restituisce la media su tutti i y0 campionati con successo.
+ *
+ * Non esegue nessun fit ODR: il costo computazionale è trascurabile.
+ * Ideale come primo passo diagnostico prima di eseguire q_map.
+ *
+ * @param cfg   Configurazione lenti (deve essere presente nel db)
+ * @param db    Database PSF
+ * @param qcfg  Parametri di campionamento (usa y0_min/max/dy0, trace_L, trace_dt)
+ * @return      CoverageResult
+ * @throws std::invalid_argument se db non contiene cfg
+ */
+CoverageResult compute_coverage(const LensConfig& cfg, const PSFDatabase& db,
+                                const QConfig& qcfg = QConfig{});
+
 } // namespace riptide
 
 #endif // RIPTIDE_PSF_INTERPOLATOR_HPP
