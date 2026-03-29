@@ -23,45 +23,26 @@
 
 namespace riptide {
 
-G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* history) {
-  std::ignore = history;
+G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* /*history*/) {
   auto* track = step->GetTrack();
 
-  // Considera solo i fotoni ottici
-  if (track->GetDefinition() != G4OpticalPhoton::Definition()) {
-    std::cout << "SensitiveDetector: Not an optical photon, skipping" << std::endl;
-    return false;
-  }
-
-  // Considera solo i fotoni che attraversano la superficie del fotocatodo
+  // Considera solo i fotoni ottici che arrivano sulla superficie
   auto* pre = step->GetPreStepPoint();
   if (pre->GetStepStatus() != fGeomBoundary) {
-    std::cout << "SensitiveDetector: Not at geometry boundary, skipping" << std::endl;
     return false;
   }
 
-  // Recupera EventAction tramite il puntatore statico
+  // Recupera EventAction tramite il puntatore statico (cache locale per performance se servisse)
   auto* eventAction = EventAction::GetEventAction();
   if (!eventAction) {
-    std::cerr << "SensitivePhotocathode: EventAction not found!" << std::endl;
-    return false;
-  }
-
-  // Recupera DetectorConstruction per leggere le posizioni correnti delle lenti
-  auto* det = dynamic_cast<const DetectorConstruction*>(
-      G4RunManager::GetRunManager()->GetUserDetectorConstruction());
-
-  if (!det) {
-    std::cerr << "SensitivePhotocathode: DetectorConstruction not found!" << std::endl;
     return false;
   }
 
   // Registra il fotone come "hit"
   auto pos   = pre->GetPosition();
-  double f_y = pos.y();
-  double f_z = pos.z();
-  eventAction->AddPhotonHit(f_y, f_z);
+  eventAction->AddPhotonHit(pos.y(), pos.z());
 
+  // Kill the photon after detection to stop tracking
   track->SetTrackStatus(fStopAndKill);
 
   return true;

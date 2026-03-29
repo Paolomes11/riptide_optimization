@@ -31,7 +31,8 @@
 namespace riptide {
 
 void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
-               const std::string& root_output_file, const std::filesystem::path& config_file) {
+               const std::string& root_output_file, const std::filesystem::path& config_file,
+               bool all_lenses) {
   using json = nlohmann::json;
 
   // Crea la directory di output se non esiste
@@ -57,6 +58,33 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   std::filesystem::path macro_to_run =
       macro_file.empty() ? "macros/lens_simulation.mac" : macro_file;
 
+  // Carica i modelli di lenti se richiesto
+  struct LensModel {
+    std::string id75;
+    std::string id60;
+  };
+  std::vector<LensModel> models;
+
+  if (all_lenses) {
+    std::string tsv_path = "lens_cutter/lens_data/thorlabs_biconvex.tsv";
+    if (!std::filesystem::exists(tsv_path)) {
+      spdlog::error("Lens data file not found: {}", tsv_path);
+      return;
+    }
+    LensCutter cutter(tsv_path);
+    const auto& lenses = cutter.get_lenses();
+    for (const auto& l1 : lenses) {
+      for (const auto& l2 : lenses) {
+        models.push_back({l1.id, l2.id});
+      }
+    }
+    spdlog::warn("Simulation of ALL lens combinations enabled ({} combinations)", models.size());
+    spdlog::warn("This might take a long time and use significant disk space!");
+  } else {
+    // Usa i modelli correnti o default
+    models.push_back({"LB4553", "LB4592"}); // Default se non specificato altrimenti
+  }
+
   // Apertura file ROOT e creazione delle Ntuple
   auto analysisManager = G4AnalysisManager::Instance();
   analysisManager->OpenFile(root_output_file);
@@ -69,138 +97,131 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   analysisManager->CreateNtupleIColumn("config_id");
   analysisManager->CreateNtupleDColumn("x1");
   analysisManager->CreateNtupleDColumn("x2");
+  analysisManager->CreateNtupleSColumn("lens75_id");
+  analysisManager->CreateNtupleSColumn("lens60_id");
   analysisManager->FinishNtuple(0);
 
-  // Ntuple 1: posizione sorgente / run
-  analysisManager->CreateNtuple("Runs", "Source positions per configuration");
+  // Vettori bound per le hit (necessari per CreateNtupleFColumn con std::vector)
+  std::vector<float> y_hits_vec;
+  std::vector<float> z_hits_vec;
+
+  // Ntuple 1: posizione sorgente / run + Hits (vettori)
+  // Ottimizzazione spazio: mettiamo le hit direttamente qui come vettori float
+  analysisManager->CreateNtuple("Runs", "Source positions and hits per configuration");
   analysisManager->CreateNtupleIColumn("run_id");
   analysisManager->CreateNtupleIColumn("config_id");
   analysisManager->CreateNtupleFColumn("x_source");
   analysisManager->CreateNtupleIColumn("n_hits");
+
+  analysisManager->CreateNtupleFColumn("y_hits", y_hits_vec);
+  analysisManager->CreateNtupleFColumn("z_hits", z_hits_vec);
   analysisManager->FinishNtuple(1);
 
-  // Ntuple 2: hit/fotoni
-  analysisManager->CreateNtuple("Hits", "Detected photons");
-  analysisManager->CreateNtupleFColumn("y_hit");
-  analysisManager->CreateNtupleFColumn("z_hit");
-  analysisManager->FinishNtuple(2);
-
   // Parametri di scansione lenti e sorgente
-  // Tiene conto di 30mm di scintillatore e 3mm di margine
   double x_min = config["x_min"];
-  // Tiene conto di 3mm di margine
   double x_max = config["x_max"];
   double dx    = config["dx"];
-
-  // Ottieni dimensioni reali dal detector (possono essere Thorlabs o GDML default)
-  double h1      = det->GetLens75Thickness();
-  double offset1 = det->GetLens75CenterOffset();
-  double h2      = det->GetLens60Thickness();
-  double offset2 = det->GetLens60CenterOffset();
 
   // Parametri sorgente GPS
   double source_y_min = 0.0;
   double source_y_max = 10.0 * sqrt(2.0);
   double source_dy    = 0.1;
 
-  // Offset per config_id e run_id: permette il merge corretto di chunk paralleli
   int config_id_offset = config.value("config_id_offset", 0);
   int run_id_offset    = config.value("run_id_offset", 0);
 
   int config_counter = config_id_offset;
   int run_counter    = run_id_offset;
 
-  // Costruisce la lista di coppie (x1, x2) da simulare.
-  // Se il config contiene "pairs" (generato da run.sh per chunk bilanciati),
-  // usa quella lista. Altrimenti usa il loop geometrico completo.
-  struct LensPair {
-    double x1, x2;
-  };
-  std::vector<LensPair> pairs;
+  for (const auto& model : models) {
+    spdlog::info("Simulating lens pair: {} & {}", model.id75, model.id60);
+    det->SetLenses(model.id75, model.id60);
 
-  if (config.contains("pairs")) {
-    for (const auto& p : config["pairs"]) {
-      pairs.push_back({p[0].get<double>(), p[1].get<double>()});
-    }
-    spdlog::info("Loaded {} pairs from config", pairs.size());
-  } else {
-    // Loop geometrico adattivo: evita intersezioni basandosi sulle dimensioni reali
-    // delle lenti (GDML default o Thorlabs) e mantiene l'ordine L1 < L2.
-    const double margin = 3.0; // 3mm di spazio minimo tra le lenti per lens_scan
+    // Ricalcola h e offset dopo il cambio lenti
+    double h1      = det->GetLens75Thickness();
+    double offset1 = det->GetLens75CenterOffset();
+    double h2      = det->GetLens60Thickness();
+    double offset2 = det->GetLens60CenterOffset();
 
-    double x1_start = x_min;
-    double x1_end   = x_max;
+    std::vector<std::pair<double, double>> pairs;
+    if (config.contains("pairs")) {
+      for (const auto& p : config["pairs"]) {
+        pairs.push_back({p[0].get<double>(), p[1].get<double>()});
+      }
+    } else {
+      const double margin = 3.0;
+      double x1_start     = config.value("x1_start", x_min);
+      double x1_end       = config.value("x1_end", x_max);
 
-    if (config.contains("x1_start"))
-      x1_start = config["x1_start"];
-    if (config.contains("x1_end"))
-      x1_end = config["x1_end"];
-
-    for (double x1 = x1_start; x1 <= x1_end + 1e-9; x1 += dx) {
-      // Calcola x2_min per evitare collisioni:
-      // back_l1 + margin < front_l2
-      // (x1 + offset1 + h1/2) + margin < (x2 + offset2 - h2/2)
-      double x2_min_collision = x1 + (offset1 - offset2) + (h1 + h2) / 2.0 + margin;
-      double x2_start         = std::max(x1 + dx, x2_min_collision);
-
-      for (double x2 = x2_start; x2 <= x_max + 1e-9; x2 += dx) {
-        pairs.push_back({x1, x2});
+      for (double x1 = x1_start; x1 <= x1_end + 1e-9; x1 += dx) {
+        double x2_min_collision = x1 + (offset1 - offset2) + (h1 + h2) / 2.0 + margin;
+        double x2_start         = std::max(x1 + dx, x2_min_collision);
+        for (double x2 = x2_start; x2 <= x_max + 1e-9; x2 += dx) {
+          pairs.push_back({x1, x2});
+        }
       }
     }
-    spdlog::info("Generated {} pairs from adaptive geometry loop", pairs.size());
-  }
 
-  for (const auto& pair : pairs) {
-    double x1 = pair.x1;
-    double x2 = pair.x2;
+    for (const auto& pair : pairs) {
+      double x1 = pair.first;
+      double x2 = pair.second;
 
-    det->SetLensPositions(x1, x2);
-    run_manager->GeometryHasBeenModified();
+      det->SetLensPositions(x1, x2);
+      run_manager->GeometryHasBeenModified();
 
-    // Salva la configurazione delle lenti
-    analysisManager->FillNtupleIColumn(0, 0, config_counter);
-    analysisManager->FillNtupleDColumn(0, 1, x1);
-    analysisManager->FillNtupleDColumn(0, 2, x2);
-    analysisManager->AddNtupleRow(0);
+      analysisManager->FillNtupleIColumn(0, 0, config_counter);
+      analysisManager->FillNtupleDColumn(0, 1, x1);
+      analysisManager->FillNtupleDColumn(0, 2, x2);
+      analysisManager->FillNtupleSColumn(0, 3, model.id75);
+      analysisManager->FillNtupleSColumn(0, 4, model.id60);
+      analysisManager->AddNtupleRow(0);
 
-    // Loop sulla posizione sorgente
-    for (double y_source = source_y_min; y_source <= source_y_max + 1e-9; y_source += source_dy) {
-      UImanager->ApplyCommand("/gps/pos/centre 0 " + std::to_string(y_source) + " 0 mm");
+      for (double y_source = source_y_min; y_source <= source_y_max + 1e-9; y_source += source_dy) {
+        UImanager->ApplyCommand("/gps/pos/centre 0 " + std::to_string(y_source) + " 0 mm");
 
-      int run_id = run_counter++;
+        int run_id = run_counter++;
+        auto* eventAction =
+            dynamic_cast<EventAction*>(const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
+        if (eventAction) {
+          eventAction->runID = run_id;
+          eventAction->ResetLastRunHitCount();
+          eventAction->ClearEventHits();
+        }
 
-      auto* eventAction = dynamic_cast<EventAction*>(
-          const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
-      if (eventAction) {
-        eventAction->runID = run_id;
+        long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        CLHEP::HepRandom::setTheSeed(seed);
+
+        UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
+
+        if (eventAction) {
+          const auto& hits = eventAction->GetEventHits();
+          y_hits_vec.clear();
+          z_hits_vec.clear();
+          y_hits_vec.reserve(hits.size());
+          z_hits_vec.reserve(hits.size());
+          for (const auto& h : hits) {
+            y_hits_vec.push_back(h.y);
+            z_hits_vec.push_back(h.z);
+          }
+
+          analysisManager->FillNtupleIColumn(1, 0, run_id);
+          analysisManager->FillNtupleIColumn(1, 1, config_counter);
+          analysisManager->FillNtupleFColumn(1, 2, static_cast<float>(y_source));
+          analysisManager->FillNtupleIColumn(1, 3, static_cast<int>(hits.size()));
+          analysisManager->AddNtupleRow(1);
+        }
+
+        spdlog::info("Run done: config_id={}, y_source={} mm, n_hits={}", config_counter, y_source,
+                     eventAction ? eventAction->GetLastRunHitCount() : 0);
       }
-
-      long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-      CLHEP::HepRandom::setTheSeed(seed);
-
-      UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
-
-      int n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0;
-
-      analysisManager->FillNtupleIColumn(1, 0, run_id);
-      analysisManager->FillNtupleIColumn(1, 1, config_counter);
-      analysisManager->FillNtupleFColumn(1, 2, static_cast<float>(y_source));
-      analysisManager->FillNtupleIColumn(1, 3, n_hits);
-      analysisManager->AddNtupleRow(1);
-
-      spdlog::info("Run done: config_id={}, y_source={} mm, run_id={}", config_counter, y_source,
-                   run_id);
+      config_counter++;
     }
-
-    config_counter++;
   }
 
-  // Scrive e chiude file
   analysisManager->Write();
-  analysisManager->CloseFile();
+   analysisManager->CloseFile();
+   spdlog::info("Simulation completed. Total configs: {}, Total runs: {}", config_counter,
+                run_counter);
+ }
 
-  spdlog::info("Total runs completed: {}", run_counter - run_id_offset);
-  spdlog::info("Optimization completed");
-}
-
-} // namespace riptide
+ } // namespace riptide

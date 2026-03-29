@@ -5,6 +5,11 @@ add_executable(plot2D
     plot2D.cpp
 )
 
+# Nuovo eseguibile per l'analisi 3D
+add_executable(plot3D
+    plot3D.cpp
+)
+
 # Eseguibile per il beam scan
 add_executable(beam_scan_plot
     beam_scan_plot.cpp
@@ -31,12 +36,14 @@ include(${ROOT_USE_FILE})
 
 # Link delle librerie ROOT agli eseguibili
 target_link_libraries(plot2D PRIVATE ${ROOT_LIBRARIES})
+target_link_libraries(plot3D PRIVATE ${ROOT_LIBRARIES})
 target_link_libraries(beam_scan_plot PRIVATE ${ROOT_LIBRARIES})
 target_link_libraries(m_c_creator PRIVATE ${ROOT_LIBRARIES})
 target_link_libraries(psf_extractor PRIVATE ${ROOT_LIBRARIES})
 
 # Include directory ROOT se serve
 target_include_directories(plot2D PRIVATE ${ROOT_INCLUDE_DIRS})
+target_include_directories(plot3D PRIVATE ${ROOT_INCLUDE_DIRS})
 target_include_directories(beam_scan_plot PRIVATE ${ROOT_INCLUDE_DIRS})
 target_include_directories(m_c_creator PRIVATE ${ROOT_INCLUDE_DIRS})
 target_include_directories(psf_extractor PRIVATE ${ROOT_INCLUDE_DIRS})

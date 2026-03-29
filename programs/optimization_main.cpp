@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
   bool visualize                    = false;
   bool batch                        = false;
   bool optimize                     = false;
+  bool all_lenses                   = false;
   bool show_help                    = false;
   bool use_ssd                      = false;
 
@@ -68,7 +69,9 @@ int main(int argc, char** argv) {
            | lyra::opt(use_ssd)["--ssd"]("Write output to external SSD (uses --ssd-mount)")
            | lyra::opt(visualize)["-v"]["--visualize"]("Enable visualization mode")
            | lyra::opt(batch)["-b"]["--batch"]("Enable batch mode (no visualization)")
-           | lyra::opt(optimize)["-o"]["--optimize"]("Enable geometrical efficiency optimization");
+           | lyra::opt(optimize)["-o"]["--optimize"]("Enable geometrical efficiency optimization")
+           | lyra::opt(all_lenses)["--all-lenses"](
+                 "Simulate all combinations of Thorlabs lenses (may use a lot of disk space!)");
 
   auto result = cli.parse({argc, argv});
   if (!result) {
@@ -126,8 +129,11 @@ int main(int argc, char** argv) {
     G4VisExecutive* vis_manager = nullptr;
 
     if (optimize) {
+      if (all_lenses && !use_ssd) {
+        spdlog::warn("Option --all-lenses used without --ssd. Output file might be very large!");
+      }
       spdlog::info("Running optimization");
-      riptide::run_optimization(&run_manager, macro_file, root_output_file, config_file);
+      riptide::run_optimization(&run_manager, macro_file, root_output_file, config_file, all_lenses);
       return EXIT_SUCCESS;
     }
 

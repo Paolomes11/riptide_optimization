@@ -55,11 +55,10 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  TTree* hits    = (TTree*)f.Get("Hits");
   TTree* runs    = (TTree*)f.Get("Runs");
   TTree* configs = (TTree*)f.Get("Configurations");
-  if (!hits || !runs || !configs) {
-    std::cerr << "Hits, Runs, or Configurations trees not found!" << std::endl;
+  if (!runs || !configs) {
+    std::cerr << "Required trees not found in " << input_file << "!" << std::endl;
     return 1;
   }
 
@@ -89,57 +88,40 @@ int main(int argc, char** argv) {
   // Runs per la configurazione
   int run_id, config_id, n_hits_run;
   float x_source;
+  std::vector<float>* y_hits_ptr = nullptr;
+  std::vector<float>* z_hits_ptr = nullptr;
+
   runs->SetBranchAddress("run_id", &run_id);
   runs->SetBranchAddress("config_id", &config_id);
   runs->SetBranchAddress("x_source", &x_source);
   runs->SetBranchAddress("n_hits", &n_hits_run);
-
-  // Così si evita run_id
-  struct RunEntry {
-    Long64_t first_hit;
-    int n_hits;
-    double xs_rounded;
-  };
-
-  std::map<int, RunEntry> all_runs;
-  std::map<int, double> runs_map; // run_id -> x_source
-  Long64_t cumulative = 0;
-  for (Long64_t i = 0; i < runs->GetEntries(); i++) {
-    runs->GetEntry(i);
-    double x_source_rounded = std::round(static_cast<double>(x_source) * 10.0) / 10.0;
-    all_runs[run_id]        = {cumulative, n_hits_run, x_source_rounded};
-    cumulative += n_hits_run;
-    if (config_id == selected_cfg_id) {
-      runs_map[run_id] = x_source_rounded;
-    }
-  }
-
-  if (runs_map.empty()) {
-    std::cerr << "No runs found for this configuration!" << std::endl;
-    return 1;
-  }
-
-  // Hits
-  float y_hit, z_hit;
-  hits->SetBranchAddress("y_hit", &y_hit);
-  hits->SetBranchAddress("z_hit", &z_hit);
+  runs->SetBranchAddress("y_hits", &y_hits_ptr);
+  runs->SetBranchAddress("z_hits", &z_hits_ptr);
 
   // Aggregazione per x_source
   std::map<double, std::vector<double>> y_hits_map;
   std::map<double, std::vector<double>> z_hits_map;
 
-  for (auto& [rid, xs] : runs_map) {
-    // re = run entry
-    const auto& re = all_runs.at(rid);
-    auto& yvec     = y_hits_map[xs];
-    auto& zvec     = z_hits_map[xs];
-    yvec.reserve(re.n_hits);
-    zvec.reserve(re.n_hits);
-    for (Long64_t j = re.first_hit; j < re.first_hit + re.n_hits; j++) {
-      hits->GetEntry(j);
-      yvec.push_back(y_hit);
-      zvec.push_back(z_hit);
+  for (Long64_t i = 0; i < runs->GetEntries(); i++) {
+    runs->GetEntry(i);
+    if (config_id != selected_cfg_id)
+      continue;
+
+    double x_source_rounded = std::round(static_cast<double>(x_source) * 10.0) / 10.0;
+    auto& yvec              = y_hits_map[x_source_rounded];
+    auto& zvec              = z_hits_map[x_source_rounded];
+
+    if (y_hits_ptr && z_hits_ptr) {
+      for (size_t j = 0; j < y_hits_ptr->size(); ++j) {
+        yvec.push_back(static_cast<double>((*y_hits_ptr)[j]));
+        zvec.push_back(static_cast<double>((*z_hits_ptr)[j]));
+      }
     }
+  }
+
+  if (y_hits_map.empty()) {
+    std::cerr << "No runs found for this configuration!" << std::endl;
+    return 1;
   }
 
   // Calcolo medie e deviazioni robuste (filtro 3σ) con debug compatto

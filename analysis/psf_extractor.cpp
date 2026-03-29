@@ -186,10 +186,9 @@ int main(int argc, char** argv) {
 
   TTree* tConfig = dynamic_cast<TTree*>(fin->Get("Configurations"));
   TTree* tRuns   = dynamic_cast<TTree*>(fin->Get("Runs"));
-  TTree* tHits   = dynamic_cast<TTree*>(fin->Get("Hits"));
 
-  if (!tConfig || !tRuns || !tHits) {
-    std::cerr << "Errore: TTree mancanti nel file di input\n";
+  if (!tConfig || !tRuns) {
+    std::cerr << "Errore: TTree Configurations o Runs mancanti nel file di input\n";
     return 1;
   }
 
@@ -208,36 +207,18 @@ int main(int argc, char** argv) {
   }
   std::cout << "Configurazioni lette: " << config_map.size() << "\n";
 
-  // Leggi Runs e costruisci mappa run_id -> offset hits
+  // Leggi Runs
   int run_id_r, run_cfg_id, n_hits_r;
   float y_source_r;
+  std::vector<float>* y_hits_ptr = nullptr;
+  std::vector<float>* z_hits_ptr = nullptr;
+
   tRuns->SetBranchAddress("run_id", &run_id_r);
   tRuns->SetBranchAddress("config_id", &run_cfg_id);
   tRuns->SetBranchAddress("x_source", &y_source_r);
   tRuns->SetBranchAddress("n_hits", &n_hits_r);
-
-  struct RunInfo {
-    int config_id;
-    float y_source;
-    Long64_t first_hit;
-    int n_hits;
-  };
-
-  std::vector<RunInfo> runs;
-  runs.reserve(static_cast<size_t>(tRuns->GetEntries()));
-  Long64_t cumulative = 0;
-  for (Long64_t i = 0; i < tRuns->GetEntries(); ++i) {
-    tRuns->GetEntry(i);
-    runs.push_back({run_cfg_id, y_source_r, cumulative, n_hits_r});
-    cumulative += n_hits_r;
-  }
-  std::cout << "Run letti: " << runs.size() << "\n";
-  std::cout << "Hit totali: " << cumulative << "\n";
-
-  // Setup lettura hits
-  float y_hit_r, z_hit_r;
-  tHits->SetBranchAddress("y_hit", &y_hit_r);
-  tHits->SetBranchAddress("z_hit", &z_hit_r);
+  tRuns->SetBranchAddress("y_hits", &y_hits_ptr);
+  tRuns->SetBranchAddress("z_hits", &z_hits_ptr);
 
   // Apri file di output
   TFile* fout = TFile::Open(output_path.c_str(), "RECREATE");
@@ -276,30 +257,31 @@ int main(int argc, char** argv) {
   std::vector<Hit> hits_buf;
   hits_buf.reserve(1000);
 
-  for (size_t r = 0; r < runs.size(); ++r) {
-    const auto& run = runs[r];
+  Long64_t n_runs = tRuns->GetEntries();
+  for (Long64_t r = 0; r < n_runs; ++r) {
+    tRuns->GetEntry(r);
 
     // Trova x1, x2 per questa config
-    auto it = config_map.find(run.config_id);
+    auto it = config_map.find(run_cfg_id);
     if (it == config_map.end()) {
       ++skipped;
       continue;
     }
 
-    // Carica le hit del run
+    // Carica le hit del run dai vettori
     hits_buf.clear();
-    for (Long64_t j = run.first_hit; j < run.first_hit + run.n_hits; ++j) {
-      tHits->GetEntry(j);
-      hits_buf.push_back({static_cast<double>(y_hit_r), static_cast<double>(z_hit_r)});
+    if (y_hits_ptr && z_hits_ptr) {
+      for (size_t j = 0; j < y_hits_ptr->size(); ++j) {
+        hits_buf.push_back({static_cast<double>((*y_hits_ptr)[j]), static_cast<double>((*z_hits_ptr)[j])});
+      }
     }
 
-    // Caso run con zero hit: salva la riga comunque con on_detector = false
-    // e statistiche nulle, così il database è completo per y_source
+    // Caso run con zero hit
     if (hits_buf.empty()) {
-      out_config_id       = run.config_id;
+      out_config_id       = run_cfg_id;
       out_x1              = it->second.first;
       out_x2              = it->second.second;
-      out_y_source        = run.y_source;
+      out_y_source        = y_source_r;
       out_mean_y          = 0.0;
       out_mean_z          = 0.0;
       out_cov_yy          = 0.0;
@@ -319,10 +301,10 @@ int main(int argc, char** argv) {
 
     if (!ok) {
       // Meno di 3 hit dopo il filtro: salva con on_detector = false
-      out_config_id       = run.config_id;
+      out_config_id       = run_cfg_id;
       out_x1              = it->second.first;
       out_x2              = it->second.second;
-      out_y_source        = run.y_source;
+      out_y_source        = y_source_r;
       out_mean_y          = 0.0;
       out_mean_z          = 0.0;
       out_cov_yy          = 0.0;
@@ -339,10 +321,10 @@ int main(int argc, char** argv) {
     // Imposta il flag: on_detector solo se ci sono abbastanza hit
     bool on_det = (res.n_hits_filtered >= min_hits);
 
-    out_config_id       = run.config_id;
+    out_config_id       = run_cfg_id;
     out_x1              = it->second.first;
     out_x2              = it->second.second;
-    out_y_source        = run.y_source;
+    out_y_source        = y_source_r;
     out_mean_y          = res.mean_y;
     out_mean_z          = res.mean_z;
     out_cov_yy          = res.cov_yy;
@@ -358,7 +340,7 @@ int main(int argc, char** argv) {
 
     // Progresso ogni 5000 run
     if ((r + 1) % 5000 == 0)
-      std::cout << "  Processati " << r + 1 << " / " << runs.size() << " run...\n";
+      std::cout << "  Processati " << r + 1 << " / " << n_runs << " run...\n";
   }
 
   fout->cd();
@@ -366,7 +348,7 @@ int main(int argc, char** argv) {
   fout->Close();
   fin->Close();
 
-  std::cout << "\nRun processati:                        " << runs.size() - skipped << "\n";
+  std::cout << "\nRun processati:                        " << n_runs - skipped << "\n";
   std::cout << "Run saltati (config non trovata):      " << skipped << "\n";
   std::cout << "Run con on_detector = false:           " << flagged_off << "\n";
   std::cout << "Output salvato in: " << output_path << "\n";

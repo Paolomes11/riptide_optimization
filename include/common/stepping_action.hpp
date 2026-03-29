@@ -12,19 +12,21 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
-#ifndef RIPTIDE_LENS_SCAN_HPP
-#define RIPTIDE_LENS_SCAN_HPP
+#ifndef RIPTIDE_STEPPING_ACTION_HPP
+#define RIPTIDE_STEPPING_ACTION_HPP
 
-#include <filesystem>
-#include <string>
-
-class G4RunManager;
+#include <G4UserSteppingAction.hh>
 
 namespace riptide {
-void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
-               const std::string& root_output_file,
-               const std::filesystem::path& config_file = "config/config.json",
-               bool all_lenses = false);
-}
 
-#endif // RIPTIDE_LENS_SCAN_HPP
+class SteppingAction : public G4UserSteppingAction {
+ public:
+  SteppingAction();
+  ~SteppingAction() override = default;
+
+  void UserSteppingAction(const G4Step* step) override;
+};
+
+} // namespace riptide
+
+#endif

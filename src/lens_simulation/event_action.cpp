@@ -27,26 +27,15 @@ void EventAction::AddPhotonHit(double y, double z) {
 }
 
 void EventAction::BeginOfEventAction(const G4Event* /*event*/) {
-  eventHits.clear();
   s_currentEventAction = this; // imposta il puntatore statico
 }
 
-// Alla fine dell'evento, scrivi tutti i fotoni nel TTree
+// Alla fine dell'evento, aggiorna il conteggio totale dei fotoni
 void EventAction::EndOfEventAction(const G4Event* /*event*/) {
-  // Ottieni il manager di analisi ROOT
-  auto* analysisManager = G4AnalysisManager::Instance();
+  m_lastRunHitCount = static_cast<int>(eventHits.size());
 
-  // Scrive tutte le hit accumulate nell'evento corrente
-  for (const auto& photon : eventHits) {
-    analysisManager->FillNtupleFColumn(2, 0, photon.y);
-    analysisManager->FillNtupleFColumn(2, 1, photon.z);
-    analysisManager->AddNtupleRow(2);
-  }
-
-  m_lastRunHitCount += static_cast<int>(eventHits.size());
-
-  // Pulisce il vettore per il prossimo evento
-  eventHits.clear();
+  // Non puliamo eventHits qui, lo facciamo manualmente in lens_scan/optimizer
+  // all'inizio di ogni run per permettere l'accumulo vettoriale.
 }
 
 } // namespace riptide

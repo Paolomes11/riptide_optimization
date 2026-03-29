@@ -37,13 +37,13 @@ Le simulazioni `optimization` e `simulation` possono caricare queste lenti dinam
 5. [Programma: optimization](#programma-optimization)
 6. [Programma: lens\_simulation](#programma-lens_simulation)
 7. [Output su SSD esterna](#output-su-ssd-esterna)
-8. [Parallelizzazione a processi](#parallelizzazione-a-processi)
+8. [Esecuzione Parallela e Dashboard](#esecuzione-parallela-e-dashboard)
 9. [Strumenti di analisi](#strumenti-di-analisi)
 10. [Libreria psf\_analysis](#libreria-psf_analysis)
 11. [Test unitari](#test-unitari)
 12. [Configurazione raccomandata per 'q_map'](#Configurazione-raccomandata-per-`q_map`)
 13. [File di configurazione](#file-di-configurazione)
-14. [Formato dei file ROOT](#formato-dei-file-root)
+14. [Formato dei file ROOT (Ottimizzato)](#formato-dei-file-root-ottimizzato)
 15. [Workflow completo](#workflow-completo)
 
 ---
@@ -214,6 +214,7 @@ cmake --build build/ --config Release
 | `-v`, `--visualize` | flag | Visualizzazione interattiva OpenGL/Qt |
 | `-b`, `--batch` | flag | Modalità batch senza UI |
 | `-o`, `--optimize` | flag | Avvia la scansione di ottimizzazione |
+| `--all-lenses` | flag | Scansione di **tutte** le combinazioni di lenti Thorlabs |
 | `--lens75-id` | string | ID lente Thorlabs per L1 (es. LB4592) |
 | `--lens60-id` | string | ID lente Thorlabs per L2 (es. LB4553) |
 | `--output` | path | File ROOT di output (default: `output/events.root`) |
@@ -266,6 +267,7 @@ Il file prodotto contiene due TTree principali per l'analisi dell'efficienza geo
 | `-v`, `--visualize` | flag | Visualizzazione interattiva |
 | `-b`, `--batch` | flag | Modalità batch |
 | `-l`, `--lens-sim` | flag | Avvia il beam scan completo |
+| `--all-lenses` | flag | Beam scan per **tutte** le combinazioni di lenti Thorlabs |
 | `--lens75-id` | string | ID lente Thorlabs per L1 (es. LB4592) |
 | `--lens60-id` | string | ID lente Thorlabs per L2 (es. LB4553) |
 | `--output` | path | File ROOT di output (default: `output/lens_simulation/lens.root`) |
@@ -326,32 +328,60 @@ Il path di output viene generato automaticamente con timestamp:
 
 ---
 
-## Parallelizzazione a processi
+## Esecuzione Parallela e Dashboard
 
-`lens_simulation` supporta la parallelizzazione tramite processi indipendenti. Lo spazio delle configurazioni viene diviso in N chunk, ognuno con il proprio file ROOT. Al termine i chunk vengono uniti con `hadd`.
+Il framework supporta la parallelizzazione tramite lo script `scripts/run.sh`, che divide il carico di lavoro in chunk indipendenti eseguiti in parallelo.
+
+### Dashboard di Monitoraggio
+È disponibile una dashboard professionale basata su Python e la libreria `rich` per monitorare il progresso in tempo reale.
 
 ```bash
-./scripts/run.sh lens local --jobs 4
-./scripts/run.sh lens ssd   --jobs 8
-./scripts/run.sh lens ssd   --jobs $(nproc --all)
+./scripts/run.sh lens local --jobs 8
 ```
 
-I `config_id` e `run_id` nel file finale sono globalmente unici e contigui grazie agli offset calcolati dallo script.
+La dashboard mostra:
+- Progresso globale della simulazione.
+- Stato di ogni singolo job (chunk).
+- Tempo trascorso e stima del tempo rimanente (ETA).
+
+### Gestione Processi e Cleanup
+Lo script `run.sh` gestisce correttamente l'interruzione dell'utente:
+- **SIGINT/SIGTERM**: Premendo `Ctrl+C`, lo script killa tutti i processi Geant4 in background e rimuove i file di configurazione temporanei in `/tmp`.
 
 ---
 
 ## Strumenti di analisi
 
-### plot2D
+Il framework include diversi strumenti di analisi basati su ROOT per visualizzare i risultati delle simulazioni.
 
-Genera la mappa 2D di efficienza geometrica da `output/events.root`.
+### 1. plot2D
+
+**Scopo**: Genera una mappa di calore 2D dell'efficienza in funzione delle posizioni $(x_1, x_2)$ delle lenti.
 
 ```bash
-./build/analysis/Release/plot2D
-# → output/efficiency2D.png
+./build/Release/plot2D -i output/events.root --lens1 LB4553 --lens2 LB4592 --low 0.05 --high 0.05
 ```
 
-### beam\_scan\_plot
+*   `--lens1`, `--lens2`: Permettono di selezionare la coppia di lenti specifica (utile con `--all-lenses`).
+*   `--low`, `--high`: Escludono i percentili estremi dalla scala colori per migliorare il contrasto.
+
+### 2. plot3D
+
+**Scopo**: Visualizzazione 3D avanzata per la scansione di tutte le lenti. Mostra un canvas con un plot 3D per ogni "prima lente". Nel plot:
+*   Asse X: Modello della seconda lente (Item #).
+*   Asse Y: Posizione $x_1$.
+*   Asse Z: Posizione $x_2$.
+*   Colore Cubetti: Efficienza geometrica.
+*   Linea Rossa: Traccia il valore medio pesato $(\bar{x}_1, \bar{x}_2)$ per ogni modello di seconda lente.
+
+```bash
+./build/Release/plot3D -i output/events.root --low 0.1 --high 0.1
+```
+
+*   `--lens1 <id>`: Seleziona una lente specifica per la visualizzazione.
+*   `--2d`: Se usato con `--lens1`, genera una griglia di mappe di calore 2D (una per ogni modello di seconda lente) invece del plot 3D.
+
+### 3. beam\_scan\_plot
 
 Per una coppia (x1, x2) fissata, calcola posizione media e deviazione standard dei fotoni al variare della posizione sorgente. Applica filtro outlier 2σ iterativo.
 
@@ -689,50 +719,58 @@ x2_max = x_max + r2 - h2
 
 ---
 
-## Formato dei file ROOT
+## Formato dei file ROOT (Ottimizzato)
 
-### events.root (optimization)
-
-```
-events.root
-└── TTree "events"
-    ├── x1        Double_t
-    ├── x2        Double_t
-    └── config_id Int_t
-```
+I file ROOT utilizzano un formato a **vettori di hit** per massimizzare l'efficienza di archiviazione (riduzione del ~40% delle dimensioni rispetto al formato riga-per-hit).
 
 ### lens.root (lens_simulation)
 
 ```
 lens.root
-├── TTree "Configurations"    (≈703 righe)
+├── TTree "Configurations"
 │   ├── config_id  Int_t
-│   ├── x1         Double_t  [mm]
-│   └── x2         Double_t  [mm]
+│   ├── x1, x2     Double_t [mm]
+│   ├── lens75_id  String   [Thorlabs ID]
+│   └── lens60_id  String   [Thorlabs ID]
 │
-├── TTree "Runs"              (≈71 000 righe)
-│   ├── run_id     Int_t
+└── TTree "Runs"
+    ├── run_id     Int_t
+    ├── config_id  Int_t
+    ├── x_source   Float_t  [mm]
+    ├── n_hits     Int_t
+    ├── y_hits     vector<float> [mm]
+    └── z_hits     vector<float> [mm]
+```
+
+### events.root (optimization)
+
+```
+events.root
+├── TTree "Configurations"
 │   ├── config_id  Int_t
-│   ├── x_source   Float_t   [mm]
-│   └── n_hits     Int_t
+│   ├── x1, x2     Double_t
+│   ├── lens75_id  String
+│   └── lens60_id  String
 │
-└── TTree "Hits"              (≈14M righe)
-    ├── y_hit      Float_t   [mm]
-    └── z_hit      Float_t   [mm]
+└── TTree "Efficiency"
+    ├── config_id  Int_t
+    ├── n_photons  Int_t
+    └── n_hits     Int_t
 ```
 
 ### psf\_data.root (psf\_extractor)
 
 ```
 psf_data.root
-└── TTree "PSF"    (≈71 000 righe)
+└── TTree "PSF"
     ├── config_id         Int_t
-    ├── x1, x2            Double_t   [mm]
-    ├── y_source          Float_t    [mm]
-    ├── mean_y, mean_z    Double_t   [mm]
-    ├── cov_yy, cov_yz, cov_zz  Double_t  [mm²]
+    ├── x1, x2            Double_t
+    ├── y_source          Float_t
+    ├── mean_y, mean_z    Double_t
+    ├── cov_yy, cov_yz, cov_zz  Double_t
     ├── n_hits_filtered   Int_t
-    └── n_hits_raw        Int_t
+    ├── n_hits_raw        Int_t
+    └── on_detector       Bool_t
 ```
 
 ---

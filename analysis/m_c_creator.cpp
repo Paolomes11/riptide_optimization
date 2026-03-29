@@ -51,9 +51,8 @@ int main(int argc, char** argv) {
 
   TTree* tConfig = (TTree*)file->Get("Configurations");
   TTree* tRuns   = (TTree*)file->Get("Runs");
-  TTree* tHits   = (TTree*)file->Get("Hits");
-  if (!tConfig || !tRuns || !tHits) {
-    std::cerr << "Impossibile leggere uno dei TTree\n";
+  if (!tConfig || !tRuns) {
+    std::cerr << "Impossibile leggere Configurations o Runs TTree\n";
     return 1;
   }
 
@@ -66,14 +65,15 @@ int main(int argc, char** argv) {
 
   int run_id, run_config, n_hits_run;
   float y_source;
+  std::vector<float>* y_hits_ptr = nullptr;
+  std::vector<float>* z_hits_ptr = nullptr;
+
   tRuns->SetBranchAddress("run_id", &run_id);
   tRuns->SetBranchAddress("config_id", &run_config);
   tRuns->SetBranchAddress("x_source", &y_source);
   tRuns->SetBranchAddress("n_hits", &n_hits_run);
-
-  float y_hit, z_hit;
-  tHits->SetBranchAddress("y_hit", &y_hit);
-  tHits->SetBranchAddress("z_hit", &z_hit);
+  tRuns->SetBranchAddress("y_hits", &y_hits_ptr);
+  tRuns->SetBranchAddress("z_hits", &z_hits_ptr);
 
   // trova configurazione più vicina
   int target_config_id = -1;
@@ -99,42 +99,42 @@ int main(int argc, char** argv) {
   std::cout << "Configurazione scelta: config_id=" << target_config_id << ", x1=" << x1_sel
             << ", x2=" << x2_sel << "\n";
 
-  // trova run esatto
-  struct RunInfo {
-    Long64_t first_hit;
-    int n_hits;
-  };
-  std::map<int, RunInfo> run_info_map;
-  Long64_t cumulative_hits = 0;
-  for (Long64_t i = 0; i < tRuns->GetEntries(); ++i) {
-    tRuns->GetEntry(i);
-    run_info_map[run_id] = {cumulative_hits, n_hits_run};
-    cumulative_hits += n_hits_run;
-  }
+  // trova run più vicino a y0_target
+  int target_run_id = -1;
+  best_dist         = std::numeric_limits<double>::max();
+  float y_sel       = 0;
 
-  int exact_run_id = -1;
   for (Long64_t i = 0; i < tRuns->GetEntries(); ++i) {
     tRuns->GetEntry(i);
-    if (run_config == target_config_id && std::abs(y_source - y0_target) < 1e-3) {
-      exact_run_id = run_id;
-      break;
+    if (run_config != target_config_id)
+      continue;
+
+    double dist = std::abs(y_source - y0_target);
+    if (dist < best_dist) {
+      best_dist     = dist;
+      target_run_id = run_id;
+      y_sel         = y_source;
     }
   }
 
-  if (exact_run_id < 0) {
-    std::cerr << "Nessun run trovato con y0_target = " << y0_target << "\n";
+  if (target_run_id < 0) {
+    std::cerr << "Nessun run trovato per questa configurazione!\n";
     return 1;
   }
-  std::cout << "Run selezionato: run_id=" << exact_run_id << ", y_source=" << y0_target << "\n";
+  std::cout << "Run scelto: run_id=" << target_run_id << ", y_source=" << y_sel << "\n";
 
-  // raccogli tutte le hit
+  // Carica le hit dal run scelto
   std::vector<Hit> hits;
-  // ri = run_info
-  const auto& ri = run_info_map.at(exact_run_id);
-  hits.reserve(ri.n_hits);
-  for (Long64_t i = ri.first_hit; i < ri.first_hit + ri.n_hits; ++i) {
-    tHits->GetEntry(i);
-    hits.push_back({static_cast<double>(y_hit), static_cast<double>(z_hit)});
+  for (Long64_t i = 0; i < tRuns->GetEntries(); ++i) {
+    tRuns->GetEntry(i);
+    if (run_id == target_run_id) {
+      if (y_hits_ptr && z_hits_ptr) {
+        for (size_t j = 0; j < y_hits_ptr->size(); ++j) {
+          hits.push_back({static_cast<double>((*y_hits_ptr)[j]), static_cast<double>((*z_hits_ptr)[j])});
+        }
+      }
+      break;
+    }
   }
 
   if (hits.empty()) {

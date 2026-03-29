@@ -29,6 +29,7 @@ N_JOBS=1
 CONFIG_FILE="$PROJECT_ROOT/config/config.json"
 LENS75_ID=""
 LENS60_ID=""
+ALL_LENSES=0
 
 # parsing argomenti posizionali
 MODE="${1:-lens}"    # lens | opt
@@ -43,6 +44,8 @@ while [[ $# -gt 0 ]]; do
       N_JOBS="$2"; shift 2 ;;
     --ssd-mount)
       SSD_MOUNT="$2"; shift 2 ;;
+    --all-lenses)
+      ALL_LENSES=1; EXTRA_ARGS+=("--all-lenses"); shift ;;
     --config)
       CONFIG_FILE="$2"; EXTRA_ARGS+=("--config" "$2"); shift 2 ;;
     --lens75-id)
@@ -78,8 +81,8 @@ fi
 if [[ "$N_JOBS" -eq 1 ]]; then
   echo "[INFO]  Avvio $MODE ($TARGET), processo singolo"
   case "$MODE" in
-    lens) "$BINARY" -g "$GEOMETRY" -b -l $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
-    opt)  "$BINARY" -g "$GEOMETRY" -b -o $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
+    lens) "$BINARY" -g "$GEOMETRY" -b -l --config "$CONFIG_FILE" $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
+    opt)  "$BINARY" -g "$GEOMETRY" -b -o --config "$CONFIG_FILE" $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
   esac
   echo "[DONE]  Simulazione completata."
   exit 0
@@ -93,6 +96,39 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 TMPDIR_CONFIGS="/tmp/riptide_chunks_$TIMESTAMP"
 mkdir -p "$TMPDIR_CONFIGS"
 
+# --- Gestione Segnali e Pulizia ---
+PIDS=()
+CHUNK_OUTPUTS=()
+MONITOR_PID=""
+
+cleanup() {
+  echo -e "\n\n[WARN]  Interruzione rilevata. Terminazione processi in corso..."
+  
+  # Ferma il monitor/dashboard
+  if [[ -n "$MONITOR_PID" ]]; then
+    kill "$MONITOR_PID" 2>/dev/null || true
+  fi
+
+  # Ferma tutti i chunk di simulazione
+  for pid in "${PIDS[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+
+  # Rimuovi file temporanei e chunk parziali
+  echo "[INFO]  Pulizia file temporanei..."
+  rm -rf "$TMPDIR_CONFIGS"
+  for f in "${CHUNK_OUTPUTS[@]}"; do
+    rm -f "$f" 2>/dev/null || true
+  done
+
+  echo "[DONE]  Pulizia completata. Uscita."
+  exit 1
+}
+
+# Registra il trap per SIGINT (Ctrl+C) e SIGTERM
+trap cleanup SIGINT SIGTERM
+# ----------------------------------
+
 # Python: calcola tutte le coppie, le divide in N chunk con lo stesso numero di coppie
 python3 - <<EOF
 import json, numpy as np, os
@@ -105,16 +141,17 @@ n_jobs = $N_JOBS
 mode = '$MODE'
 lens75_id = '$LENS75_ID'
 lens60_id = '$LENS60_ID'
+all_lenses = $ALL_LENSES
 
 # Default GDML lens parameters
 h1 = 12.5; offset1 = -32.35
 h2 = 16.3; offset2 = 22.75
 margin = 3.0 if mode == 'lens' else 1.0
 
-# Load Thorlabs data if IDs are provided
-if lens75_id or lens60_id:
-    tsv_path = os.path.join('$PROJECT_ROOT', 'lens_cutter/lens_data/thorlabs_biconvex.tsv')
-    thorlabs_data = {}
+# Load Thorlabs data
+tsv_path = os.path.join('$PROJECT_ROOT', 'lens_cutter/lens_data/thorlabs_biconvex.tsv')
+thorlabs_data = {}
+if os.path.exists(tsv_path):
     with open(tsv_path) as f:
         lines = f.readlines()[1:] # skip header
         for line in lines:
@@ -122,6 +159,16 @@ if lens75_id or lens60_id:
             if len(parts) >= 5:
                 thorlabs_data[parts[0]] = float(parts[4]) # center thickness
 
+if all_lenses:
+    n_models = max(1, len(thorlabs_data) * len(thorlabs_data))
+    # Conservative estimate for collisions: use maximum thickness from data or fallback to defaults
+    h1_max = max(thorlabs_data.values()) if thorlabs_data else 12.5
+    h2_max = max(thorlabs_data.values()) if thorlabs_data else 16.3
+    h1, h2 = h1_max, h2_max
+    offset1 = 0.0
+    offset2 = 0.0
+else:
+    n_models = 1
     if lens75_id in thorlabs_data:
         h1 = thorlabs_data[lens75_id]
         offset1 = 0.0
@@ -139,7 +186,9 @@ pairs = []
 for x1 in np.arange(x_min, x_max + 1e-9, dx):
     # x2_min per evitare collisioni: (x1 + offset1 + h1/2) + margin < (x2 + offset2 - h2/2)
     x2_min_collision = x1 + (offset1 - offset2) + (h1 + h2) / 2.0 + margin
-    x2_start = max(x1 + dx, x2_min_collision)
+    # Align x2_start to the dx grid relative to x_min
+    x2_start_raw = max(x1 + dx, x2_min_collision)
+    x2_start = x_min + np.ceil(round((x2_start_raw - x_min) / dx, 8)) * dx
     
     for x2 in np.arange(x2_start, x_max + 1e-9, dx):
         pairs.append((round(float(x1), 6), round(float(x2), 6)))
@@ -172,19 +221,17 @@ for chunk in range(n_jobs):
 
     # Scrivi info chunk su file per bash
     with open(f"$TMPDIR_CONFIGS/chunk_{chunk}_info.txt", 'w') as f:
-        f.write(f"{chunk_runs}\n")
+        f.write(f"{chunk_runs * n_models}\n")
 
-    print(f"[INFO]  Chunk {chunk}: {len(chunk_pairs)} coppie, {chunk_runs} run, config_id_offset={config_offset}")
+    print(f"[INFO]  Chunk {chunk}: {len(chunk_pairs)} coppie, {chunk_runs * n_models} run, config_id_offset={config_offset}")
 
-    config_offset += len(chunk_pairs)
-    run_offset    += chunk_runs
+    config_offset += len(chunk_pairs) * n_models
+    run_offset    += chunk_runs * n_models
 EOF
 
 # Conta i chunk effettivamente generati da Python
 ACTUAL_JOBS=$(ls "$TMPDIR_CONFIGS"/config_chunk_*.json 2>/dev/null | wc -l)
 
-PIDS=()
-CHUNK_OUTPUTS=()
 CHUNK_TOTALS=()
 
 for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
@@ -210,31 +257,26 @@ for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
   CHUNK_TOTALS+=("$CHUNK_TOTAL")
 
   # Esegue il binario corretto con i flag corretti
-  case "$MODE" in
-    lens)
-      "$BINARY" -g "$GEOMETRY" -b -l \
-        --config "$CHUNK_CONFIG" \
-        --output "$CHUNK_OUTPUT" \
-        "${EXTRA_ARGS[@]}" \
-        > "$TMPDIR_CONFIGS/chunk_${chunk}.log" 2>&1 &
-      ;;
-    opt)
-      "$BINARY" -g "$GEOMETRY" -b -o \
-        --config "$CHUNK_CONFIG" \
-        --output "$CHUNK_OUTPUT" \
-        "${EXTRA_ARGS[@]}" \
-        > "$TMPDIR_CONFIGS/chunk_${chunk}.log" 2>&1 &
-      ;;
-  esac
+  LOG="$TMPDIR_CONFIGS/chunk_${chunk}.log"
+  if [[ "$MODE" == "opt" ]]; then
+    # In optimization mode, we use -o
+    "$BINARY" -g "$GEOMETRY" -b -o --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+  else
+    # In lens simulation mode, we use -l
+    "$BINARY" -g "$GEOMETRY" -b -l --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+  fi
   PIDS+=($!)
 done
 
 # Avvia il monitor in foreground su /dev/tty (terminale diretto)
 # I chunk girano in background, il monitor prende il controllo del display
-MONITOR_PID=""
-if [[ -f "$(dirname "$0")/monitor.sh" ]]; then
+if [[ -f "$(dirname "$0")/dashboard.py" ]]; then
+  chmod +x "$(dirname "$0")/dashboard.py"
+  "$(dirname "$0")/dashboard.py" "$TMPDIR_CONFIGS" "$ACTUAL_JOBS" "${CHUNK_TOTALS[@]}" </dev/null &
+  MONITOR_PID=$!
+elif [[ -f "$(dirname "$0")/monitor.sh" ]]; then
   chmod +x "$(dirname "$0")/monitor.sh"
-  "$(dirname "$0")/monitor.sh" "$TMPDIR_CONFIGS" "$N_JOBS" "${CHUNK_TOTALS[@]}" </dev/null &
+  "$(dirname "$0")/monitor.sh" "$TMPDIR_CONFIGS" "$ACTUAL_JOBS" "${CHUNK_TOTALS[@]}" </dev/null &
   MONITOR_PID=$!
 fi
 

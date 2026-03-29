@@ -16,6 +16,7 @@
 #include "event_action.hpp"
 #include "primary_generator_action.hpp"
 #include "run_action.hpp"
+#include "stepping_action.hpp"
 
 namespace riptide {
 
@@ -27,6 +28,9 @@ void ActionInitialization::Build() const {
   // Azioni standard
   SetUserAction(new PrimaryGeneratorAction());
   SetUserAction(new RunAction());
+
+  // SteppingAction per ottimizzazione uccisione fotoni
+  SetUserAction(new SteppingAction());
 
   // EventAction con file ROOT
   SetUserAction(new EventAction());

@@ -23,7 +23,11 @@ add_library(lyra INTERFACE)
 target_include_directories(lyra INTERFACE ${CMAKE_SOURCE_DIR}/external)
 
 # Libreria comune
-file(GLOB COMMON_SRC src/common/*.cpp)
+set(COMMON_SRC
+    src/common/physics_list.cpp
+    src/common/primary_generator_action.cpp
+    src/common/stepping_action.cpp
+)
 add_library(common_lib ${COMMON_SRC})
 target_include_directories(common_lib PUBLIC ${CMAKE_SOURCE_DIR}/include/common)
 target_link_libraries(common_lib PUBLIC ${ROOT_LIBRARIES} spdlog::spdlog lyra ${Geant4_LIBRARIES})
@@ -47,6 +51,11 @@ set(COMMON_WARNINGS
     -Wunused -Wnull-dereference -Wdouble-promotion -Wimplicit-fallthrough
     -Wextra-semi -Woverloaded-virtual -Wnon-virtual-dtor -Wold-style-cast
 )
+
+# Ottimizzazioni per la build Release
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(-march=native -O3 -ffast-math)
+endif()
 
 # Costruzione dei progetti (main)
 file(GLOB PROGRAM_MAIN programs/*_main.cpp)

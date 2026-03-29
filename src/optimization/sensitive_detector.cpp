@@ -23,14 +23,8 @@
 
 namespace riptide {
 
-G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* history) {
-  std::ignore = history;
+G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* /*history*/) {
   auto* track = step->GetTrack();
-
-  // Considera solo i fotoni ottici
-  if (track->GetDefinition() != G4OpticalPhoton::Definition()) {
-    return false;
-  }
 
   // Considera solo i fotoni che attraversano la superficie del fotocatodo
   auto* pre = step->GetPreStepPoint();
@@ -41,16 +35,6 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* hist
   // Recupera EventAction tramite il puntatore statico
   auto* eventAction = EventAction::GetEventAction();
   if (!eventAction) {
-    std::cerr << "SensitivePhotocathode: EventAction not found!" << std::endl;
-    return false;
-  }
-
-  // Recupera DetectorConstruction per leggere le posizioni correnti delle lenti
-  auto* det = dynamic_cast<const DetectorConstruction*>(
-      G4RunManager::GetRunManager()->GetUserDetectorConstruction());
-
-  if (!det) {
-    std::cerr << "SensitivePhotocathode: DetectorConstruction not found!" << std::endl;
     return false;
   }
 

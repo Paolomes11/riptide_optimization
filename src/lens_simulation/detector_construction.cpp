@@ -130,11 +130,48 @@ void DetectorConstruction::SetLensPositions(double lens75_x, double lens60_x) {
   m_lens75_x = lens75_x;
   m_lens60_x = lens60_x;
 
-  if (m_lens75_phys)
-    m_lens75_phys->SetTranslation(G4ThreeVector(lens75_x, 0., 0.));
+  if (m_lens75_phys) {
+    m_lens75_phys->SetTranslation(G4ThreeVector(m_lens75_x, 0, 0));
+  }
+  if (m_lens60_phys) {
+    m_lens60_phys->SetTranslation(G4ThreeVector(m_lens60_x, 0, 0));
+  }
+}
 
+void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::string& lens60_id) {
+  m_lens75_id = lens75_id;
+  m_lens60_id = lens60_id;
+
+  LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
+
+  auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_lens75) {
+    if (!pv) {
+      spdlog::warn("Physical volume is null");
+      return;
+    }
+    const auto* lens = cutter.get_lens_by_id(id);
+    if (lens) {
+      auto lv        = pv->GetLogicalVolume();
+      auto new_solid = lens->to_g4_solid(is_lens75 ? "_75" : "_60");
+      lv->SetSolid(new_solid);
+
+      if (is_lens75) {
+        m_lens75_thickness     = lens->center_thickness;
+        m_lens75_center_offset = 0.0;
+      } else {
+        m_lens60_thickness     = lens->center_thickness;
+        m_lens60_center_offset = 0.0;
+      }
+      spdlog::info("Updated solid for {} with Thorlabs lens {}", pv->GetName(), id);
+    } else {
+      spdlog::warn("Thorlabs lens ID {} not found", id);
+    }
+  };
+
+  if (m_lens75_phys)
+    replace_solid(m_lens75_phys, lens75_id, true);
   if (m_lens60_phys)
-    m_lens60_phys->SetTranslation(G4ThreeVector(lens60_x, 0., 0.));
+    replace_solid(m_lens60_phys, lens60_id, false);
 }
 
 double DetectorConstruction::GetLens75Thickness() const {

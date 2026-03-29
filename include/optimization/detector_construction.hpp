@@ -61,6 +61,9 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   // Setter per ottimizzazione
   void SetLensPositions(double lens75_x, double lens60_x);
 
+  // Nuovo: Cambia i modelli delle lenti al volo
+  void SetLenses(const std::string& lens75_id, const std::string& lens60_id);
+
   // Getter per dimensioni e posizioni
   double GetLens75Thickness() const;
   double GetLens60Thickness() const;
