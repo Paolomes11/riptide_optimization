@@ -471,13 +471,13 @@ Esegue il fit della retta `z = a·y + b` sui punti `{(mu_y_i, mu_z_i)}` usando l
 
 #### `compute_Q` — Funzione di qualità
 
-Implementa la funzione di qualità definita nella tesi (Sez. 8):
+Implementa la funzione di qualità definita nella tesi (Sez. 8), calcolando la media del Chi-squared ridotto su tutte le tracce campionate:
 
 ```
-Q(x1, x2) = Σ_{y0} chi²(y0, x1, x2)
+Q(x1, x2) = (1 / n_tracce) * Σ_{y0} chi²_ndof(y0, x1, x2)
 ```
 
-Per ogni valore di `y0` nel campionamento: costruisce la traccia con `build_trace`, esegue `fit_trace`, accumula χ².
+Per ogni valore di `y0` nel campionamento: costruisce la traccia con `build_trace`, esegue `fit_trace`, accumula il Chi-squared ridotto (`chi2_ndof`) e calcola la media finale. Questo approccio garantisce pesi uniformi tra tracce con numero di punti differente.
 
 **`QConfig` — campi:**
 

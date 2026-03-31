@@ -47,46 +47,61 @@
 //  Parsing CLI
 
 struct Config {
-  double x1            = -1.0;
-  double x2            = -1.0;
-  double y0            = -1.0;
+  double x1  = -1.0;
+  double x2  = -1.0;
+  double y0  = -1.0;
+  double p1x = 1e9, p1y = 1e9, p1z = 1e9;
+  double p2x = 1e9, p2y = 1e9, p2z = 1e9;
   double dt            = 0.1;
   double L             = 10.0;
   double sigma_scale   = 1.0;
   std::string psf_path = "output/psf/psf_data.root";
   std::string output   = "";
+  bool fit             = false;
+  bool unfold          = false;
 };
 
 Config parse_args(int argc, char** argv) {
   Config cfg;
-  for (int i = 1; i < argc - 1; ++i) {
+  for (int i = 1; i < argc; ++i) {
     std::string key = argv[i];
-    std::string val = argv[i + 1];
-    if (key == "--x1") {
-      cfg.x1 = std::stod(val);
-      ++i;
-    } else if (key == "--x2") {
-      cfg.x2 = std::stod(val);
-      ++i;
-    } else if (key == "--y0") {
-      cfg.y0 = std::stod(val);
-      ++i;
-    } else if (key == "--dt") {
-      cfg.dt = std::stod(val);
-      ++i;
-    } else if (key == "--L") {
-      cfg.L = std::stod(val);
-      ++i;
-    } else if (key == "--sigma") {
-      cfg.sigma_scale = std::stod(val);
-      ++i;
-    } else if (key == "--psf") {
-      cfg.psf_path = val;
-      ++i;
-    } else if (key == "--output") {
-      cfg.output = val;
-      ++i;
-    }
+    auto next       = [&]() -> std::string {
+      if (i + 1 >= argc)
+        return "";
+      return argv[++i];
+    };
+    if (key == "--x1")
+      cfg.x1 = std::stod(next());
+    else if (key == "--x2")
+      cfg.x2 = std::stod(next());
+    else if (key == "--y0")
+      cfg.y0 = std::stod(next());
+    else if (key == "--p1x")
+      cfg.p1x = std::stod(next());
+    else if (key == "--p1y")
+      cfg.p1y = std::stod(next());
+    else if (key == "--p1z")
+      cfg.p1z = std::stod(next());
+    else if (key == "--p2x")
+      cfg.p2x = std::stod(next());
+    else if (key == "--p2y")
+      cfg.p2y = std::stod(next());
+    else if (key == "--p2z")
+      cfg.p2z = std::stod(next());
+    else if (key == "--dt")
+      cfg.dt = std::stod(next());
+    else if (key == "--L")
+      cfg.L = std::stod(next());
+    else if (key == "--sigma")
+      cfg.sigma_scale = std::stod(next());
+    else if (key == "--psf")
+      cfg.psf_path = next();
+    else if (key == "--output")
+      cfg.output = next();
+    else if (key == "--fit")
+      cfg.fit = true;
+    else if (key == "--unfold")
+      cfg.unfold = true;
   }
   return cfg;
 }
@@ -200,12 +215,17 @@ std::string fmt(double v, int n = 1) {
 int main(int argc, char** argv) {
   Config cfg = parse_args(argc, argv);
 
-  if (cfg.x1 < 0 || cfg.x2 < 0 || cfg.y0 < 0) {
-    std::cerr << "Uso: trace_viewer --x1 <val> --x2 <val> --y0 <val>\n"
+  bool use_3d = (cfg.p1x < 1e8 && cfg.p1y < 1e8 && cfg.p1z < 1e8 && cfg.p2x < 1e8 && cfg.p2y < 1e8
+                 && cfg.p2z < 1e8);
+
+  if (cfg.x1 < 0 || cfg.x2 < 0 || (cfg.y0 < 0 && !use_3d)) {
+    std::cerr << "Uso (2D): trace_viewer --x1 <val> --x2 <val> --y0 <val> [--L <val>]\n"
+              << "Uso (3D): trace_viewer --x1 <val> --x2 <val> --p1x <v> --p1y <v> --p1z <v> --p2x "
+                 "<v> --p2y <v> --p2z <v>\n"
+              << "Opzioni:\n"
               << "     [--psf <path>]     default: output/psf/psf_data.root\n"
               << "     [--output <path>]  default: output/psf_analysis/trace_*.png\n"
               << "     [--dt <val>]       step traccia [mm], default: 0.1\n"
-              << "     [--L <val>]        lunghezza traccia [mm], default: 10.0\n"
               << "     [--sigma <val>]    scala ellissi, default: 1.0\n";
     return 1;
   }
@@ -223,9 +243,18 @@ int main(int argc, char** argv) {
   riptide::LensConfig lens{cfg.x1, cfg.x2};
   riptide::LensConfig actual = riptide::find_nearest_config(lens, db);
 
+  riptide::Point3D p1, p2;
+  if (use_3d) {
+    p1 = {cfg.p1x, cfg.p1y, cfg.p1z};
+    p2 = {cfg.p2x, cfg.p2y, cfg.p2z};
+  } else {
+    p1 = {-cfg.L / 2.0, cfg.y0, 0.0};
+    p2 = {cfg.L / 2.0, cfg.y0, 0.0};
+  }
+
   std::vector<riptide::TracePoint> trace;
   try {
-    trace = riptide::build_trace(cfg.y0, actual, db, cfg.L, cfg.dt);
+    trace = riptide::build_trace_3d(p1, p2, actual, db, cfg.dt);
   } catch (const std::exception& e) {
     std::cerr << "Errore nella costruzione della traccia: " << e.what() << "\n";
     return 1;
@@ -236,12 +265,25 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::cout << "Traccia costruita: " << trace.size() << " punti\n";
-  std::cout << "  Richiesta: x1=" << cfg.x1 << " mm, x2=" << cfg.x2 << " mm\n";
-  std::cout << "  Usata:     x1=" << actual.x1 << " mm, x2=" << actual.x2 << " mm, y0=" << cfg.y0
-            << " mm\n";
+  double total_L = std::hypot(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
 
-  //  Calcola range degli assi con margine proporzionale
+  // Eventuale unfolding e fit
+  riptide::LineFitResult fit_res;
+  bool has_fit = false;
+  if (cfg.fit) {
+    std::vector<riptide::TracePoint> fit_input = trace;
+    if (cfg.unfold) {
+      double dz = total_L / static_cast<double>(trace.size() - 1);
+      for (size_t i = 0; i < fit_input.size(); ++i)
+        fit_input[i].mu_z += static_cast<double>(i) * dz;
+    }
+    try {
+      fit_res = riptide::fit_trace(fit_input);
+      has_fit = true;
+    } catch (const std::exception& e) {
+      std::cerr << "Fit fallito: " << e.what() << "\n";
+    }
+  }
 
   double y_min = 1e9, y_max = -1e9, z_min = 1e9, z_max = -1e9;
   double max_sigma_y = 0, max_sigma_z = 0;
@@ -363,8 +405,15 @@ int main(int argc, char** argv) {
       continue;
     Int_t col   = palette_color(t_norm);
     TEllipse* e = new TEllipse(el.cy, el.cz, el.a, el.b, 0, 360, el.theta_deg);
-    e->SetFillColorAlpha(col, 0.50);
-    e->SetLineColorAlpha(col, 0.75);
+    if (pt.valid) {
+      e->SetFillColorAlpha(col, 0.50);
+      e->SetLineColorAlpha(col, 0.75);
+      e->SetLineStyle(1);
+    } else {
+      e->SetFillColorAlpha(col, 0.15); // Molto trasparente se "off detector"
+      e->SetLineColorAlpha(col, 0.40);
+      e->SetLineStyle(3); // Tratteggiato
+    }
     e->SetLineWidth(1);
     e->Draw("same");
     ellipses.push_back(e);
@@ -384,13 +433,33 @@ int main(int argc, char** argv) {
   g_line->SetLineWidth(2);
   g_line->Draw("L same");
 
+  // Disegna fit se presente
+  if (has_fit) {
+    double y_start = gy.front();
+    double y_end   = gy.back();
+    double z_start = fit_res.a * y_start + fit_res.b;
+    double z_end   = fit_res.a * y_end + fit_res.b;
+    if (cfg.unfold) {
+      // Se c'è unfolding, non possiamo disegnare la retta 2D direttamente perché
+      // i punti mu_z originali non sono quelli del fit.
+      // Però possiamo mostrare i punti "unfolded" se l'utente vuole.
+    } else {
+      TLine* l_fit = new TLine(y_start, z_start, y_end, z_end);
+      l_fit->SetLineColor(kRed + 1);
+      l_fit->SetLineStyle(2);
+      l_fit->SetLineWidth(3);
+      l_fit->Draw("same");
+    }
+  }
+
   // Marker colorati: stessa logica centro → bordi
   for (int i : draw_order) {
-    double t_norm = (N > 1) ? static_cast<double>(i) / (N - 1) : 0.5;
-    Int_t col     = palette_color(t_norm);
-    TMarker* mk   = new TMarker(gy[i], gz[i], 20);
+    const auto& pt = trace[i];
+    double t_norm  = (N > 1) ? static_cast<double>(i) / (N - 1) : 0.5;
+    Int_t col      = palette_color(t_norm);
+    TMarker* mk    = new TMarker(pt.mu_y, pt.mu_z, pt.valid ? 20 : 24);
     mk->SetMarkerColor(col);
-    mk->SetMarkerSize(0.65);
+    mk->SetMarkerSize(pt.valid ? 0.65 : 0.45);
     mk->Draw("same");
   }
 
@@ -455,8 +524,8 @@ int main(int argc, char** argv) {
 
   // Asse della color bar: disegnato in world coords del pad [0,1]×[0,1].
   // Il range fisico (t) è mappato su [cb_y0, cb_y1].
-  double t_start = -cfg.L / 2.0;
-  double t_end   = cfg.L / 2.0;
+  double t_start = 0.0;
+  double t_end   = total_L;
 
   TGaxis* cb_axis = new TGaxis(cb_x1, cb_y0,   // (xstart, ystart) in world coords
                                cb_x1, cb_y1,   // (xend,   yend)   in world coords
@@ -515,18 +584,31 @@ int main(int argc, char** argv) {
   info.DrawLatex(col1_x, row2_y, ("x_{2} (lente 60 mm) = " + fmt(actual.x2) + " mm").c_str());
 
   // Colonna 2
-  info.DrawLatex(col2_x, row1_y,
-                 ("y_{0} = " + fmt(cfg.y0) + " mm,   L = " + fmt(cfg.L)
-                  + " mm,   #Deltat = " + fmt(cfg.dt, 2) + " mm")
-                     .c_str());
-  info.DrawLatex(
-      col2_x, row2_y,
-      (std::to_string(N) + " punti traccia,   ellissi " + fmt(cfg.sigma_scale, 1) + "#sigma")
-          .c_str());
+  if (use_3d) {
+    info.DrawLatex(col2_x, row1_y,
+                   ("P1: (" + fmt(p1.x) + "," + fmt(p1.y) + "," + fmt(p1.z) + ") mm").c_str());
+    info.DrawLatex(col2_x, row2_y,
+                   ("P2: (" + fmt(p2.x) + "," + fmt(p2.y) + "," + fmt(p2.z) + ") mm").c_str());
+  } else {
+    info.DrawLatex(col2_x, row1_y,
+                   ("y_{0} = " + fmt(cfg.y0) + " mm,   L = " + fmt(cfg.L)
+                    + " mm,   #Deltat = " + fmt(cfg.dt, 2) + " mm")
+                       .c_str());
+    info.DrawLatex(
+        col2_x, row2_y,
+        (std::to_string(N) + " punti traccia,   ellissi " + fmt(cfg.sigma_scale, 1) + "#sigma")
+            .c_str());
+  }
 
   // Colonna 3
-  info.DrawLatex(col3_x, row1_y, ("#sigma_{y,max} = " + fmt(max_sigma_y, 4) + " mm").c_str());
-  info.DrawLatex(col3_x, row2_y, ("#sigma_{z,max} = " + fmt(max_sigma_z, 4) + " mm").c_str());
+  if (has_fit) {
+    info.DrawLatex(col3_x, row1_y, ("#chi^{2}/ndof = " + fmt(fit_res.chi2_ndof, 3)).c_str());
+    info.DrawLatex(col3_x, row2_y,
+                   ("fit: z = " + fmt(fit_res.a, 3) + "y + " + fmt(fit_res.b, 3)).c_str());
+  } else {
+    info.DrawLatex(col3_x, row1_y, ("#sigma_{y,max} = " + fmt(max_sigma_y, 4) + " mm").c_str());
+    info.DrawLatex(col3_x, row2_y, ("#sigma_{z,max} = " + fmt(max_sigma_z, 4) + " mm").c_str());
+  }
 
   //  Output
 
@@ -540,8 +622,13 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories("output/psf_analysis");
     std::ostringstream auto_name;
     auto_name << "output/psf_analysis/trace"
-              << "_x1_" << std::fixed << std::setprecision(1) << actual.x1 << "_x2_" << actual.x2
-              << "_y0_" << cfg.y0 << ".png";
+              << "_x1_" << std::fixed << std::setprecision(1) << actual.x1 << "_x2_" << actual.x2;
+    if (use_3d) {
+      auto_name << "_3d_" << std::hex << (static_cast<int>(p1.y + p2.z) & 0xFFF);
+    } else {
+      auto_name << "_y0_" << cfg.y0;
+    }
+    auto_name << ".png";
     out_path = auto_name.str();
   }
 

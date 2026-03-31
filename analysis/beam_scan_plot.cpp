@@ -14,11 +14,17 @@
 
 #include <TAxis.h>
 #include <TCanvas.h>
+#include <TF2.h>
 #include <TFile.h>
+#include <TGraph2DErrors.h>
 #include <TGraphErrors.h>
+#include <TLegend.h>
+#include <TMultiGraph.h>
+#include <TPaveText.h>
 #include <TStyle.h>
 #include <TTree.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <iomanip>
@@ -32,6 +38,12 @@ struct HitWithRun {
   double y, z;
 };
 
+struct Point3D {
+  double x_src, y_src;
+  double mean_y, err_y;
+  double mean_z, err_z;
+};
+
 std::string format_double(double val, int precision = 1) {
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(precision) << val;
@@ -40,7 +52,8 @@ std::string format_double(double val, int precision = 1) {
 
 int main(int argc, char** argv) {
   if (argc < 3) {
-    std::cerr << "Usage: " << argv[0] << " x1 x2 [input_file=root_file]" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " x1 x2 [input_file=root_file] [x0_1,x0_2,...]"
+              << std::endl;
     return 1;
   }
 
@@ -48,6 +61,16 @@ int main(int argc, char** argv) {
   double x2_target                 = std::stod(argv[2]);
   std::filesystem::path input_file = (argc > 3) ? argv[3] : "output/lens_simulation/lens.root";
   std::filesystem::path output_dir = input_file.parent_path();
+
+  std::vector<double> x0_filters;
+  if (argc > 4) {
+    std::string x0_str = argv[4];
+    std::stringstream ss(x0_str);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+      x0_filters.push_back(std::stod(item));
+    }
+  }
 
   TFile f(input_file.c_str());
   if (f.IsZombie()) {
@@ -70,46 +93,62 @@ int main(int argc, char** argv) {
   configs->SetBranchAddress("x2", &cfg_x2);
 
   int selected_cfg_id = -1;
+  double best_dist    = 1e18;
+  double found_x1 = 0, found_x2 = 0;
+
   for (Long64_t i = 0; i < configs->GetEntries(); i++) {
     configs->GetEntry(i);
-    if (std::abs(cfg_x1 - x1_target) < 1e-6 && std::abs(cfg_x2 - x2_target) < 1e-6) {
+    double dist = std::hypot(cfg_x1 - x1_target, cfg_x2 - x2_target);
+    if (dist < best_dist) {
+      best_dist       = dist;
       selected_cfg_id = cfg_id_cfg;
-      break;
+      found_x1        = cfg_x1;
+      found_x2        = cfg_x2;
     }
   }
 
   if (selected_cfg_id == -1) {
-    std::cerr << "Configuration with x1=" << x1_target << " and x2=" << x2_target << " not found!"
-              << std::endl;
+    std::cerr << "No configurations found in " << input_file << "!" << std::endl;
     return 1;
   }
-  std::cout << "Selected configuration id: " << selected_cfg_id << std::endl;
+
+  if (best_dist > 1e-4) {
+    std::cout << "[WARNING] Config (x1=" << x1_target << ", x2=" << x2_target
+              << ") non trovata. Uso la più vicina: (x1=" << found_x1 << ", x2=" << found_x2
+              << "), dist=" << best_dist << " mm" << std::endl;
+  } else {
+    std::cout << "Selected configuration id: " << selected_cfg_id << " (x1=" << found_x1
+              << ", x2=" << found_x2 << ")" << std::endl;
+  }
 
   // Runs per la configurazione
   int run_id, config_id, n_hits_run;
-  float x_source;
+  float x_source, y_source;
   std::vector<float>* y_hits_ptr = nullptr;
   std::vector<float>* z_hits_ptr = nullptr;
 
   runs->SetBranchAddress("run_id", &run_id);
   runs->SetBranchAddress("config_id", &config_id);
   runs->SetBranchAddress("x_source", &x_source);
+  runs->SetBranchAddress("y_source", &y_source);
   runs->SetBranchAddress("n_hits", &n_hits_run);
   runs->SetBranchAddress("y_hits", &y_hits_ptr);
   runs->SetBranchAddress("z_hits", &z_hits_ptr);
 
-  // Aggregazione per x_source
-  std::map<double, std::vector<double>> y_hits_map;
-  std::map<double, std::vector<double>> z_hits_map;
+  // Aggregazione per (x_source, y_source)
+  std::map<std::pair<double, double>, std::vector<double>> y_hits_map;
+  std::map<std::pair<double, double>, std::vector<double>> z_hits_map;
 
   for (Long64_t i = 0; i < runs->GetEntries(); i++) {
     runs->GetEntry(i);
     if (config_id != selected_cfg_id)
       continue;
 
-    double x_source_rounded = std::round(static_cast<double>(x_source) * 10.0) / 10.0;
-    auto& yvec              = y_hits_map[x_source_rounded];
-    auto& zvec              = z_hits_map[x_source_rounded];
+    double x_src_rounded = std::round(static_cast<double>(x_source) * 10.0) / 10.0;
+    double y_src_rounded = std::round(static_cast<double>(y_source) * 10.0) / 10.0;
+    auto key             = std::make_pair(x_src_rounded, y_src_rounded);
+    auto& yvec           = y_hits_map[key];
+    auto& zvec           = z_hits_map[key];
 
     if (y_hits_ptr && z_hits_ptr) {
       for (size_t j = 0; j < y_hits_ptr->size(); ++j) {
@@ -124,12 +163,19 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Calcolo medie e deviazioni robuste (filtro 3σ) con debug compatto
-  std::vector<double> xs_vec, y_mean_vec, y_err_vec, z_mean_vec, z_err_vec;
-  const double max_sigma = 3.0;
+  // Calcolo medie e deviazioni robuste (filtro 3σ)
+  std::vector<Point3D> points;
+  const double max_sigma    = 3.0;
+  const size_t min_hits_req = 10; // Soglia minima di hit nel detector
 
-  for (auto& [xs, yvec_orig] : y_hits_map) {
-    auto& zvec_orig = z_hits_map[xs];
+  for (auto& [src_pos, yvec_orig] : y_hits_map) {
+    auto& zvec_orig = z_hits_map[src_pos];
+
+    if (yvec_orig.size() < min_hits_req) {
+      std::cout << "[INFO] Saltato punto (x=" << src_pos.first << ", y=" << src_pos.second
+                << ") per pochi hit: " << yvec_orig.size() << std::endl;
+      continue;
+    }
 
     std::vector<double> yvec = yvec_orig;
     std::vector<double> zvec = zvec_orig;
@@ -145,8 +191,8 @@ int main(int argc, char** argv) {
         z_sum += v;
 
       size_t n = yvec.size();
-      if (n == 0)
-        break; // nessun hit rimasto dopo filtraggio
+      if (n < min_hits_req)
+        break;
       y_mean = y_sum / n;
       z_mean = z_sum / n;
 
@@ -158,95 +204,219 @@ int main(int argc, char** argv) {
       y_sigma = std::sqrt(y_var / n);
       z_sigma = std::sqrt(z_var / n);
 
-      // filtra outlier e debug compatto
       std::vector<double> y_temp, z_temp;
-      std::vector<std::pair<double, double>> scartati;
       for (size_t i = 0; i < yvec.size(); ++i) {
         if (std::abs(yvec[i] - y_mean) <= max_sigma * y_sigma
             && std::abs(zvec[i] - z_mean) <= max_sigma * z_sigma) {
           y_temp.push_back(yvec[i]);
           z_temp.push_back(zvec[i]);
-        } else {
-          scartati.emplace_back(yvec[i], zvec[i]);
         }
       }
-
-      if (!scartati.empty()) {
-        const auto& esempio = scartati[0];
-        std::cout << "[DEBUG] x_source=" << xs << ", scartati=" << scartati.size()
-                  << ", esempio(y,z)=(" << esempio.first << "," << esempio.second << ")"
-                  << ", deviazione aggiornata y_sigma=" << y_sigma << ", z_sigma=" << z_sigma
-                  << std::endl;
-      }
-
       yvec = y_temp;
       zvec = z_temp;
     }
 
-    xs_vec.push_back(xs);
-    y_mean_vec.push_back(y_mean);
-    y_err_vec.push_back(y_sigma);
-    z_mean_vec.push_back(z_mean);
-    z_err_vec.push_back(z_sigma);
+    if (yvec.size() >= min_hits_req) {
+      points.push_back({src_pos.first, src_pos.second, y_mean, y_sigma, z_mean, z_sigma});
+    }
   }
 
   gStyle->SetOptStat(0);
-  gStyle->SetTitleFontSize(0.05);
+  gStyle->SetTitleFontSize(0.04);
   gStyle->SetPadGridX(true);
   gStyle->SetPadGridY(true);
+  gStyle->SetCanvasColor(kWhite);
+  gStyle->SetFrameFillColor(kWhite);
 
-  TCanvas* c = new TCanvas("c", "Beam positions", 1400, 700);
+  TCanvas* c = new TCanvas("c", "Beam positions 3D", 1600, 800);
   c->Divide(2, 1, 0.01, 0.01);
+
+  // Funzioni di fit (piano: z = a + b*x + c*y)
+  TF2* fit_y = new TF2("fit_y", "[0] + [1]*x + [2]*y", -50, 50, -50, 50);
+  fit_y->SetParameters(0, 0, 0);
+  fit_y->SetParNames("Intercept", "Slope_y0", "Slope_x0");
+  fit_y->SetNpx(50);
+  fit_y->SetNpy(50);
+
+  TF2* fit_z = new TF2("fit_z", "[0] + [1]*x + [2]*y", -50, 50, -50, 50);
+  fit_z->SetParameters(0, 0, 0);
+  fit_z->SetParNames("Intercept", "Slope_y0", "Slope_x0");
+  fit_z->SetNpx(50);
+  fit_z->SetNpy(50);
 
   // Grafico Y
   c->cd(1);
-  gPad->SetLeftMargin(0.12);
-  gPad->SetRightMargin(0.05);
-  gPad->SetTopMargin(0.08);
+  gPad->SetLeftMargin(0.15);
+  gPad->SetRightMargin(0.1);
+  gPad->SetTopMargin(0.1);
   gPad->SetBottomMargin(0.12);
 
-  TGraphErrors* g_y =
-      new TGraphErrors(xs_vec.size(), xs_vec.data(), y_mean_vec.data(), nullptr, y_err_vec.data());
+  TGraph2DErrors* g_y = new TGraph2DErrors(points.size());
+  for (int i = 0; i < points.size(); ++i) {
+    // X = y_source, Y = x_source, Z = mean_y
+    g_y->SetPoint(i, points[i].y_src, points[i].x_src, points[i].mean_y);
+    g_y->SetPointError(i, 0, 0, points[i].err_y);
+  }
+
+  // Eseguo il fit
+  g_y->Fit(fit_y, "QW");
+
   g_y->SetMarkerStyle(20);
-  g_y->SetMarkerSize(1);
+  g_y->SetMarkerSize(0.8);
   g_y->SetMarkerColor(kRed);
-  g_y->SetTitle(("Y positions - x1=" + format_double(x1_target)
-                 + " mm, x2=" + format_double(x2_target) + " mm")
+  g_y->SetLineColor(kRed);
+  g_y->SetTitle(("Centroid Y in detector (x1=" + format_double(found_x1)
+                 + ", x2=" + format_double(found_x2) + ")")
                     .c_str());
-  g_y->GetXaxis()->SetTitle("Posizione iniziale fascio [mm]");
-  g_y->GetYaxis()->SetTitle("Posizione y fotoni [mm]");
-  g_y->Draw("AP");
+  g_y->GetXaxis()->SetTitle("y_{0} sorgente [mm]");
+  g_y->GetYaxis()->SetTitle("x_{0} sorgente [mm]");
+  g_y->GetZaxis()->SetTitle("y detector [mm]");
+  g_y->GetXaxis()->SetTitleOffset(1.5);
+  g_y->GetYaxis()->SetTitleOffset(1.5);
+  g_y->GetZaxis()->SetTitleOffset(1.5);
+  g_y->Draw("P ERR");
+
+  // Disegno il piano di fit con trasparenza
+  fit_y->SetRange(g_y->GetXaxis()->GetXmin(), g_y->GetYaxis()->GetXmin(),
+                  g_y->GetXaxis()->GetXmax(), g_y->GetYaxis()->GetXmax());
+  fit_y->SetLineColorAlpha(kOrange + 1, 0.1); // 0.4 di trasparenza
+  fit_y->SetFillColorAlpha(kOrange + 1, 0.05);
+  fit_y->Draw("SURF4 SAME");
 
   // Grafico Z
   c->cd(2);
   gPad->SetLeftMargin(0.15);
-  gPad->SetRightMargin(0.05);
-  gPad->SetTopMargin(0.08);
+  gPad->SetRightMargin(0.1);
+  gPad->SetTopMargin(0.1);
   gPad->SetBottomMargin(0.12);
 
-  TGraphErrors* g_z =
-      new TGraphErrors(xs_vec.size(), xs_vec.data(), z_mean_vec.data(), nullptr, z_err_vec.data());
-  g_z->SetMarkerStyle(20);
-  g_z->SetMarkerSize(1);
-  g_z->SetMarkerColor(kBlue);
-  g_z->SetTitle(("Z positions - x1=" + format_double(x1_target)
-                 + " mm, x2=" + format_double(x2_target) + " mm")
-                    .c_str());
-  g_z->GetXaxis()->SetTitle("Posizione iniziale fascio [mm]");
-  g_z->GetYaxis()->SetTitle("Posizione z fotoni [mm]");
-  g_z->Draw("APE");
+  TGraph2DErrors* g_z = new TGraph2DErrors(points.size());
+  for (int i = 0; i < points.size(); ++i) {
+    g_z->SetPoint(i, points[i].y_src, points[i].x_src, points[i].mean_z);
+    g_z->SetPointError(i, 0, 0, points[i].err_z);
+  }
 
-  std::string filename =
-      (output_dir
-       / ("beam_x1_" + format_double(x1_target, 2) + "_x2_" + format_double(x2_target, 2) + ".png"))
-          .string();
+  // Eseguo il fit
+  g_z->Fit(fit_z, "Q");
+
+  g_z->SetMarkerStyle(20);
+  g_z->SetMarkerSize(0.8);
+  g_z->SetMarkerColor(kBlue);
+  g_z->SetLineColor(kBlue);
+  g_z->SetTitle(("Centroid Z in detector (x1=" + format_double(found_x1)
+                 + ", x2=" + format_double(found_x2) + ")")
+                    .c_str());
+  g_z->GetXaxis()->SetTitle("y_{0} sorgente [mm]");
+  g_z->GetYaxis()->SetTitle("x_{0} sorgente [mm]");
+  g_z->GetZaxis()->SetTitle("z detector [mm]");
+  g_z->GetXaxis()->SetTitleOffset(1.5);
+  g_z->GetYaxis()->SetTitleOffset(1.5);
+  g_z->GetZaxis()->SetTitleOffset(1.5);
+  g_z->Draw("P ERR");
+
+  // Disegno il piano di fit con trasparenza
+  fit_z->SetRange(g_z->GetXaxis()->GetXmin(), g_z->GetYaxis()->GetXmin(),
+                  g_z->GetXaxis()->GetXmax(), g_z->GetYaxis()->GetXmax());
+  fit_z->SetLineColorAlpha(kCyan + 1, 0.1);
+  fit_z->SetFillColorAlpha(kCyan + 1, 0.05);
+  // fit_z->Draw("SURF4 SAME");
+
+  // Stampa parametri sul terminale
+  auto print_fit = [](const char* name, TF2* f) {
+    std::cout << "Fit Plane " << name << ": z = " << f->GetParameter(0) << " + ("
+              << f->GetParameter(1) << ")*y0 + (" << f->GetParameter(2) << ")*x0" << std::endl;
+  };
+  print_fit("Y", fit_y);
+  print_fit("Z", fit_z);
+
+  std::string filename = (output_dir
+                          / ("beam_scan_3D_x1_" + format_double(found_x1, 2) + "_x2_"
+                             + format_double(found_x2, 2) + ".png"))
+                             .string();
   c->SaveAs(filename.c_str());
 
-  delete g_y;
-  delete g_z;
+  // Pulizia (ROOT handles deletion of objects attached to pads/canvas usually,
+  // but explicitly deleting if they are pointers is safer if not added to a list)
+  // delete g_y; // TGraph2D is often managed by the pad
+  // delete g_z;
   delete c;
 
   std::cout << "Plot saved to " << filename << std::endl;
+
+  // --- Parte 2: Plot 2D se richiesti x0_filters ---
+  if (!x0_filters.empty()) {
+    TCanvas* c2d = new TCanvas("c2d", "Beam positions 2D slices", 1400, 700);
+    c2d->Divide(2, 1, 0.01, 0.01);
+
+    TMultiGraph* mg_y = new TMultiGraph();
+    mg_y->SetTitle(("Y Detector vs Y0 Source (x1=" + format_double(found_x1)
+                    + ", x2=" + format_double(found_x2) + ");y_{0} sorgente [mm];y detector [mm]")
+                       .c_str());
+
+    TMultiGraph* mg_z = new TMultiGraph();
+    mg_z->SetTitle(("Z Detector vs Y0 Source (x1=" + format_double(found_x1)
+                    + ", x2=" + format_double(found_x2) + ");y_{0} sorgente [mm];z detector [mm]")
+                       .c_str());
+
+    TLegend* leg = new TLegend(0.1, 0.7, 0.3, 0.9);
+
+    int colors[]  = {kRed,        kBlue,     kGreen + 2, kMagenta,
+                     kOrange + 7, kCyan + 2, kAzure + 1, kGray + 2};
+    int color_idx = 0;
+
+    for (double x0_target : x0_filters) {
+      std::vector<double> y0_src, y_det, y_err, z_det, z_err;
+
+      for (const auto& p : points) {
+        if (std::abs(p.x_src - x0_target) < 0.1) {
+          y0_src.push_back(p.y_src);
+          y_det.push_back(p.mean_y);
+          y_err.push_back(p.err_y);
+          z_det.push_back(p.mean_z);
+          z_err.push_back(p.err_z);
+        }
+      }
+
+      if (!y0_src.empty()) {
+        int color = colors[color_idx % 8];
+        color_idx++;
+
+        TGraphErrors* g2y =
+            new TGraphErrors(y0_src.size(), y0_src.data(), y_det.data(), nullptr, y_err.data());
+        g2y->SetMarkerStyle(20);
+        g2y->SetMarkerColor(color);
+        g2y->SetLineColor(color);
+        mg_y->Add(g2y, "PL");
+
+        TGraphErrors* g2z =
+            new TGraphErrors(y0_src.size(), y0_src.data(), z_det.data(), nullptr, z_err.data());
+        g2z->SetMarkerStyle(20);
+        g2z->SetMarkerColor(color);
+        g2z->SetLineColor(color);
+        mg_z->Add(g2z, "PL");
+
+        leg->AddEntry(g2y, ("x0 = " + format_double(x0_target)).c_str(), "PL");
+      }
+    }
+
+    c2d->cd(1);
+    gPad->SetLeftMargin(0.15);
+    mg_y->Draw("A");
+    leg->Draw();
+
+    c2d->cd(2);
+    gPad->SetLeftMargin(0.15);
+    mg_z->Draw("A");
+    leg->Draw();
+
+    std::string filename_2d = (output_dir
+                               / ("beam_scan_2D_x1_" + format_double(found_x1, 2) + "_x2_"
+                                  + format_double(found_x2, 2) + ".png"))
+                                  .string();
+    c2d->SaveAs(filename_2d.c_str());
+    delete c2d;
+    std::cout << "2D Slices saved to " << filename_2d << std::endl;
+  }
 
   return 0;
 }

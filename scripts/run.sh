@@ -57,6 +57,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# verifica opzioni
+if [[ "$MODE" == "lens" && "$ALL_LENSES" -eq 1 ]]; then
+  echo "[ERROR] L'opzione --all-lenses non è supportata per lens_simulation." >&2
+  echo "        Usala solo con 'opt' per l'ottimizzazione di tutte le combinazioni." >&2
+  exit 1
+fi
+
 # verifica build
 BINARY="$BINARY_LENS"
 [[ "$MODE" == "opt" ]] && BINARY="$BINARY_OPT"
@@ -143,14 +150,10 @@ lens75_id = '$LENS75_ID'
 lens60_id = '$LENS60_ID'
 all_lenses = $ALL_LENSES
 
-# Default GDML lens parameters
-h1 = 12.5; offset1 = -32.35
-h2 = 16.3; offset2 = 22.75
-margin = 3.0 if mode == 'lens' else 1.0
-
 # Load Thorlabs data
 tsv_path = os.path.join('$PROJECT_ROOT', 'lens_cutter/lens_data/thorlabs_biconvex.tsv')
 thorlabs_data = {}
+n_models = 1
 if os.path.exists(tsv_path):
     with open(tsv_path) as f:
         lines = f.readlines()[1:] # skip header
@@ -158,31 +161,40 @@ if os.path.exists(tsv_path):
             parts = line.split('\t')
             if len(parts) >= 5:
                 thorlabs_data[parts[0]] = float(parts[4]) # center thickness
-
-if all_lenses:
-    n_models = max(1, len(thorlabs_data) * len(thorlabs_data))
-    # Conservative estimate for collisions: use maximum thickness from data or fallback to defaults
-    h1_max = max(thorlabs_data.values()) if thorlabs_data else 12.5
-    h2_max = max(thorlabs_data.values()) if thorlabs_data else 16.3
-    h1, h2 = h1_max, h2_max
-    offset1 = 0.0
-    offset2 = 0.0
-else:
-    n_models = 1
-    if lens75_id in thorlabs_data:
-        h1 = thorlabs_data[lens75_id]
-        offset1 = 0.0
-    if lens60_id in thorlabs_data:
-        h2 = thorlabs_data[lens60_id]
-        offset2 = 0.0
+    if mode == 'opt' and all_lenses:
+        n_models = len(thorlabs_data) * len(thorlabs_data)
 
 if mode == 'lens':
-    n_runs_per_pair = 101  # y_source 0..10 step 0.1
+    # Parametri sorgente GPS (mappa 3D PSF)
+    s_x_min = c.get('source_x_min', -30.0)
+    s_x_max = c.get('source_x_max', 30.0)
+    s_dx    = c.get('source_dx', 5.0)
+    
+    s_y_min = c.get('source_y_min', 0.0)
+    s_y_max = c.get('source_y_max', 10.0 * np.sqrt(2.0))
+    s_dy    = c.get('source_dy', 1.0)
+
+    nx = len(np.arange(s_x_min, s_x_max + 1e-9, s_dx))
+    ny = len(np.arange(s_y_min, s_y_max + 1e-9, s_dy))
+    n_runs_per_pair = nx * ny
 else:
     n_runs_per_pair = 1    # una sola esecuzione per configurazione
 
 # Genera tutte le coppie valide (Adaptive Loop)
 pairs = []
+# Default GDML lens parameters (valori di backup se non trovati nel TSV)
+h1 = 12.5; offset1 = -32.35
+h2 = 16.3; offset2 = 22.75
+margin = 3.0 if mode == 'lens' else 1.0
+
+# Carica spessori reali se disponibili
+if lens75_id in thorlabs_data:
+    h1 = thorlabs_data[lens75_id]
+    offset1 = 0.0 # Se carichiamo ID specifici, l'offset nel GDML viene gestito dal DetectorConstruction
+if lens60_id in thorlabs_data:
+    h2 = thorlabs_data[lens60_id]
+    offset2 = 0.0
+
 for x1 in np.arange(x_min, x_max + 1e-9, dx):
     # x2_min per evitare collisioni: (x1 + offset1 + h1/2) + margin < (x2 + offset2 - h2/2)
     x2_min_collision = x1 + (offset1 - offset2) + (h1 + h2) / 2.0 + margin
@@ -208,7 +220,7 @@ for chunk in range(n_jobs):
         break
 
     chunk_pairs = pairs[start:end]
-    chunk_runs  = len(chunk_pairs) * n_runs_per_pair
+    chunk_runs  = len(chunk_pairs) * n_runs_per_pair * n_models
 
     chunk_config = dict(c)
     chunk_config['pairs']            = chunk_pairs
@@ -221,12 +233,12 @@ for chunk in range(n_jobs):
 
     # Scrivi info chunk su file per bash
     with open(f"$TMPDIR_CONFIGS/chunk_{chunk}_info.txt", 'w') as f:
-        f.write(f"{chunk_runs * n_models}\n")
+        f.write(f"{chunk_runs}\n")
 
-    print(f"[INFO]  Chunk {chunk}: {len(chunk_pairs)} coppie, {chunk_runs * n_models} run, config_id_offset={config_offset}")
+    print(f"[INFO]  Chunk {chunk}: {len(chunk_pairs)} coppie, {chunk_runs} run, config_id_offset={config_offset}")
 
     config_offset += len(chunk_pairs) * n_models
-    run_offset    += chunk_runs * n_models
+    run_offset    += chunk_runs
 EOF
 
 # Conta i chunk effettivamente generati da Python

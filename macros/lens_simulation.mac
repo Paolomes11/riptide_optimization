@@ -1,24 +1,18 @@
-# Particle source: optical photons
+# Particle source: optical photons (sferetta isotropa verso detector)
 /gps/particle opticalphoton
 /gps/energy 2.5 eV
 
-/gps/pos/type Plane
-/gps/pos/shape Annulus
-/gps/pos/rot1 0 1 0
-/gps/pos/rot2 0 0 1
-#/gps/pos/radius 0.5 mm
+# Sorgente: piccola sferetta
+/gps/pos/type Volume
+/gps/pos/shape Sphere
 /gps/pos/radius 0.1 mm
-/gps/pos/inner_radius 0 mm
 
-#/gps/pos/shape Square
-#/gps/pos/centre 0 10 0 mm
-#/gps/pos/halfx 0.05 mm
-#/gps/pos/halfy 0.05 mm
-
-# Direzione principale lungo +X con piccola divergenza
+# Emissione: isotropa verso il detector (+X)
 /gps/ang/type iso
-/gps/direction 1 0 0
+/gps/ang/rot1 0 -1 0
+/gps/ang/rot2 0 0 1
+/gps/ang/mintheta 0 deg
+/gps/ang/maxtheta 90 deg
 
 # Run
-/run/beamOn 300
-#/run/beamOn 1
+/run/beamOn 1000

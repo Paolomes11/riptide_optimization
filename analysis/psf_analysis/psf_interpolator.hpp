@@ -25,15 +25,17 @@ namespace riptide {
 
 //  Strutture dati
 
-// Un punto PSF: media e matrice di covarianza 2x2 per un dato raggio r
+// Un punto PSF: media e matrice di covarianza 2x2 per un dato (x_source, y_source)
 struct PSFPoint {
-  double y_source;  // raggio (= y_source dalla simulazione) [mm]
+  double x_source;  // x_source from simulation [mm]
+  double y_source;  // y_source from simulation [mm] (equivale a raggio r nella vecchia versione)
   double mu_y;      // media y sul detector [mm]
   double mu_z;      // media z sul detector [mm]
   double cov_yy;    // varianza y [mm^2]
   double cov_yz;    // covarianza y-z [mm^2]
   double cov_zz;    // varianza z [mm^2]
-  bool on_detector; // se true, la PSF è interamente sul fotocatodo
+  bool on_detector; // mantenuto per compatibilità (true se n_hits >= soglia)
+  int n_hits;       // numero di fotoni arrivati (usato per efficienza locale)
 };
 
 // Matrice di covarianza 2x2
@@ -41,22 +43,27 @@ struct Cov2 {
   double yy, yz, zz;
 };
 
-// Risultato dell'interpolazione per un singolo punto
+// Risultato dell'interpolazione per un singolo punto (x, y)
 struct PSFValue {
   double mu_y;
   double mu_z;
   Cov2 cov;
   bool on_detector;
+  int n_hits_interp;
 };
 
 // Un punto della traccia sul detector
 struct TracePoint {
-  double t;    // parametro lungo la traccia [mm]
-  double r;    // distanza radiale dall'asse ottico [mm]
-  double mu_y; // posizione media y sul detector [mm]
-  double mu_z; // posizione media z sul detector [mm]
-  Cov2 cov;    // matrice di covarianza associata [mm^2]
-  bool valid;  // true se on_detector per questo punto
+  double t;     // parametro lungo la traccia [mm]
+  double r;     // mantenuto per compatibilità (distanza radiale x=0)
+  double x_src; // posizione x sorgente associata [mm]
+  double y_src; // posizione y sorgente associata [mm]
+  double z_src; // posizione z sorgente associata [mm]
+  double mu_y;  // posizione media y sul detector [mm]
+  double mu_z;  // posizione media z sul detector [mm]
+  Cov2 cov;     // matrice di covarianza associata [mm^2]
+  bool valid;   // mantenuto per compatibilità
+  int n_hits;   // fotoni arrivati
 };
 
 // Chiave di configurazione lenti (x1, x2)
@@ -128,27 +135,31 @@ LensConfig find_nearest_config(const LensConfig& cfg, const PSFDatabase& db);
  * @return     PSFValue con mu_y, mu_z e matrice di covarianza interpolati
  * @throws std::out_of_range se r è fuori dal range simulato o cfg non esiste
  */
-PSFValue interpolate(double r, const LensConfig& cfg, const PSFDatabase& db);
+// Interpolazione 2D (x_src, y_src)
+PSFValue interpolate(double x, double y, const LensConfig& cfg, const PSFDatabase& db);
+
+struct Point3D {
+  double x, y, z;
+};
 
 /**
- * Costruisce la traccia media sul detector per una traccia ideale a distanza y0.
- * La traccia è parametrizzata da t in [-L/2, +L/2] con step dt.
- * Per ogni punto calcola r(t) = sqrt(y0^2 + t^2) e interpola la PSF.
- * @param y0   Distanza della traccia dall'asse ottico [mm]
- * @param cfg  Configurazione delle lenti
- * @param db   Database PSF
- * @param L    Lunghezza della traccia [mm], default 10.0
- * @param dt   Step di campionamento [mm], default 0.1
- * @return     Vettore di TracePoint ordinati per t crescente
+ * Costruisce la traccia media sul detector campionando i punti lungo il segmento P1-P2.
+ * Per ogni punto, sfrutta la simmetria circolare ruotando i risultati della PSF(x, r).
+ */
+std::vector<TracePoint> build_trace_3d(const Point3D& p1, const Point3D& p2, const LensConfig& cfg,
+                                       const PSFDatabase& db, double dt);
+
+/**
+ * Wrapper di compatibilità per costruire una traccia rettilinea lungo l'asse X.
  */
 std::vector<TracePoint> build_trace(double y0, const LensConfig& cfg, const PSFDatabase& db,
                                     double L = 10.0, double dt = 0.1);
 
 /**
- * Verifica se una traccia è valida in base alla frazione di punti on_detector.
- * @param trace              Traccia da verificare
- * @param point_valid_fraction  Frazione minima di punti on_detector
- * @return                   true se la traccia è valida, false altrimenti
+ * Verifica se una traccia è valida in base alla frazione di punti validi.
+ * @param trace                 Traccia da verificare
+ * @param point_valid_fraction  Frazione minima di punti validi (pt.valid)
+ * @return                      true se la traccia è valida, false altrimenti
  */
 bool is_trace_valid(const std::vector<TracePoint>& trace, double point_valid_fraction = 0.75);
 
@@ -185,33 +196,33 @@ bool is_trace_valid(const std::vector<TracePoint>& trace, double point_valid_fra
  * @return          LineFitResult con tutti i parametri del fit
  * @throws std::invalid_argument se trace ha meno di 3 punti
  */
-LineFitResult fit_trace(const std::vector<TracePoint>& trace, int max_iter = 20, double tol = 1e-8);
+LineFitResult fit_trace(const std::vector<TracePoint>& trace, double min_hits_per_point = 10.0,
+                        int max_iter = 20, double tol = 1e-8);
 
 // Funzione di qualità Q(x1, x2)
-// Parametri di configurazione per il calcolo di Q.
+// Parametri di configurazione per il calcolo di Q tramite tracce casuali 3D.
 struct QConfig {
-  std::vector<double> y0_values{};
+  // Dimensioni scintillatore [mm] (x=lunghezza, y,z=sezione)
+  // Default: 60x20x20 (x in [-30, 30], y,z in [-10, 10])
+  double scint_x = 60.0;
+  double scint_y = 20.0;
+  double scint_z = 20.0;
 
-  double y0_min = 0.0;
-  double y0_max = 10.0;
-  double dy0    = 0.1;
+  int n_tracks = 100; // Numero di tracce casuali per config
 
-  double trace_L  = 10.0;
-  double trace_dt = 0.1;
+  double trace_dt = 0.1; // Passo campionamento lungo la traccia [mm]
 
   int fit_max_iter = 20;
   double fit_tol   = 1e-8;
 
-  // Soglie di validità 75%/75%
-  double point_valid_fraction = 0.75; // frazione minima di punti on_detector per traccia valida
+  // Soglie di validità
+  double min_hits_per_point   = 10.0; // hit minime per considerare un punto PSF valido
   double trace_valid_fraction = 0.75; // frazione minima di tracce valide per config valida
 
   // Temporal unfolding
   // Se > 0: offset fisso in mm applicato per passo della traccia.
-  // Se == 0 (default): calcolato automaticamente come trace_L / N_punti,
-  //   in modo che l'offset totale sull'intera traccia sia sempre trace_L mm,
-  //   indipendentemente dalla risoluzione di campionamento.
-  // Disabilita l'unfolding impostando apply_temporal_unfolding = false.
+  // Se == 0 (default): calcolato automaticamente come L_traccia / (N-1),
+  //   in modo che l'offset totale sia pari alla lunghezza della traccia.
   double z_unfold_step          = 0.0;  // [mm/passo], 0 = automatico
   bool apply_temporal_unfolding = true; // default attivo
 
@@ -222,23 +233,22 @@ struct QConfig {
 struct QWarning {
   enum class Kind { FitNotConverged, BuildTraceFailed, FitFailed, TraceInvalid, ConfigInvalid };
   Kind kind;
-  double y0;
+  int track_id;
   double a_final;
   std::string message;
 };
 
 // Risultato del calcolo di Q per una singola configurazione lenti.
 struct QResult {
-  double Q;
-  int n_traces;      // tracce valide usate nella somma
-  int n_failed;      // tracce scartate per errore nel fit
+  double Q;          // media del Chi-squared ridotto sulle tracce valide
+  int n_traces;      // tracce valide usate nella media
+  int n_failed;      // tracce scartate per errore nel fit o Chi2 non valido
   int n_invalid;     // tracce scartate per validità PSF insufficiente
   bool config_valid; // false se la config non supera la soglia trace_valid_fraction
 
-  std::vector<double> y0_used;
-  std::vector<double> chi2_per_y0;
-  std::vector<double> chi2_ndof_per_y0;
-  std::vector<bool> trace_valid_flags; // una entry per ogni y0 campionato
+  std::vector<double> chi2_per_trace;
+  std::vector<double> chi2_ndof_per_trace;
+  std::vector<bool> trace_valid_flags; // una entry per ogni traccia campionata
 
   std::vector<QWarning> warnings;
 };
@@ -246,21 +256,8 @@ struct QResult {
 /**
  * Calcola la funzione di qualità Q(x1, x2) per una configurazione di lenti.
  *
- * Per ogni valore di y0 in QConfig::y0_values (o generato dall'intervallo):
- *   1. Costruisce la traccia media build_trace(y0, cfg, db, L, dt)
- *   2. Esegue il fit ODR pesato fit_trace(trace)
- *   3. Accumula chi^2 → Q = sum_i chi^2(y0_i)
- *
- * Le tracce con fit non convergente vengono conteggiate in QResult::n_failed
- * ma NON contribuiscono a Q (comportamento configurabile tramite
- * include_non_converged — se true, vengono sommate comunque).
- *
- * @param cfg                  Configurazione lenti (deve essere presente nel db)
- * @param db                   Database PSF caricato con load_psf_database()
- * @param qcfg                 Parametri di campionamento e fit
- * @param include_non_converged Se true, include chi^2 anche di fit non convergenti
- * @return                     QResult con il valore di Q e i contributi per-traccia
- * @throws std::invalid_argument se db non contiene cfg
+ * Genera n_tracks casuali nello scintillatore, ne calcola la proiezione 3D
+ * sul detector tramite simmetria circolare e ne esegue il fit lineare.
  */
 QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& qcfg = QConfig{},
                   bool include_non_converged = false);

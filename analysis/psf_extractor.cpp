@@ -209,13 +209,14 @@ int main(int argc, char** argv) {
 
   // Leggi Runs
   int run_id_r, run_cfg_id, n_hits_r;
-  float y_source_r;
+  float x_source_r, y_source_r;
   std::vector<float>* y_hits_ptr = nullptr;
   std::vector<float>* z_hits_ptr = nullptr;
 
   tRuns->SetBranchAddress("run_id", &run_id_r);
   tRuns->SetBranchAddress("config_id", &run_cfg_id);
-  tRuns->SetBranchAddress("x_source", &y_source_r);
+  tRuns->SetBranchAddress("x_source", &x_source_r);
+  tRuns->SetBranchAddress("y_source", &y_source_r);
   tRuns->SetBranchAddress("n_hits", &n_hits_r);
   tRuns->SetBranchAddress("y_hits", &y_hits_ptr);
   tRuns->SetBranchAddress("z_hits", &z_hits_ptr);
@@ -232,7 +233,7 @@ int main(int argc, char** argv) {
 
   int out_config_id;
   double out_x1, out_x2;
-  float out_y_source;
+  float out_x_source, out_y_source;
   double out_mean_y, out_mean_z;
   double out_cov_yy, out_cov_yz, out_cov_zz;
   int out_n_hits_raw, out_n_hits_filtered;
@@ -241,6 +242,7 @@ int main(int argc, char** argv) {
   tPSF->Branch("config_id", &out_config_id, "config_id/I");
   tPSF->Branch("x1", &out_x1, "x1/D");
   tPSF->Branch("x2", &out_x2, "x2/D");
+  tPSF->Branch("x_source", &out_x_source, "x_source/F");
   tPSF->Branch("y_source", &out_y_source, "y_source/F");
   tPSF->Branch("mean_y", &out_mean_y, "mean_y/D");
   tPSF->Branch("mean_z", &out_mean_z, "mean_z/D");
@@ -272,7 +274,8 @@ int main(int argc, char** argv) {
     hits_buf.clear();
     if (y_hits_ptr && z_hits_ptr) {
       for (size_t j = 0; j < y_hits_ptr->size(); ++j) {
-        hits_buf.push_back({static_cast<double>((*y_hits_ptr)[j]), static_cast<double>((*z_hits_ptr)[j])});
+        hits_buf.push_back(
+            {static_cast<double>((*y_hits_ptr)[j]), static_cast<double>((*z_hits_ptr)[j])});
       }
     }
 
@@ -281,6 +284,7 @@ int main(int argc, char** argv) {
       out_config_id       = run_cfg_id;
       out_x1              = it->second.first;
       out_x2              = it->second.second;
+      out_x_source        = x_source_r;
       out_y_source        = y_source_r;
       out_mean_y          = 0.0;
       out_mean_z          = 0.0;
@@ -304,6 +308,7 @@ int main(int argc, char** argv) {
       out_config_id       = run_cfg_id;
       out_x1              = it->second.first;
       out_x2              = it->second.second;
+      out_x_source        = x_source_r;
       out_y_source        = y_source_r;
       out_mean_y          = 0.0;
       out_mean_z          = 0.0;
@@ -324,6 +329,7 @@ int main(int argc, char** argv) {
     out_config_id       = run_cfg_id;
     out_x1              = it->second.first;
     out_x2              = it->second.second;
+    out_x_source        = x_source_r;
     out_y_source        = y_source_r;
     out_mean_y          = res.mean_y;
     out_mean_z          = res.mean_z;

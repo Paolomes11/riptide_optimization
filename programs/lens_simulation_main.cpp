@@ -43,12 +43,11 @@ int main(int argc, char** argv) {
   std::filesystem::path config_file = "config/config.json";
   std::string lens75_id;
   std::string lens60_id;
-  bool visualize                    = false;
-  bool batch                        = false;
-  bool lens_sim                     = false;
-  bool all_lenses                   = false;
-  bool show_help                    = false;
-  bool use_ssd                      = false;
+  bool visualize = false;
+  bool batch     = false;
+  bool lens_sim  = false;
+  bool show_help = false;
+  bool use_ssd   = false;
 
   // Path di output: default locale, sovrascrivibile da CLI o --ssd
   std::string root_output_file = "output/lens_simulation/lens.root";
@@ -68,9 +67,7 @@ int main(int argc, char** argv) {
            | lyra::opt(use_ssd)["--ssd"]("Write output to external SSD (uses --ssd-mount)")
            | lyra::opt(visualize)["-v"]["--visualize"]("Enable visualization mode")
            | lyra::opt(batch)["-b"]["--batch"]("Enable batch mode (no visualization)")
-           | lyra::opt(lens_sim)["-l"]["--lens-sim"]("Enable lens simulation mode")
-           | lyra::opt(all_lenses)["--all-lenses"](
-                 "Simulate all combinations of Thorlabs lenses (may use a lot of disk space!)");
+           | lyra::opt(lens_sim)["-l"]["--lens-sim"]("Enable lens simulation mode");
 
   auto result = cli.parse({argc, argv});
   if (!result) {
@@ -112,9 +109,8 @@ int main(int argc, char** argv) {
 
     run_manager.GeometryHasBeenModified(true);
     if (!lens75_id.empty() && !lens60_id.empty()) {
-      run_manager.SetUserInitialization(
-          new riptide::DetectorConstruction(geometry_path.string(), lens75_id, lens60_id, 75.9,
-                                            164.4));
+      run_manager.SetUserInitialization(new riptide::DetectorConstruction(
+          geometry_path.string(), lens75_id, lens60_id, 75.9, 164.4));
     } else {
       run_manager.SetUserInitialization(
           new riptide::DetectorConstruction(geometry_path.string(), 75.9, 164.4));
@@ -128,11 +124,8 @@ int main(int argc, char** argv) {
     G4VisExecutive* vis_manager = nullptr;
 
     if (lens_sim) {
-      if (all_lenses && !use_ssd) {
-        spdlog::warn("Option --all-lenses used without --ssd. Output file might be very large!");
-      }
       spdlog::info("Running lens simulation");
-      riptide::lens_scan(&run_manager, macro_file, root_output_file, config_file, all_lenses);
+      riptide::lens_scan(&run_manager, macro_file, root_output_file, config_file);
       return EXIT_SUCCESS;
     }
 

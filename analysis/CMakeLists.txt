@@ -31,6 +31,7 @@ find_package(ROOT REQUIRED COMPONENTS
     RIO
     Hist
     Graf
+    Graf3d
 )
 include(${ROOT_USE_FILE})
 

@@ -43,6 +43,20 @@ target_include_directories(q_map
 )
 target_compile_features(q_map PRIVATE cxx_std_17)
 
+# Eseguibile chi2_map
+add_executable(chi2_map
+    chi2_map.cpp
+)
+target_link_libraries(chi2_map
+    PRIVATE psf_analysis ${ROOT_LIBRARIES} spdlog::spdlog
+)
+target_include_directories(chi2_map
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${ROOT_INCLUDE_DIRS}
+    ${JSON_INCLUDE_DIR}
+)
+target_compile_features(chi2_map PRIVATE cxx_std_17)
+
 # Test unitari fit_trace e compute_Q
 add_executable(test_fit_trace
     test_fit_trace.cpp

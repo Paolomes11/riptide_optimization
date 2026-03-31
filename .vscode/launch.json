@@ -2,39 +2,33 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug m_c_creator",
+      "name": "Debug trace_viewer (Fit & Unfold)",
       "type": "cppdbg",
       "request": "launch",
-      "program": "${workspaceFolder}/build/analysis/Debug/m_c_creator",
+      "program": "${workspaceFolder}/build/analysis/psf_analysis/Debug/trace_viewer",
       "args": [
-        "75.9",
-        "164.4",
-        "10.0"
+        "--x1",
+        "108.0",
+        "--x2",
+        "153.0",
+        "--p1x",
+        "30.0",
+        "--p1y",
+        "10.0",
+        "--p1z",
+        "10.0",
+        "--p2x",
+        "-30.0",
+        "--p2y",
+        "-10.0",
+        "--p2z",
+        "-9.0",
+        "--dt",
+        "1.0",
+        "--fit",
+        "--unfold"
       ],
-      "stopAtEntry": false,
-      "cwd": "${workspaceFolder}",
-      "environment": [],
-      "externalConsole": false,
-      "MIMode": "gdb",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": true
-        }
-      ],
-      "preLaunchTask": "CMake: build"
-    },
-    {
-      "name": "Debug beam_scan_plot",
-      "type": "cppdbg",
-      "request": "launch",
-      "program": "${workspaceFolder}/build/analysis/Debug/beam_scan_plot",
-      "args": [
-        "75.9",
-        "164.4"
-      ],
-      "stopAtEntry": false,
+      "stopAtEntry": true,
       "cwd": "${workspaceFolder}",
       "environment": [],
       "externalConsole": false,

@@ -67,7 +67,7 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   // Getter per dimensioni e posizioni
   double GetLens75Thickness() const;
   double GetLens60Thickness() const;
-  
+
   double GetLens75CenterOffset() const;
   double GetLens60CenterOffset() const;
 
@@ -76,6 +76,13 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   }
   double GetLens60X() const {
     return m_lens60_x;
+  }
+
+  std::string GetLens75Id() const {
+    return m_lens75_id.value_or("LB4553");
+  }
+  std::string GetLens60Id() const {
+    return m_lens60_id.value_or("LB4592");
   }
 };
 

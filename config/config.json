@@ -1,5 +1,5 @@
 {
-  "x_min": 33.0, 
+  "x_min": 33.0,
   "x_max": 171.0,
   "dx": 3.0,
   "r1": 38.6,
@@ -11,5 +11,11 @@
   "source_thickness": 60.0,
   "n_photons": 10000,
   "lower_percentile": 0.0,
-  "upper_percentile": 0.0
+  "upper_percentile": 0.0,
+  "source_x_min": -30.0,
+  "source_x_max": 30.0,
+  "source_dx": 1.0,
+  "source_y_min": 0.0,
+  "source_y_max": 14.14,
+  "source_dy": 1.0
 }

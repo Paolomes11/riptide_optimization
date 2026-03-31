@@ -104,13 +104,14 @@ struct CliConfig {
   std::string output_path = ""; // vuoto = default automatico per modalità
   std::string tsv_path    = "";
 
-  double y0_min = -1.0;
-  double y0_max = -1.0;
-  double dy0    = -1.0;
-  double L      = 10.0;
-  double dt     = 0.1;
+  double scint_x = 60.0;
+  double scint_y = 20.0;
+  double scint_z = 20.0;
+  int n_tracks   = 100;
 
-  double point_frac = 0.75;
+  double dt = 0.1;
+
+  double min_hits   = 10.0;
   double trace_frac = 0.75;
 
   // Temporal unfolding (solo modalità Q)
@@ -143,18 +144,18 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.output_path = next();
     else if (key == "--tsv")
       cfg.tsv_path = next();
-    else if (key == "--y0-min")
-      cfg.y0_min = std::stod(next());
-    else if (key == "--y0-max")
-      cfg.y0_max = std::stod(next());
-    else if (key == "--dy0")
-      cfg.dy0 = std::stod(next());
-    else if (key == "--L")
-      cfg.L = std::stod(next());
+    else if (key == "--scint-x")
+      cfg.scint_x = std::stod(next());
+    else if (key == "--scint-y")
+      cfg.scint_y = std::stod(next());
+    else if (key == "--scint-z")
+      cfg.scint_z = std::stod(next());
+    else if (key == "--n-tracks")
+      cfg.n_tracks = std::stoi(next());
     else if (key == "--dt")
       cfg.dt = std::stod(next());
-    else if (key == "--point-frac")
-      cfg.point_frac = std::stod(next());
+    else if (key == "--min-hits")
+      cfg.min_hits = std::stod(next());
     else if (key == "--trace-frac")
       cfg.trace_frac = std::stod(next());
     else if (key == "--unfold-dz")
@@ -322,10 +323,8 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale
 }
 
 // Disegno info panel comune
-static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, double dz_effective,
-                              bool unfolding_on, double cli_point_frac, double cli_trace_frac,
-                              int total_cfgs, int n_invalid, double best_x1, double best_x2,
-                              double best_Q) {
+static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, int total_cfgs,
+                              int n_invalid, double best_x1, double best_x2, double best_Q) {
   pad_info->cd();
   pad_info->SetFillColor(TColor::GetColor(245, 245, 248));
 
@@ -345,7 +344,7 @@ static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, doub
   info.SetTextSize(0.13);
   info.SetTextColor(kGray + 2);
   info.SetTextAlign(12);
-  info.DrawLatex(col1, hdr, "CAMPIONAMENTO y_{0}");
+  info.DrawLatex(col1, hdr, "TRACCE CASUALI 3D NELLO SCINTILLATORE");
   info.DrawLatex(col2, hdr,
                  ("OTTIMO  (valide: " + std::to_string(total_cfgs - n_invalid) + "/"
                   + std::to_string(total_cfgs) + " config)")
@@ -355,25 +354,19 @@ static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, doub
   info.SetTextColor(kBlack);
 
   info.DrawLatex(col1, row1,
-                 ("y_{0} #in [" + fmt(qcfg.y0_min, 1) + ", " + fmt(qcfg.y0_max, 1)
-                  + "] mm   #Deltay_{0} = " + fmt(qcfg.dy0, 1) + " mm")
+                 ("Scint: " + fmt(qcfg.scint_x, 0) + "x" + fmt(qcfg.scint_y, 0) + "x"
+                  + fmt(qcfg.scint_z, 0) + " mm^3   #tracce = " + std::to_string(qcfg.n_tracks))
                      .c_str());
   info.DrawLatex(col1, row2,
-                 ("L = " + fmt(qcfg.trace_L, 1) + " mm   #Deltat = " + fmt(qcfg.trace_dt, 2)
-                  + " mm   soglie: " + fmt(cli_point_frac * 100, 0) + "% pts | "
-                  + fmt(cli_trace_frac * 100, 0) + "% tr.")
+                 ("#Deltat = " + fmt(qcfg.trace_dt, 2)
+                  + " mm   min_hits = " + fmt(qcfg.min_hits_per_point, 0)
+                  + "   soglia tr: " + fmt(qcfg.trace_valid_fraction * 100, 0) + "%")
                      .c_str());
 
-  // Info unfolding compatta nella seconda colonna, riga 1
-  std::string unf_str;
-  if (unfolding_on)
-    unf_str = "  [unf: #delta z=" + fmt(dz_effective, 6) + " mm]";
-  else
-    unf_str = "  [unf: OFF]";
-  info.DrawLatex(col2, row1,
-                 ("#bf{x_{1}^{*}} = " + fmt(best_x1, 1)
-                  + " mm,   #bf{x_{2}^{*}} = " + fmt(best_x2, 1) + " mm" + unf_str)
-                     .c_str());
+  info.DrawLatex(
+      col2, row1,
+      ("#bf{x_{1}^{*}} = " + fmt(best_x1, 1) + " mm,   #bf{x_{2}^{*}} = " + fmt(best_x2, 1) + " mm")
+          .c_str());
   {
     std::ostringstream qs;
     qs << std::scientific << std::setprecision(3) << best_Q;
@@ -403,7 +396,7 @@ static void draw_info_panel_coverage(TPad* pad_info, const riptide::QConfig& qcf
   info.SetTextSize(0.13);
   info.SetTextColor(kGray + 2);
   info.SetTextAlign(12);
-  info.DrawLatex(col1, hdr, "CAMPIONAMENTO y_{0}  [MAPPA DI COPERTURA]");
+  info.DrawLatex(col1, hdr, "TRACCE CASUALI 3D  [MAPPA DI COPERTURA]");
   info.DrawLatex(col2, hdr,
                  ("MASSIMO COPERTURA  (valide: " + std::to_string(total_cfgs - n_invalid) + "/"
                   + std::to_string(total_cfgs) + " config)")
@@ -413,12 +406,10 @@ static void draw_info_panel_coverage(TPad* pad_info, const riptide::QConfig& qcf
   info.SetTextColor(kBlack);
 
   info.DrawLatex(col1, row1,
-                 ("y_{0} #in [" + fmt(qcfg.y0_min, 1) + ", " + fmt(qcfg.y0_max, 1)
-                  + "] mm   #Deltay_{0} = " + fmt(qcfg.dy0, 1) + " mm")
+                 ("Scint: " + fmt(qcfg.scint_x, 0) + "x" + fmt(qcfg.scint_y, 0) + "x"
+                  + fmt(qcfg.scint_z, 0) + " mm^3   #tracce = " + std::to_string(qcfg.n_tracks))
                      .c_str());
-  info.DrawLatex(
-      col1, row2,
-      ("L = " + fmt(qcfg.trace_L, 1) + " mm   #Deltat = " + fmt(qcfg.trace_dt, 2) + " mm").c_str());
+  info.DrawLatex(col1, row2, ("#Deltat = " + fmt(qcfg.trace_dt, 2) + " mm").c_str());
 
   info.DrawLatex(
       col2, row1,
@@ -448,52 +439,38 @@ int main(int argc, char** argv) {
   f_cfg >> jcfg;
 
   const double dx   = jcfg["dx"];
-  const double r1   = jcfg["r1"];
-  const double h1   = jcfg["h1"];
-  const double r2   = jcfg["r2"];
-  const double h2   = jcfg["h2"];
   const double xmin = jcfg["x_min"];
   const double xmax = jcfg["x_max"];
 
-  // 2. QConfig (condivisa tra le due modalità per il campionamento y0)
+  // 2. QConfig (condivisa tra le due modalità)
   riptide::QConfig qcfg;
-  qcfg.y0_min               = (cli.y0_min >= 0.0) ? cli.y0_min : 0.0;
-  qcfg.y0_max               = (cli.y0_max >= 0.0) ? cli.y0_max : 10.0;
-  qcfg.dy0                  = (cli.dy0 > 0.0) ? cli.dy0 : 1.0;
-  qcfg.trace_L              = cli.L;
+  qcfg.scint_x              = cli.scint_x;
+  qcfg.scint_y              = cli.scint_y;
+  qcfg.scint_z              = cli.scint_z;
+  qcfg.n_tracks             = cli.n_tracks;
   qcfg.trace_dt             = cli.dt;
   qcfg.fit_max_iter         = 20;
   qcfg.fit_tol              = 1e-8;
-  qcfg.point_valid_fraction = cli.point_frac;
+  qcfg.min_hits_per_point   = cli.min_hits;
   qcfg.trace_valid_fraction = cli.trace_frac;
 
   // Temporal unfolding (usato solo in modalità Q)
   qcfg.apply_temporal_unfolding = !cli.no_unfold;
   qcfg.z_unfold_step            = cli.unfold_dz;
 
-  int n_trace_pts     = static_cast<int>(std::round(qcfg.trace_L / qcfg.trace_dt)) + 1;
-  double dz_effective = (qcfg.z_unfold_step > 0.0)
-                          ? qcfg.z_unfold_step
-                          : qcfg.trace_L / static_cast<double>(n_trace_pts - 1);
-
   // Diagnostica console
   if (cli.coverage_mode) {
     std::cout << "Modalità: MAPPA DI COPERTURA (--coverage)\n";
-    std::cout << "Campionamento y0: [" << qcfg.y0_min << ", " << qcfg.y0_max << "]"
-              << " passo " << qcfg.dy0 << " mm\n";
-    std::cout << "Traccia: L=" << qcfg.trace_L << " mm, dt=" << qcfg.trace_dt << " mm\n";
+    std::cout << "Scintillatore: " << qcfg.scint_x << "x" << qcfg.scint_y << "x" << qcfg.scint_z
+              << " mm^3\n";
+    std::cout << "Tracce: " << qcfg.n_tracks << ", dt=" << qcfg.trace_dt << " mm\n";
   } else {
-    int n_y0 = static_cast<int>(std::round((qcfg.y0_max - qcfg.y0_min) / qcfg.dy0)) + 1;
     std::cout << "Modalità: MAPPA Q\n";
-    std::cout << "Campionamento y0: [" << qcfg.y0_min << ", " << qcfg.y0_max << "] passo "
-              << qcfg.dy0 << " mm  →  " << n_y0 << " tracce per configurazione\n";
-    std::cout << "Soglie validità: punti " << cli.point_frac * 100 << "% | tracce "
-              << cli.trace_frac * 100 << "%\n";
-    if (qcfg.apply_temporal_unfolding) {
-      std::cout << "Temporal unfolding: ATTIVO  δz = " << fmt(dz_effective, 6) << " mm/passo\n";
-    } else {
-      std::cout << "Temporal unfolding: DISATTIVATO\n";
-    }
+    std::cout << "Scintillatore: " << qcfg.scint_x << "x" << qcfg.scint_y << "x" << qcfg.scint_z
+              << " mm^3\n";
+    std::cout << "Tracce: " << qcfg.n_tracks << ", dt=" << qcfg.trace_dt << " mm\n";
+    std::cout << "Soglie: min_hits=" << qcfg.min_hits_per_point
+              << ", trace_frac=" << qcfg.trace_valid_fraction << "\n";
   }
 
   // 3. Carica PSF database
@@ -734,8 +711,8 @@ int main(int argc, char** argv) {
     }
 
     double Q_val = res.Q;
-    if (cli.normalize && res.n_traces > 0)
-      Q_val /= static_cast<double>(res.n_traces);
+    // res.Q è già il Chi-squared ridotto medio (calcolato in compute_Q)
+    // Non applichiamo più la normalizzazione esterna se res.Q è già la media.
 
     if (!res.config_valid)
       ++n_cfg_invalid;
@@ -827,7 +804,7 @@ int main(int argc, char** argv) {
     std::sort(q_vals.begin(), q_vals.end());
     if (!q_vals.empty()) {
       size_t N = q_vals.size();
-      h_Q.SetMinimum(q_vals[static_cast<size_t>(0.05 * N)]);
+      h_Q.SetMinimum(q_vals[static_cast<size_t>(0.00 * N)]);
       h_Q.SetMaximum(q_vals[static_cast<size_t>(0.95 * N)]);
     }
   }
@@ -866,8 +843,12 @@ int main(int argc, char** argv) {
     unf_lbl.SetTextColor(kGray + 2);
     unf_lbl.SetTextAlign(12);
     if (qcfg.apply_temporal_unfolding) {
-      unf_lbl.DrawLatex(0.145, 0.915,
-                        ("#delta z_{unfold} = " + fmt(dz_effective, 6) + " mm/passo").c_str());
+      if (qcfg.z_unfold_step > 0.0)
+        unf_lbl.DrawLatex(
+            0.145, 0.915,
+            ("#delta z_{unfold} = " + fmt(qcfg.z_unfold_step, 6) + " mm/passo").c_str());
+      else
+        unf_lbl.DrawLatex(0.145, 0.915, "temporal unfolding: AUTO (offset = L)");
     } else {
       unf_lbl.DrawLatex(0.145, 0.915, "temporal unfolding: OFF");
     }
@@ -881,18 +862,17 @@ int main(int argc, char** argv) {
     title.SetTextSize(0.046);
     title.SetTextAlign(22);
     title.SetTextColor(kBlack);
-    const std::string z_lbl = cli.normalize ? "Q / n_{tracce}" : "Q(x_{1}, x_{2})";
+    const std::string z_lbl = "Q = #LT#chi^{2}_{red}#GT";
     title.DrawLatex(0.535, 0.953, ("Mappa della funzione di qualit#grave{a}  " + z_lbl).c_str());
   }
 
   pl.pad_plot->RedrawAxis();
 
-  const std::string z_lbl_cb = cli.normalize ? "Q / n_{tracce}" : "Q(x_{1}, x_{2})";
+  const std::string z_lbl_cb = "#LT#chi^{2}_{red}#GT";
   draw_colorbar(pl.pad_cb, h_Q.GetMinimum(), h_Q.GetMaximum(), cli.log_scale, z_lbl_cb,
                 invalid_color, /*show_invalid_box=*/true);
 
-  draw_info_panel_q(pl.pad_info, qcfg, dz_effective, qcfg.apply_temporal_unfolding, cli.point_frac,
-                    cli.trace_frac, total_cfgs, n_cfg_invalid, it_best->x1, it_best->x2,
+  draw_info_panel_q(pl.pad_info, qcfg, total_cfgs, n_cfg_invalid, it_best->x1, it_best->x2,
                     it_best->Q);
 
   pl.canvas->Update();
