@@ -44,12 +44,12 @@ int main(int argc, char** argv) {
   std::filesystem::path config_file = "config/config.json";
   std::string lens75_id;
   std::string lens60_id;
-  bool visualize                    = false;
-  bool batch                        = false;
-  bool optimize                     = false;
-  bool all_lenses                   = false;
-  bool show_help                    = false;
-  bool use_ssd                      = false;
+  bool visualize  = false;
+  bool batch      = false;
+  bool optimize   = false;
+  bool all_lenses = false;
+  bool show_help  = false;
+  bool use_ssd    = false;
 
   // Path di output: default locale, sovrascrivibile da CLI o --ssd
   std::string root_output_file = "output/events.root";
@@ -113,9 +113,8 @@ int main(int argc, char** argv) {
 
     run_manager.GeometryHasBeenModified(true);
     if (!lens75_id.empty() && !lens60_id.empty()) {
-      run_manager.SetUserInitialization(
-          new riptide::DetectorConstruction(geometry_path.string(), lens75_id, lens60_id, 83.9,
-                                            153.4));
+      run_manager.SetUserInitialization(new riptide::DetectorConstruction(
+          geometry_path.string(), lens75_id, lens60_id, 55.0, 133.0));
     } else {
       run_manager.SetUserInitialization(
           new riptide::DetectorConstruction(geometry_path.string(), 83.9, 153.4));
@@ -133,7 +132,8 @@ int main(int argc, char** argv) {
         spdlog::warn("Option --all-lenses used without --ssd. Output file might be very large!");
       }
       spdlog::info("Running optimization");
-      riptide::run_optimization(&run_manager, macro_file, root_output_file, config_file, all_lenses);
+      riptide::run_optimization(&run_manager, macro_file, root_output_file, config_file, all_lenses,
+                                lens75_id, lens60_id);
       return EXIT_SUCCESS;
     }
 

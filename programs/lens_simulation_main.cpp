@@ -125,7 +125,8 @@ int main(int argc, char** argv) {
 
     if (lens_sim) {
       spdlog::info("Running lens simulation");
-      riptide::lens_scan(&run_manager, macro_file, root_output_file, config_file);
+      riptide::lens_scan(&run_manager, macro_file, root_output_file, config_file, lens75_id,
+                         lens60_id);
       return EXIT_SUCCESS;
     }
 

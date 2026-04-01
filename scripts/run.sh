@@ -151,18 +151,33 @@ lens60_id = '$LENS60_ID'
 all_lenses = $ALL_LENSES
 
 # Load Thorlabs data
-tsv_path = os.path.join('$PROJECT_ROOT', 'lens_cutter/lens_data/thorlabs_biconvex.tsv')
 thorlabs_data = {}
 n_models = 1
-if os.path.exists(tsv_path):
-    with open(tsv_path) as f:
-        lines = f.readlines()[1:] # skip header
-        for line in lines:
-            parts = line.split('\t')
-            if len(parts) >= 5:
-                thorlabs_data[parts[0]] = float(parts[4]) # center thickness
-    if mode == 'opt' and all_lenses:
-        n_models = len(thorlabs_data) * len(thorlabs_data)
+
+def load_tsv(filename, has_rotation=False):
+    path = os.path.join('$PROJECT_ROOT', 'lens_cutter/lens_data', filename)
+    if os.path.exists(path):
+        with open(path) as f:
+            lines = f.readlines()[1:] # skip header
+            for line in lines:
+                parts = line.split('\t')
+                if len(parts) >= 6:
+                    lid = parts[0]
+                    tc = float(parts[4])
+                    te = float(parts[5])
+                    rot = float(parts[7]) if has_rotation and len(parts) >= 8 else 0.0
+                    # Offset center: (tc - te)/2 * sign
+                    # rotation 0 -> Z->X, sign +1
+                    # rotation 180 -> Z->-X, sign -1
+                    sign = -1.0 if abs(rot - 180.0) < 1e-6 else 1.0
+                    offset = (tc - te) / 2.0 * sign if has_rotation else 0.0
+                    thorlabs_data[lid] = {'h': tc, 'offset': offset}
+
+load_tsv('thorlabs_biconvex.tsv', has_rotation=False)
+load_tsv('thorlabs_planoconvex.tsv', has_rotation=True)
+
+if mode == 'opt' and all_lenses:
+    n_models = len(thorlabs_data) * len(thorlabs_data)
 
 if mode == 'lens':
     # Parametri sorgente GPS (mappa 3D PSF)
@@ -189,11 +204,11 @@ margin = 3.0 if mode == 'lens' else 1.0
 
 # Carica spessori reali se disponibili
 if lens75_id in thorlabs_data:
-    h1 = thorlabs_data[lens75_id]
-    offset1 = 0.0 # Se carichiamo ID specifici, l'offset nel GDML viene gestito dal DetectorConstruction
+    h1 = thorlabs_data[lens75_id]['h']
+    offset1 = thorlabs_data[lens75_id]['offset']
 if lens60_id in thorlabs_data:
-    h2 = thorlabs_data[lens60_id]
-    offset2 = 0.0
+    h2 = thorlabs_data[lens60_id]['h']
+    offset2 = thorlabs_data[lens60_id]['offset']
 
 for x1 in np.arange(x_min, x_max + 1e-9, dx):
     # x2_min per evitare collisioni: (x1 + offset1 + h1/2) + margin < (x2 + offset2 - h2/2)

@@ -17,6 +17,7 @@
 
 #include <G4LogicalVolumeStore.hh>
 #include <G4PhysicalVolumeStore.hh>
+#include <G4SystemOfUnits.hh>
 #include <spdlog/spdlog.h>
 
 namespace riptide {
@@ -74,6 +75,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
     // Supporto per LensCutter: sostituisci i solidi se gli ID sono forniti
     if (m_lens75_id || m_lens60_id) {
       LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
+      cutter.load_catalog("lens_cutter/lens_data/thorlabs_planoconvex.tsv");
 
       auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_lens75) {
         const auto* lens = cutter.get_lens_by_id(id);
@@ -81,16 +83,38 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
           auto lv        = pv->GetLogicalVolume();
           auto new_solid = lens->to_g4_solid("_custom");
           lv->SetSolid(new_solid);
-          
+
+          // Convenzione Thorlabs: rotation=0 -> lato curvo verso la sorgente (-X)
+          // La nostra rotazione base 90y orienta Z local verso +X global.
+          // Quindi per avere il lato curvo (Z>0) verso la sorgente (-X),
+          // la rotazione di default deve essere 180 rispetto a quella base.
+
+          auto* rot = new G4RotationMatrix();
+          rot->rotateY(90. * CLHEP::deg); // asse Z -> X
+
+          // Se rotation_deg = 0 (Thorlabs), vogliamo lato curvo verso sorgente (-X)
+          // Questo significa ruotare di altri 180 gradi.
+          double final_rot = 180.0 + lens->rotation_deg;
+          rot->rotateY(final_rot * CLHEP::deg);
+          pv->SetRotation(rot);
+
+          // Calcola l'offset del centro geometrico nel sistema globale X
+          // Dopo rotY(90) e rotY(180+rot), il local Z maps a:
+          // rot=0   -> local Z maps to -X
+          // rot=180 -> local Z maps to +X
+          double sign   = (std::abs(lens->rotation_deg) < 1e-6) ? 1.0 : -1.0;
+          double offset = sign * lens->get_center_offset();
+
           if (is_lens75) {
             m_lens75_thickness     = lens->center_thickness;
-            m_lens75_center_offset = 0.0;
+            m_lens75_center_offset = offset;
           } else {
             m_lens60_thickness     = lens->center_thickness;
-            m_lens60_center_offset = 0.0;
+            m_lens60_center_offset = offset;
           }
-          
-          spdlog::info("Replaced solid for {} with Thorlabs lens {}", pv->GetName(), id);
+
+          spdlog::info("Replaced solid for {} with Thorlabs lens {} (offset: {:.3f} mm)",
+                       pv->GetName(), id, offset);
         } else {
           spdlog::warn("Thorlabs lens ID {} not found, keeping GDML solid", id);
         }
@@ -130,11 +154,19 @@ void DetectorConstruction::SetLensPositions(double lens75_x, double lens60_x) {
   m_lens75_x = lens75_x;
   m_lens60_x = lens60_x;
 
+  // Controllo collisioni (opzionale, logga un warning)
+  double dist               = std::abs(m_lens60_x - m_lens75_x);
+  double sum_half_thickness = (m_lens75_thickness + m_lens60_thickness) / 2.0;
+  if (dist < sum_half_thickness) {
+    spdlog::warn("Lenses are overlapping! Distance: {:.3f} mm, sum of half-thicknesses: {:.3f} mm",
+                 dist, sum_half_thickness);
+  }
+
   if (m_lens75_phys) {
-    m_lens75_phys->SetTranslation(G4ThreeVector(m_lens75_x, 0, 0));
+    m_lens75_phys->SetTranslation(G4ThreeVector(m_lens75_x - m_lens75_center_offset, 0, 0));
   }
   if (m_lens60_phys) {
-    m_lens60_phys->SetTranslation(G4ThreeVector(m_lens60_x, 0, 0));
+    m_lens60_phys->SetTranslation(G4ThreeVector(m_lens60_x - m_lens60_center_offset, 0, 0));
   }
 }
 
@@ -143,6 +175,7 @@ void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::st
   m_lens60_id = lens60_id;
 
   LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
+  cutter.load_catalog("lens_cutter/lens_data/thorlabs_planoconvex.tsv");
 
   auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_lens75) {
     if (!pv) {
@@ -155,14 +188,36 @@ void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::st
       auto new_solid = lens->to_g4_solid(is_lens75 ? "_75" : "_60");
       lv->SetSolid(new_solid);
 
+      // Convenzione Thorlabs: rotation=0 -> lato curvo verso la sorgente (-X)
+      // La nostra rotazione base 90y orienta Z local verso +X global.
+      // Quindi per avere il lato curvo (Z>0) verso la sorgente (-X),
+      // la rotazione di default deve essere 180 rispetto a quella base.
+
+      auto* rot = new G4RotationMatrix();
+      rot->rotateY(90. * CLHEP::deg); // asse Z -> X
+
+      // Se rotation_deg = 0 (Thorlabs), vogliamo lato curvo verso sorgente (-X)
+      // Questo significa ruotare di altri 180 gradi.
+      double final_rot = 180.0 + lens->rotation_deg;
+      rot->rotateY(final_rot * CLHEP::deg);
+      pv->SetRotation(rot);
+
+      // Calcola l'offset del centro geometrico nel sistema globale X
+      // Dopo rotY(90) e rotY(180+rot), il local Z maps a:
+      // rot=0   -> local Z maps to -X
+      // rot=180 -> local Z maps to +X
+      double sign   = (std::abs(lens->rotation_deg) < 1e-6) ? 1.0 : -1.0;
+      double offset = sign * lens->get_center_offset();
+
       if (is_lens75) {
         m_lens75_thickness     = lens->center_thickness;
-        m_lens75_center_offset = 0.0;
+        m_lens75_center_offset = offset;
       } else {
         m_lens60_thickness     = lens->center_thickness;
-        m_lens60_center_offset = 0.0;
+        m_lens60_center_offset = offset;
       }
-      spdlog::info("Updated solid for {} with Thorlabs lens {}", pv->GetName(), id);
+      spdlog::info("Updated solid for {} with Thorlabs lens {} (offset: {:.3f} mm)", pv->GetName(),
+                   id, offset);
     } else {
       spdlog::warn("Thorlabs lens ID {} not found", id);
     }

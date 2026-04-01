@@ -31,7 +31,8 @@
 namespace riptide {
 
 void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
-               const std::string& root_output_file, const std::filesystem::path& config_file) {
+               const std::string& root_output_file, const std::filesystem::path& config_file,
+               const std::string& lens75_id_arg, const std::string& lens60_id_arg) {
   using json = nlohmann::json;
 
   // Crea la directory di output se non esiste
@@ -57,9 +58,14 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   std::filesystem::path macro_to_run =
       macro_file.empty() ? "macros/lens_simulation.mac" : macro_file;
 
-  // Ottieni i modelli di lenti correnti dal detector
-  std::string lens75_id = det->GetLens75Id();
-  std::string lens60_id = det->GetLens60Id();
+  // Ottieni i modelli di lenti correnti dal detector o dagli argomenti
+  std::string lens75_id = !lens75_id_arg.empty() ? lens75_id_arg : det->GetLens75Id();
+  std::string lens60_id = !lens60_id_arg.empty() ? lens60_id_arg : det->GetLens60Id();
+
+  // Se sono state passate lenti diverse da quelle attuali nel detector, aggiornale
+  if (lens75_id != det->GetLens75Id() || lens60_id != det->GetLens60Id()) {
+    det->SetLenses(lens75_id, lens60_id);
+  }
 
   // Apertura file ROOT e creazione delle Ntuple
   auto analysisManager = G4AnalysisManager::Instance();
@@ -115,11 +121,9 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
 
   spdlog::info("Simulating lens pair: {} & {}", lens75_id, lens60_id);
 
-  // Ricalcola h e offset dopo il cambio lenti
-  double h1      = det->GetLens75Thickness();
-  double offset1 = det->GetLens75CenterOffset();
-  double h2      = det->GetLens60Thickness();
-  double offset2 = det->GetLens60CenterOffset();
+  // Ricalcola h dopo il cambio lenti
+  double h1 = det->GetLens75Thickness();
+  double h2 = det->GetLens60Thickness();
 
   std::vector<std::pair<double, double>> pairs;
   if (config.contains("pairs")) {
@@ -132,7 +136,9 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     double x1_end       = config.value("x1_end", x_max);
 
     for (double x1 = x1_start; x1 <= x1_end + 1e-9; x1 += dx) {
-      double x2_min_collision = x1 + (offset1 - offset2) + (h1 + h2) / 2.0 + margin;
+      // Ora che SetLensPositions lavora con i centri geometrici,
+      // la collisione è data semplicemente dalla somma dei semi-spessori
+      double x2_min_collision = x1 + (h1 + h2) / 2.0 + margin;
       double x2_start         = std::max(x1 + dx, x2_min_collision);
       for (double x2 = x2_start; x2 <= x_max + 1e-9; x2 += dx) {
         pairs.push_back({x1, x2});

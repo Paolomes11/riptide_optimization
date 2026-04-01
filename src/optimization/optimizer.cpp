@@ -32,7 +32,7 @@ namespace riptide {
 
 void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                       const std::string& root_output_file, const std::filesystem::path& config_file,
-                      bool all_lenses) {
+                      bool all_lenses, const std::string& lens75_id, const std::string& lens60_id) {
   using json = nlohmann::json;
 
   // Crea la directory di output se non esiste
@@ -73,10 +73,13 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
       }
     }
     spdlog::warn("Optimization of ALL lens combinations enabled ({} combinations)", models.size());
+  } else if (!lens75_id.empty() && !lens60_id.empty()) {
+    models.push_back({lens75_id, lens60_id});
   } else {
-    // Usa i modelli correnti o default (come definiti in detector_construction o passati da main)
-    // Qui recuperiamo quelli attuali se possibile, altrimenti usiamo default
-    models.push_back({"LB4553", "LB4592"});
+    // Usa i modelli correnti dal detector se disponibili, altrimenti default
+    std::string current_id75 = det->GetLens75Id();
+    std::string current_id60 = det->GetLens60Id();
+    models.push_back({current_id75, current_id60});
   }
 
   // Apertura file di output e creazione Ntuple
@@ -142,10 +145,8 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
     spdlog::info("Optimizing lens pair: {} & {}", model.id75, model.id60);
     det->SetLenses(model.id75, model.id60);
 
-    double h1      = det->GetLens75Thickness();
-    double offset1 = det->GetLens75CenterOffset();
-    double h2      = det->GetLens60Thickness();
-    double offset2 = det->GetLens60CenterOffset();
+    double h1 = det->GetLens75Thickness();
+    double h2 = det->GetLens60Thickness();
 
     std::vector<std::pair<double, double>> pairs;
     if (config.contains("pairs")) {
@@ -155,7 +156,9 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
     } else {
       const double margin = 1.0;
       for (double x1 = x_min; x1 <= x_max; x1 += dx) {
-        double x2_min_collision = x1 + (offset1 - offset2) + (h1 + h2) / 2.0 + margin;
+        // Ora che SetLensPositions lavora con i centri geometrici,
+        // la collisione è data semplicemente dalla somma dei semi-spessori
+        double x2_min_collision = x1 + (h1 + h2) / 2.0 + margin;
         double x2_start         = std::max(x1 + dx, x2_min_collision);
         for (double x2 = x2_start; x2 <= x_max; x2 += dx) {
           pairs.push_back({x1, x2});
@@ -177,8 +180,8 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
       analysisManager->FillNtupleSColumn(0, 4, model.id60);
       analysisManager->AddNtupleRow(0);
 
-      auto* eventAction =
-          dynamic_cast<EventAction*>(const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
+      auto* eventAction = dynamic_cast<EventAction*>(
+          const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
       if (eventAction) {
         eventAction->SetConfigId(config_counter);
         eventAction->ResetLastRunHitCount();

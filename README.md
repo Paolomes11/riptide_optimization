@@ -22,9 +22,26 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 
 ### Funzionamento
 
-Il tool legge le specifiche dal file `lens_cutter/lens_data/thorlabs_biconvex.tsv`. Le lenti bi-convesse sono modellate come l'unione di un cilindro centrale (spessore di bordo) e due calotte sferiche (raggio di curvatura e spessore centrale).
+Il tool legge le specifiche da file TSV nel formato Thorlabs. Sono supportati due formati:
 
-Le simulazioni `optimization` e `simulation` possono caricare queste lenti dinamicamente tramite i flag `--lens75-id` e `--lens60-id`. In questo caso, i solidi definiti nel file GDML vengono sostituiti a runtime con quelli generati da `LensCutter`.
+- **Biconvesse** (`thorlabs_biconvex.tsv`): colonne `Item # | Diameter | Focal Length |
+  Radius of Curvature | Center Thickness | Edge Thickness | Back Focal Length`.
+  Il tipo viene rilevato automaticamente dall'assenza della colonna `Rotation_deg`.
+
+- **Plano-convesse** (`thorlabs_planoconvex.tsv`): stesso schema con colonna aggiuntiva
+  `Rotation_deg` [deg]. Indica la rotazione attorno all'asse Y applicata al volume fisico:
+  `0` = lato curvo verso la sorgente, `180` = lato piano verso la sorgente.
+  La rotazione è propagata automaticamente al `G4VPhysicalVolume` in `DetectorConstruction`.
+
+Per caricare più cataloghi contemporaneamente:
+```bash
+./build/Debug/lens_cutter_main --list \
+    --catalog lens_cutter/lens_data/thorlabs_planoconvex.tsv
+```
+
+Le simulazioni `optimization` e `lens_simulation` accettano ID da entrambi i cataloghi
+tramite `--lens75-id` e `--lens60-id`; la geometria (solido + rotazione) viene impostata
+automaticamente in base al tipo rilevato.
 
 ---
 

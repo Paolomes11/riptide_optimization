@@ -38,6 +38,8 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   double m_lens60_thickness     = 16.3;
   double m_lens75_center_offset = -32.35; // (zcut1+zcut2)/2 = (-38.6-26.1)/2
   double m_lens60_center_offset = 22.75;  // (zcut1+zcut2)/2 = (14.6+30.9)/2
+  double m_lens75_rotation_deg  = 90.0;   // 90 = rot_90y GDML default
+  double m_lens60_rotation_deg  = 90.0;
 
   // IDs per lenti Thorlabs (opzionali)
   std::optional<std::string> m_lens75_id;
@@ -67,7 +69,14 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   // Getter per dimensioni e posizioni
   double GetLens75Thickness() const;
   double GetLens60Thickness() const;
-  
+  // Getter per debug/verifica rotazione
+  double GetLens75RotationDeg() const {
+    return m_lens75_rotation_deg;
+  }
+  double GetLens60RotationDeg() const {
+    return m_lens60_rotation_deg;
+  }
+
   // Ritorna l'offset del centro del solido rispetto alla posizione x impostata
   // Per i solidi GDML originali, non sono centrati in 0.
   // Per i solidi Thorlabs, sono centrati in 0.
@@ -79,6 +88,13 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   }
   double GetLens60X() const {
     return m_lens60_x;
+  }
+
+  std::string GetLens75Id() const {
+    return m_lens75_id.value_or("LB4553");
+  }
+  std::string GetLens60Id() const {
+    return m_lens60_id.value_or("LB4592");
   }
 };
 
