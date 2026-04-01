@@ -1,6 +1,6 @@
 # riptide_optimization
 
-Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende due programmi principali — `optimization` e `lens_simulation` — cinque strumenti di analisi ROOT, e una libreria di analisi PSF (`psf_analysis`) con test unitari integrati.
+Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende due programmi principali — `optimization` e `lens_simulation` — sei strumenti di analisi ROOT, e una libreria di analisi PSF (`psf_analysis`) con test unitari integrati.
 
 ---
 
@@ -11,37 +11,29 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 **Scopo**: Gestione e generazione di geometrie per lenti commerciali Thorlabs. Permette di elencare le lenti disponibili e generare snippet GDML o solidi Geant4.
 
 ### Utilizzo
-
 ```bash
 # Elenca tutte le lenti Thorlabs disponibili
-./build/Debug/lens_cutter_main --list
+./build/Release/lens_cutter_main --list
 
 # Genera lo snippet GDML per una lente specifica
-./build/Debug/lens_cutter_main --id LB4592
+./build/Release/lens_cutter_main --id LB4592
 ```
 
 ### Funzionamento
 
 Il tool legge le specifiche da file TSV nel formato Thorlabs. Sono supportati due formati:
 
-- **Biconvesse** (`thorlabs_biconvex.tsv`): colonne `Item # | Diameter | Focal Length |
-  Radius of Curvature | Center Thickness | Edge Thickness | Back Focal Length`.
-  Il tipo viene rilevato automaticamente dall'assenza della colonna `Rotation_deg`.
+- **Biconvesse** (`thorlabs_biconvex.tsv`): colonne `Item # | Diameter | Focal Length | Radius of Curvature | Center Thickness | Edge Thickness | Back Focal Length`. Il tipo viene rilevato automaticamente dall'assenza della colonna `Rotation_deg`.
 
-- **Plano-convesse** (`thorlabs_planoconvex.tsv`): stesso schema con colonna aggiuntiva
-  `Rotation_deg` [deg]. Indica la rotazione attorno all'asse Y applicata al volume fisico:
-  `0` = lato curvo verso la sorgente, `180` = lato piano verso la sorgente.
-  La rotazione è propagata automaticamente al `G4VPhysicalVolume` in `DetectorConstruction`.
+- **Plano-convesse** (`thorlabs_planoconvex.tsv`): stesso schema con colonna aggiuntiva `Rotation_deg` [deg]. Indica la rotazione attorno all'asse Y applicata al volume fisico: `0` = lato curvo verso la sorgente, `180` = lato piano verso la sorgente. La rotazione è propagata automaticamente al `G4VPhysicalVolume` in `DetectorConstruction`.
 
 Per caricare più cataloghi contemporaneamente:
 ```bash
-./build/Debug/lens_cutter_main --list \
+./build/Release/lens_cutter_main --list \
     --catalog lens_cutter/lens_data/thorlabs_planoconvex.tsv
 ```
 
-Le simulazioni `optimization` e `lens_simulation` accettano ID da entrambi i cataloghi
-tramite `--lens75-id` e `--lens60-id`; la geometria (solido + rotazione) viene impostata
-automaticamente in base al tipo rilevato.
+Le simulazioni `optimization` e `lens_simulation` accettano ID da entrambi i cataloghi tramite `--lens75-id` e `--lens60-id`; la geometria (solido + rotazione + offset centro geometrico) viene impostata automaticamente in base al tipo rilevato.
 
 ---
 
@@ -58,9 +50,9 @@ automaticamente in base al tipo rilevato.
 9. [Strumenti di analisi](#strumenti-di-analisi)
 10. [Libreria psf\_analysis](#libreria-psf_analysis)
 11. [Test unitari](#test-unitari)
-12. [Configurazione raccomandata per 'q_map'](#Configurazione-raccomandata-per-`q_map`)
+12. [Configurazione raccomandata per `q_map`](#configurazione-raccomandata-per-q_map)
 13. [File di configurazione](#file-di-configurazione)
-14. [Formato dei file ROOT (Ottimizzato)](#formato-dei-file-root-ottimizzato)
+14. [Formato dei file ROOT](#formato-dei-file-root)
 15. [Workflow completo](#workflow-completo)
 
 ---
@@ -72,7 +64,7 @@ automaticamente in base al tipo rilevato.
 | CMake | 3.26 | |
 | C++ | 17 | |
 | Geant4 | 11.x | Con supporto `ui_all`, `vis_all`, GDML, ottica |
-| ROOT | 6.x | Componenti: `Core`, `Hist`, `RIO`, `Graf` |
+| ROOT | 6.x | Componenti: `Core`, `Hist`, `RIO`, `Graf`, `Graf3d` |
 | spdlog | qualsiasi | Logging strutturato |
 | nlohmann/json | (header-only, incluso) | Lettura configurazione |
 | lyra | (header-only, incluso in `external/`) | Parsing CLI |
@@ -80,21 +72,23 @@ automaticamente in base al tipo rilevato.
 ---
 
 ## Struttura del progetto
-
 ```
 riptide_optimization/
 ├── scripts/
 │   ├── run.sh                           # Lancia lens_simulation o optimization (locale o SSD)
-│   └── monitor.sh                       # Monitoraggio progresso chunk paralleli
+│   ├── monitor.sh                       # Monitoraggio progresso chunk paralleli (bash)
+│   └── dashboard.py                     # Dashboard Python/rich (prioritario su monitor.sh)
 │
 ├── programs/
 │   ├── optimization_main.cpp            # Main per la scansione di efficienza geometrica
-│   └── lens_simulation_main.cpp         # Main per la simulazione beam scan PSF
+│   ├── lens_simulation_main.cpp         # Main per la simulazione beam scan PSF
+│   └── lens_cutter_main.cpp             # Main per la gestione delle lenti Thorlabs
 │
 ├── src/
 │   ├── common/                          # Codice condiviso
 │   │   ├── physics_list.cpp
-│   │   └── primary_generator_action.cpp
+│   │   ├── primary_generator_action.cpp
+│   │   └── stepping_action.cpp
 │   ├── optimization/                    # Sorgenti programma optimization
 │   │   ├── detector_construction.cpp
 │   │   ├── action_initialization.cpp
@@ -112,22 +106,46 @@ riptide_optimization/
 │
 ├── include/                             # Header files (specchi di src/)
 │   ├── common/
+│   │   ├── physics_list.hpp
+│   │   ├── primary_generator_action.hpp
+│   │   └── stepping_action.hpp
 │   ├── optimization/
+│   │   ├── action_initialization.hpp
+│   │   ├── detector_construction.hpp
+│   │   ├── event_action.hpp
+│   │   ├── optimizer.hpp
+│   │   ├── run_action.hpp
+│   │   └── sensitive_detector.hpp
 │   └── lens_simulation/
+│       ├── action_initialization.hpp
+│       ├── detector_construction.hpp
+│       ├── event_action.hpp
+│       ├── lens_scan.hpp
+│       ├── run_action.hpp
+│       └── sensitive_detector.hpp
 │
 ├── analysis/
 │   ├── plot2D.cpp                       # Mappa 2D efficienza geometrica
-│   ├── beam_scan_plot.cpp               # Posizione fotoni vs posizione sorgente
+│   ├── plot3D.cpp                       # Visualizzazione 3D multi-lente
+│   ├── beam_scan_plot.cpp               # Posizione fotoni vs posizione sorgente (3D + 2D slices)
 │   ├── m_c_creator.cpp                  # Istogramma 2D hit su detector per un run
 │   ├── psf_extractor.cpp                # Estrazione media e covarianza PSF per tutti i run
 │   ├── CMakeLists.txt
 │   └── psf_analysis/                    # Libreria PSF + analisi traccia + ottimizzazione
 │       ├── psf_interpolator.hpp         # API pubblica: strutture dati, dichiarazioni
-│       ├── psf_interpolator.cpp         # load, interpolate, build_trace, fit_trace, compute_Q
-│       ├── trace_viewer.cpp             # Visualizza traccia media con ellissi di covarianza
-│       ├── q_map.cpp                    # ★ Mappa 2D di Q(x1,x2) — ottimizzazione PSF-based
+│       ├── psf_interpolator.cpp         # load, interpolate, build_trace_3d, fit_trace, compute_Q
+│       ├── trace_viewer.cpp             # Visualizza traccia 2D/3D con ellissi di covarianza
+│       ├── q_map.cpp                    # Mappa 2D di Q(x1,x2) oppure copertura geometrica
+│       ├── chi2_map.cpp                 # Mappa 2D linearità risposta (fit piano μ_y,z)
 │       ├── test_fit_trace.cpp           # Test unitari per fit_trace() e compute_Q()
 │       └── CMakeLists.txt
+│
+├── lens_cutter/
+│   ├── include/lens_cutter.hpp
+│   ├── src/lens_cutter.cpp
+│   └── lens_data/
+│       ├── thorlabs_biconvex.tsv
+│       └── thorlabs_planoconvex.tsv
 │
 ├── geometry/
 │   ├── main.gdml
@@ -139,26 +157,22 @@ riptide_optimization/
 ├── macros/
 │   ├── optimization.mac
 │   ├── lens_simulation.mac
+│   ├── lens_profile.mac
 │   ├── run.mac
 │   └── vis.mac
 │
 ├── config/
-│   └── config.json
+│   ├── config.json
+│   └── config_profile.json
 │
 ├── external/
 │   └── lyra/
 │
 └── output/
-    ├── events.root
-    ├── efficiency2D.png
     ├── lens_simulation/
-    │   └── lens.root
     ├── mean_covariance_maps/
     ├── psf/
-    │   └── psf_data.root
     └── psf_analysis/
-        ├── q_map.png                    # ★ output di q_map
-        └── trace_*.png
 ```
 
 ---
@@ -166,25 +180,27 @@ riptide_optimization/
 ## Setup fisico
 
 Il sistema simulato è composto da tre elementi posizionati lungo l'asse X, all'interno di un volume mondo cubico di 1000×1000×1000 mm³ riempito d'aria:
-
 ```
 Sorgente fotoni  →  [Lente 75mm]  →  [Lente 60mm]  →  [Fotocatodo GaAsP 16×16mm]
       (GPS)           (UVFS)           (UVFS)              (sensore)
          x=0        x ≈ 14–170mm    x ≈ 45–186mm           x ≈ 180mm
 ```
 
-**Lente 75 mm** (`lens75`): ellissoide in UV Fused Silica (UVFS), raggio 38.6 mm, spessore 12.5 mm.
+**Lente 75 mm** (`lens75`): ellissoide in UV Fused Silica (UVFS), raggio 38.6 mm, spessore 12.5 mm. Sostituibile con qualsiasi lente Thorlabs tramite `--lens75-id`.
 
-**Lente 60 mm** (`lens60`): ellissoide UVFS, raggio 30.9 mm, spessore 16.3 mm.
+**Lente 60 mm** (`lens60`): ellissoide UVFS, raggio 30.9 mm, spessore 16.3 mm. Sostituibile tramite `--lens60-id`.
 
 **Fotocatodo GaAsP**: lastra quadrata 16×16×0.01 mm, indice di rifrazione 3.5–3.8 nel range 2–4 eV, lunghezza di assorbimento ~1 µm.
 
-**Sorgente**: fotoni ottici a 2.5 eV (≈ 496 nm), generati da GPS Geant4 su un disco con distribuzione angolare isotropa diretta lungo +X.
+**Sorgente**: fotoni ottici a 2.5 eV (≈ 496 nm), generati da GPS Geant4 su una sferetta di raggio 0.1 mm con distribuzione angolare isotropa diretta lungo +X (`mintheta=0`, `maxtheta=90 deg`).
+
+**Processi ottici attivi**: rifrazione, riflessione (Fresnel), assorbimento. Scintillazione, Cherenkov, WLS e WLS2 sono esplicitamente disabilitati in `PhysicsList` perché i fotoni sono generati direttamente dalla GPS.
+
+**SteppingAction**: uccide i fotoni che si allontanano nella direzione −X (x < −1 mm con px < 0) o che escono dalla regione utile (|y| > 150 mm o |z| > 150 mm), evitando tracking inutile fuori dall'apertura delle lenti.
 
 ---
 
 ## Build
-
 ```bash
 # Configurazione (Debug o Release)
 cmake -S . -B build/ -G "Ninja Multi-Config"
@@ -195,16 +211,21 @@ cmake --build build/ --config Release
 # Eseguibili prodotti:
 #   build/Release/optimization_main
 #   build/Release/lens_simulation_main
+#   build/Release/lens_cutter_main
 #   build/analysis/Release/plot2D
+#   build/analysis/Release/plot3D
 #   build/analysis/Release/beam_scan_plot
 #   build/analysis/Release/m_c_creator
 #   build/analysis/Release/psf_extractor
 #   build/analysis/psf_analysis/Release/trace_viewer
-#   build/analysis/psf_analysis/Release/q_map           ★ nuovo
+#   build/analysis/psf_analysis/Release/q_map
+#   build/analysis/psf_analysis/Release/chi2_map
 #   build/analysis/psf_analysis/Release/test_fit_trace
 ```
 
 > **Nota**: CMake crea automaticamente le cartelle `output/`, `output/lens_simulation/`, `output/mean_covariance_maps/`, `output/psf/` e `output/psf_analysis/` durante la configurazione.
+
+> **Build Release**: la build Release aggiunge automaticamente `-march=native -O3 -ffast-math` tramite il `CMakeLists.txt` root.
 
 ---
 
@@ -212,10 +233,9 @@ cmake --build build/ --config Release
 
 **Eseguibile**: `optimization_main`
 
-**Scopo**: scansione grezza dell'efficienza geometrica del sistema a doppia lente. Per ogni coppia di posizioni (x1, x2) delle lenti, esegue una simulazione con 10000 fotoni emessi da una sorgente circolare a r=10 mm e conta quanti raggiungono il fotocatodo.
+**Scopo**: scansione grezza dell'efficienza geometrica del sistema a doppia lente. Per ogni coppia di posizioni (x1, x2) delle lenti, esegue una simulazione con fotoni emessi da una sorgente rettangolare e conta quanti raggiungono il fotocatodo.
 
 ### Utilizzo
-
 ```bash
 ./build/Release/optimization_main -g geometry/main.gdml -o
 ./build/Release/optimization_main -g geometry/main.gdml -v
@@ -232,16 +252,14 @@ cmake --build build/ --config Release
 | `-b`, `--batch` | flag | Modalità batch senza UI |
 | `-o`, `--optimize` | flag | Avvia la scansione di ottimizzazione |
 | `--all-lenses` | flag | Scansione di **tutte** le combinazioni di lenti Thorlabs |
-| `--lens75-id` | string | ID lente Thorlabs per L1 (es. LB4592) |
-| `--lens60-id` | string | ID lente Thorlabs per L2 (es. LB4553) |
+| `--lens75-id` | string | ID lente Thorlabs per L1 (es. `LB4592`) |
+| `--lens60-id` | string | ID lente Thorlabs per L2 (es. `LB4553`) |
 | `--output` | path | File ROOT di output (default: `output/events.root`) |
 | `--config` | path | File `config.json` (default: `config/config.json`) |
 | `--ssd` | flag | Output sull'SSD esterna con timestamp automatico |
 | `--ssd-mount` | path | Mount point dell'SSD (default: `/mnt/external_ssd`) |
 
 ### Output (`events.root`)
-
-Il file prodotto contiene due TTree principali per l'analisi dell'efficienza geometrica.
 
 **`Configurations`**: una riga per ogni configurazione di lenti testata.
 
@@ -250,13 +268,15 @@ Il file prodotto contiene due TTree principali per l'analisi dell'efficienza geo
 | `config_id` | `Int_t` | Identificativo unico della configurazione |
 | `x1` | `Double_t` | Posizione della lente 1 (75mm) [mm] |
 | `x2` | `Double_t` | Posizione della lente 2 (60mm) [mm] |
+| `lens75_id` | `String` | ID Thorlabs lente 1 |
+| `lens60_id` | `String` | ID Thorlabs lente 2 |
 
 **`Efficiency`**: una riga per ogni configurazione, con il conteggio dei fotoni.
 
 | Branch | Tipo | Descrizione |
 |---|---|---|
 | `config_id` | `Int_t` | Identificativo della configurazione |
-| `n_photons` | `Int_t` | Numero di fotoni generati per questa configurazione |
+| `n_photons` | `Int_t` | Numero di fotoni generati |
 | `n_hits` | `Int_t` | Numero di fotoni che hanno raggiunto il detector |
 
 ---
@@ -265,10 +285,9 @@ Il file prodotto contiene due TTree principali per l'analisi dell'efficienza geo
 
 **Eseguibile**: `lens_simulation_main`
 
-**Scopo**: simulazione dettagliata del beam scan per la caratterizzazione della PSF. Per ogni configurazione di lenti e per ogni posizione della sorgente, registra la posizione (y, z) di ogni fotone sul fotocatodo.
+**Scopo**: simulazione dettagliata del beam scan per la caratterizzazione della PSF. Per ogni configurazione di lenti e per ogni coppia (x\_source, y\_source) sulla griglia, registra la posizione (y, z) di ogni fotone sul fotocatodo in vettori per-run.
 
 ### Utilizzo
-
 ```bash
 ./build/Release/lens_simulation_main -g geometry/main.gdml -l
 ./build/Release/lens_simulation_main -g geometry/main.gdml -v
@@ -284,19 +303,25 @@ Il file prodotto contiene due TTree principali per l'analisi dell'efficienza geo
 | `-v`, `--visualize` | flag | Visualizzazione interattiva |
 | `-b`, `--batch` | flag | Modalità batch |
 | `-l`, `--lens-sim` | flag | Avvia il beam scan completo |
-| `--all-lenses` | flag | Beam scan per **tutte** le combinazioni di lenti Thorlabs |
-| `--lens75-id` | string | ID lente Thorlabs per L1 (es. LB4592) |
-| `--lens60-id` | string | ID lente Thorlabs per L2 (es. LB4553) |
+| `--lens75-id` | string | ID lente Thorlabs per L1 |
+| `--lens60-id` | string | ID lente Thorlabs per L2 |
 | `--output` | path | File ROOT di output (default: `output/lens_simulation/lens.root`) |
 | `--config` | path | File `config.json` (default: `config/config.json`) |
 | `--ssd` | flag | Output sull'SSD esterna |
 | `--ssd-mount` | path | Mount point dell'SSD |
 
+### Griglia di campionamento
+
+La sorgente viene spostata su una griglia 2D definita in `config.json`:
+
+- **Asse X**: da `source_x_min` a `source_x_max` con passo `source_dx`
+- **Asse Y** (radiale): da `source_y_min` a `source_y_max` con passo `source_dy`
+
+Il limite superiore `source_y_max = 10√2 ≈ 14.14 mm` garantisce che tracce di lunghezza 10 mm a qualsiasi y₀ ≤ 10 mm siano completamente coperte dalla griglia PSF (raggio massimo ≈ 11.18 mm ≪ 14.14 mm).
+
 ### Output (`lens.root`)
 
-Il file prodotto contiene tre TTree per l'analisi della PSF e della profondità di campo.
-
-**`Configurations`**: (identico a sopra)
+**`Configurations`**: identico a `optimization`.
 
 **`Runs`**: una riga per ogni esecuzione (configurazione × posizione sorgente).
 
@@ -304,24 +329,17 @@ Il file prodotto contiene tre TTree per l'analisi della PSF e della profondità 
 |---|---|---|
 | `run_id` | `Int_t` | Indice run globale |
 | `config_id` | `Int_t` | Configurazione di appartenenza |
-| `x_source` | `Float_t` | Posizione Y della sorgente [mm] |
+| `x_source` | `Float_t` | Posizione X della sorgente [mm] |
+| `y_source` | `Float_t` | Posizione Y della sorgente [mm] |
 | `n_hits` | `Int_t` | Fotoni rilevati in questo run |
-
-**`Hits`**: una riga per ogni fotone rilevato.
-
-| Branch | Tipo | Descrizione |
-|---|---|---|
-| `y_hit` | `Float_t` | Coordinata Y sul fotocatodo [mm] |
-| `z_hit` | `Float_t` | Coordinata Z sul fotocatodo [mm] |
-
-> **Mapping hits → run**: le hit sono scritte sequenzialmente. La riga i-esima di `Runs` corrisponde alle `n_hits[i]` righe di `Hits` a partire dall'offset cumulativo `sum(n_hits[0..i-1])`.
+| `y_hits` | `vector<float>` | Coordinate Y hit sul fotocatodo [mm] |
+| `z_hits` | `vector<float>` | Coordinate Z hit sul fotocatodo [mm] |
 
 ---
 
 ## Output su SSD esterna
 
 ### Trovare e montare il device
-
 ```bash
 lsblk
 sudo mkdir -p /mnt/external_ssd
@@ -330,7 +348,6 @@ mountpoint -q /mnt/external_ssd && echo "OK"
 ```
 
 ### Utilizzo con `--ssd`
-
 ```bash
 ./build/Release/lens_simulation_main -g geometry/main.gdml -b -l --ssd
 ./build/Release/optimization_main    -g geometry/main.gdml -b -o --ssd
@@ -347,71 +364,83 @@ Il path di output viene generato automaticamente con timestamp:
 
 ## Esecuzione Parallela e Dashboard
 
-Il framework supporta la parallelizzazione tramite lo script `scripts/run.sh`, che divide il carico di lavoro in chunk indipendenti eseguiti in parallelo.
+Il framework supporta la parallelizzazione tramite lo script `scripts/run.sh`, che divide il carico di lavoro in chunk indipendenti eseguiti in parallelo e li fonde con `hadd` al termine.
 
-### Dashboard di Monitoraggio
-È disponibile una dashboard professionale basata su Python e la libreria `rich` per monitorare il progresso in tempo reale.
-
+### Avvio
 ```bash
-./scripts/run.sh lens local --jobs 8
+./scripts/run.sh lens local --jobs $(nproc --all)
+./scripts/run.sh lens ssd   --jobs 8
+./scripts/run.sh opt  local --jobs 4
+./scripts/run.sh opt  local --jobs 4 --all-lenses
 ```
 
-La dashboard mostra:
-- Progresso globale della simulazione.
-- Stato di ogni singolo job (chunk).
-- Tempo trascorso e stima del tempo rimanente (ETA).
+### Dashboard di Monitoraggio
 
-### Gestione Processi e Cleanup
-Lo script `run.sh` gestisce correttamente l'interruzione dell'utente:
-- **SIGINT/SIGTERM**: Premendo `Ctrl+C`, lo script killa tutti i processi Geant4 in background e rimuove i file di configurazione temporanei in `/tmp`.
+Lo script tenta prima di avviare `scripts/dashboard.py` (Python + `rich`); se non disponibile, ricade su `scripts/monitor.sh` (bash puro). La dashboard mostra:
+
+- Progresso globale e per-chunk con barre di avanzamento.
+- Tempo trascorso e stima ETA calcolata sul rate corrente.
+- Stato di ogni job: `[wait]`, `[ >> ]` (in corso), `[DONE]`.
+
+### Gestione processi e cleanup
+
+Premendo `Ctrl+C`, il trap `SIGINT`/`SIGTERM` termina tutti i processi Geant4 in background, rimuove i config temporanei in `/tmp/riptide_chunks_*` e i file ROOT parziali.
+
+### Chunking automatico
+
+`run.sh` delega a uno script Python embedded il calcolo di tutte le coppie (x1, x2) valide (rispettando i vincoli di non-collisione geometrica) e la loro distribuzione bilanciata in N chunk. Ogni chunk riceve un `config_id_offset` e un `run_id_offset` univoci per garantire ID globalmente monotoni dopo il merge con `hadd`.
 
 ---
 
 ## Strumenti di analisi
 
-Il framework include diversi strumenti di analisi basati su ROOT per visualizzare i risultati delle simulazioni.
+### plot2D
 
-### 1. plot2D
-
-**Scopo**: Genera una mappa di calore 2D dell'efficienza in funzione delle posizioni $(x_1, x_2)$ delle lenti.
-
+Genera una mappa di calore 2D dell'efficienza in funzione delle posizioni (x₁, x₂).
 ```bash
-./build/Release/plot2D -i output/events.root --lens1 LB4553 --lens2 LB4592 --low 0.05 --high 0.05
+./build/analysis/Release/plot2D \
+    -i output/events.root \
+    --lens1 LB4553 --lens2 LB4592 \
+    --low 0.05 --high 0.05
+# → output/efficiency2D.png
 ```
 
-*   `--lens1`, `--lens2`: Permettono di selezionare la coppia di lenti specifica (utile con `--all-lenses`).
-*   `--low`, `--high`: Escludono i percentili estremi dalla scala colori per migliorare il contrasto.
+| Opzione | Default | Descrizione |
+|---|---|---|
+| `-i`, `--input` | `output/events.root` | File ROOT di input |
+| `-c`, `--config` | `config/config.json` | File di configurazione |
+| `-o`, `--output` | `output/efficiency2D.png` | File PNG di output |
+| `--lens1`, `--lens2` | prima coppia disponibile | Selezione coppia di lenti |
+| `--low`, `--high` | da `config.json` | Percentili da escludere dalla scala colori |
 
-### 2. plot3D
+### plot3D
 
-**Scopo**: Visualizzazione 3D avanzata per la scansione di tutte le lenti. Mostra un canvas con un plot 3D per ogni "prima lente". Nel plot:
-*   Asse X: Modello della seconda lente (Item #).
-*   Asse Y: Posizione $x_1$.
-*   Asse Z: Posizione $x_2$.
-*   Colore Cubetti: Efficienza geometrica.
-*   Linea Rossa: Traccia il valore medio pesato $(\bar{x}_1, \bar{x}_2)$ per ogni modello di seconda lente.
-
+Visualizzazione 3D multi-lente per la scansione `--all-lenses`. Mostra un canvas con un plot 3D per ogni modello di prima lente: asse X = modello seconda lente, asse Y = x₁, asse Z = x₂, colore = efficienza. Una linea rossa traccia il valor medio pesato (x̄₁, x̄₂) per ogni seconda lente.
 ```bash
-./build/Release/plot3D -i output/events.root --low 0.1 --high 0.1
+./build/analysis/Release/plot3D \
+    -i output/events.root \
+    --low 0.1 --high 0.1
+
+# Solo per una prima lente, con griglia 2D per ogni seconda lente:
+./build/analysis/Release/plot3D \
+    -i output/events.root \
+    --lens1 LB4553 --2d
 ```
 
-*   `--lens1 <id>`: Seleziona una lente specifica per la visualizzazione.
-*   `--2d`: Se usato con `--lens1`, genera una griglia di mappe di calore 2D (una per ogni modello di seconda lente) invece del plot 3D.
+### beam\_scan\_plot
 
-### 3. beam\_scan\_plot
-
-Per una coppia (x1, x2) fissata, calcola posizione media e deviazione standard dei fotoni al variare della posizione sorgente. Applica filtro outlier 2σ iterativo.
-
+Per una coppia (x1, x2) fissata, calcola posizione media e deviazione standard dei fotoni al variare della posizione sorgente (x\_src, y\_src). Applica filtro outlier 2σ iterativo (2 iterazioni). Produce un grafico 3D con piano di fit sovrapposto. Con l'opzione `x0_filters`, produce anche sezioni 2D a x\_source fissato.
 ```bash
-./build/analysis/Release/beam_scan_plot <x1> <x2> [file.root]
+./build/analysis/Release/beam_scan_plot <x1> <x2> [file.root] [x0_1,x0_2,...]
 ./build/analysis/Release/beam_scan_plot 94.9 186.4
-# → output/lens_simulation/beam_x1_94.90_x2_186.40.png
+./build/analysis/Release/beam_scan_plot 94.9 186.4 output/lens_simulation/lens.root -30,0,30
+# → output/lens_simulation/beam_scan_3D_x1_94.90_x2_186.40.png
+# → output/lens_simulation/beam_scan_2D_x1_94.90_x2_186.40.png  (se x0_filters forniti)
 ```
 
 ### m\_c\_creator
 
-Istogramma 2D delle hit per una terna (x1, x2, y0) fissata.
-
+Istogramma 2D delle hit per una terna (x1, x2, y0) fissata, con filtro ellittico iterativo a 2σ (4 iterazioni).
 ```bash
 ./build/analysis/Release/m_c_creator <x1> <x2> <y0>
 ./build/analysis/Release/m_c_creator 94.9 186.4 5.0
@@ -420,13 +449,13 @@ Istogramma 2D delle hit per una terna (x1, x2, y0) fissata.
 
 ### psf\_extractor
 
-Estrae media bidimensionale e matrice di covarianza della PSF per tutti i run. Applica filtro outlier ellittico a 2σ (4 iterazioni).
-
+Estrae media bidimensionale e matrice di covarianza della PSF per tutti i run. Applica filtro outlier ellittico (distanza di Mahalanobis) a 3σ con 4 iterazioni. Marca ogni run con il flag `on_detector` (true se `n_hits_filtered >= min_hits`, default 50).
 ```bash
-./build/analysis/Release/psf_extractor [input.root] [output.root]
+./build/analysis/Release/psf_extractor [input.root] [output.root] [min_hits]
 ./build/analysis/Release/psf_extractor \
     output/lens_simulation/lens.root \
-    output/psf/psf_data.root
+    output/psf/psf_data.root \
+    50
 ```
 
 Output `psf_data.root` — TTree `PSF`:
@@ -435,17 +464,19 @@ Output `psf_data.root` — TTree `PSF`:
 |---|---|---|
 | `config_id` | `Int_t` | Indice configurazione |
 | `x1`, `x2` | `Double_t` | Posizioni lenti [mm] |
-| `y_source` | `Float_t` | Posizione sorgente [mm] |
+| `x_source` | `Float_t` | Posizione X sorgente [mm] |
+| `y_source` | `Float_t` | Posizione Y sorgente [mm] |
 | `mean_y`, `mean_z` | `Double_t` | Media PSF [mm] |
 | `cov_yy`, `cov_yz`, `cov_zz` | `Double_t` | Matrice di covarianza [mm²] |
-| `n_hits_filtered` | `Int_t` | Hit dopo filtro 2σ |
+| `n_hits_filtered` | `Int_t` | Hit dopo filtro Mahalanobis |
 | `n_hits_raw` | `Int_t` | Hit prima del filtro |
+| `on_detector` | `Bool_t` | `true` se `n_hits_filtered >= min_hits` |
 
 ---
 
 ## Libreria psf\_analysis
 
-La libreria `psf_analysis` (in `analysis/psf_analysis/`) implementa la catena analitica PSF-based. È compilata come libreria statica e usata da `trace_viewer`, `q_map` e `test_fit_trace`.
+La libreria `psf_analysis` (in `analysis/psf_analysis/`) implementa la catena analitica PSF-based completa: caricamento database, interpolazione 2D, costruzione tracce 3D, fit ODR pesato, temporal unfolding, calcolo Q e copertura. È compilata come libreria statica e usata da `trace_viewer`, `q_map`, `chi2_map` e `test_fit_trace`.
 
 ### API pubblica (`psf_interpolator.hpp`)
 
@@ -453,172 +484,189 @@ La libreria `psf_analysis` (in `analysis/psf_analysis/`) implementa la catena an
 
 | Struttura | Descrizione |
 |---|---|
-| `PSFPoint` | Un punto del database PSF: `y_source`, `mu_y`, `mu_z`, covarianza |
+| `PSFPoint` | Un punto del database PSF: `x_source`, `y_source`, `mu_y`, `mu_z`, covarianza, `on_detector`, `n_hits` |
 | `Cov2` | Matrice di covarianza 2×2: `yy`, `yz`, `zz` |
-| `PSFValue` | Risultato interpolato: `mu_y`, `mu_z`, `cov` |
-| `TracePoint` | Punto della traccia sul detector: `t`, `r`, `mu_y`, `mu_z`, `cov` |
+| `PSFValue` | Risultato interpolato: `mu_y`, `mu_z`, `cov`, `on_detector`, `n_hits_interp` |
+| `TracePoint` | Punto della traccia sul detector: `t`, `r`, `x_src`, `y_src`, `z_src`, `mu_y`, `mu_z`, `cov`, `valid`, `n_hits` |
 | `LensConfig` | Chiave di configurazione `(x1, x2)` con confronto a tolleranza 1e-4 mm |
-| `LineFitResult` | Risultato completo del fit ODR |
-| `QConfig` | Parametri di campionamento per `compute_Q` |
-| `QResult` | Risultato di `compute_Q`: valore di Q, contributi per-traccia |
+| `LineFitResult` | Risultato completo del fit ODR: `a`, `b`, `sigma_a`, `sigma_b`, `cov_ab`, `chi2`, `ndof`, `chi2_ndof`, `n_iter`, `converged`, residui, pull |
+| `QConfig` | Parametri per `compute_Q`: dimensioni scintillatore, `n_tracks`, `trace_dt`, soglie, unfolding |
+| `QResult` | Risultato di `compute_Q`: `Q`, `n_traces`, `n_failed`, `n_invalid`, `config_valid`, chi2 per-traccia |
+| `CoverageResult` | Risultato di `compute_coverage`: `coverage`, `n_y0_evaluated`, `config_valid` |
 
 #### Funzioni
 
-**`load_psf_database(path)`** — carica `psf_data.root` in memoria come `PSFDatabase`.
+**`load_psf_database(path)`** — carica `psf_data.root` in memoria come `PSFDatabase`. I punti vengono ordinati per (x\_source, y\_source) crescente per facilitare l'interpolazione bilineare.
 
-**`find_nearest_config(cfg, db)`** — trova la configurazione più vicina nel database (distanza euclidea in `(x1, x2)`).
+**`find_nearest_config(cfg, db)`** — trova la configurazione più vicina nel database (distanza euclidea in `(x1, x2)`). Logga un warning se la distanza supera 1e-4 mm.
 
-**`interpolate(r, cfg, db)`** — interpola `mu_y`, `mu_z` e `Σ` per un raggio `r` arbitrario. Usa interpolazione lineare; clamp agli estremi senza estrapolazione.
+**`interpolate(x, y, cfg, db)`** — interpolazione bilineare di `mu_y`, `mu_z` e `Σ` per una sorgente in posizione `(x, y)`. Clamp agli estremi; gestisce il caso vicino all'asse (y < y\_min) con interpolazione lineare verso l'origine e covarianza isotropizzata.
 
-**`build_trace(y0, cfg, db, L=10, dt=0.1)`** — costruisce la traccia media sul detector per una traccia ideale a distanza `y0` dall'asse ottico, parametrizzata da `t ∈ [-L/2, +L/2]` con step `dt`.
+**`build_trace_3d(p1, p2, cfg, db, dt)`** — costruisce la traccia media sul detector per un segmento 3D P1→P2. Per ogni punto lungo il segmento, calcola la distanza radiale r dall'asse X, chiama `interpolate(x, r, ...)` e ruota media e covarianza dell'angolo azimutale φ = atan2(z, y) tramite la matrice di rotazione R(φ).
 
-**`fit_trace(trace, max_iter=20, tol=1e-8)`** — fit lineare pesato ODR della traccia.
+**`build_trace(y0, cfg, db, L, dt)`** — wrapper di compatibilità: costruisce la traccia per un segmento rettilineo lungo X a distanza y₀ dall'asse, con P1 = (−L/2, y₀, 0) e P2 = (+L/2, y₀, 0).
 
-**`compute_Q(cfg, db, qcfg, include_non_converged=false)`** — calcola la funzione di qualità Q(x1,x2).
+**`is_trace_valid(trace, point_valid_fraction)`** — ritorna `true` se la frazione di `TracePoint` con `valid == true` supera la soglia (default 0.75).
+
+**`fit_trace(trace, min_hits_per_point, max_iter, tol)`** — fit lineare pesato ODR della traccia media (vedi sezione dedicata).
+
+**`compute_Q(cfg, db, qcfg, include_non_converged)`** — calcola la funzione di qualità Q(x1,x2) su tracce casuali 3D nello scintillatore (vedi sezione dedicata).
+
+**`compute_coverage(cfg, db, qcfg)`** — calcola la copertura geometrica media: frazione di `TracePoint` con `n_hits >= min_hits_per_point`, mediata su tutte le tracce campionate. Non esegue nessun fit ODR.
 
 #### `fit_trace` — Fit ODR iterativo
 
-Esegue il fit della retta `z = a·y + b` sui punti `{(mu_y_i, mu_z_i)}` usando le matrici di covarianza `Σ_i` come peso statistico, tramite Orthogonal Distance Regression (ODR) con schema IRLS.
+Esegue il fit della retta `z = a·y + b` sui punti `{(mu_y_i, mu_z_i)}` con `valid == true` e `n_hits >= min_hits_per_point`, usando le matrici di covarianza `Σ_i` come peso statistico tramite Orthogonal Distance Regression (IRLS).
 
 **Algoritmo:**
 
 1. Stima iniziale `(a, b)` con OLS non pesato.
-2. Per ogni iterazione: calcola `n̂`, poi i pesi `w_i = 1/(n̂ᵀ Σ_i n̂)`, risolve il WLS 2×2 in forma chiusa, controlla convergenza su `|Δa| < tol`.
-3. Calcola χ², residui e pull finali con distanza perpendicolare esatta.
+2. Per ogni iterazione: calcola il vettore normale `n̂ = (−a, 1)/‖…‖`, poi i pesi `w_i = 1 / (n̂ᵀ Σ_i n̂)` con floor `1e-6 mm²`, risolve il sistema WLS 2×2 in forma chiusa, controlla convergenza su `|Δa| < tol`.
+3. Calcola χ², ndof, residui perpendicolari e pull finali.
+
+Output: `LineFitResult` completo con `n_points_used`, `converged`, `n_iter`.
 
 #### `compute_Q` — Funzione di qualità
 
-Implementa la funzione di qualità definita nella tesi (Sez. 8), calcolando la media del Chi-squared ridotto su tutte le tracce campionate:
+Genera `n_tracks` tracce casuali nello scintillatore (punti su facce casuali del parallelepipedo `scint_x × scint_y × scint_z`), per ognuna:
 
+1. Costruisce la traccia 3D con `build_trace_3d`.
+2. Verifica la validità (≥75% dei punti on-detector).
+3. Applica il temporal unfolding (se abilitato).
+4. Esegue `fit_trace`.
+5. Accumula `chi2_ndof`.
+
+Restituisce la media del Chi-squared ridotto sulle tracce valide:
 ```
-Q(x1, x2) = (1 / n_tracce) * Σ_{y0} chi²_ndof(y0, x1, x2)
+Q(x1, x2) = (1 / n_traces) · Σ chi²_ndof
 ```
 
-Per ogni valore di `y0` nel campionamento: costruisce la traccia con `build_trace`, esegue `fit_trace`, accumula il Chi-squared ridotto (`chi2_ndof`) e calcola la media finale. Questo approccio garantisce pesi uniformi tra tracce con numero di punti differente.
+La configurazione è marcata `config_valid = false` se la frazione di tracce valide scende sotto `trace_valid_fraction`.
 
-**`QConfig` — campi:**
+**`QConfig` — campi principali:**
 
 | Campo | Default | Descrizione |
 |---|---|---|
-| `y0_values` | `{}` | Lista esplicita di y0; se vuota, usa l'intervallo sotto |
-| `y0_min` | `0.0` | Inizio intervallo y0 [mm] |
-| `y0_max` | `10.0` | Fine intervallo y0 [mm] |
-| `dy0` | `0.1` | Passo di campionamento [mm] |
-| `trace_L` | `10.0` | Lunghezza traccia [mm] |
-| `trace_dt` | `0.1` | Step traccia [mm] |
-| `fit_max_iter` | `20` | Iterazioni massime IRLS |
-| `fit_tol` | `1e-8` | Soglia convergenza |
-
-**`QResult` — campi:**
-
-| Campo | Descrizione |
-|---|---|
-| `Q` | Valore totale della funzione di qualità |
-| `n_traces` | Numero di tracce usate nella somma |
-| `n_failed` | Tracce scartate (fit non convergente o dati mancanti) |
-| `y0_used` | Valori di y0 effettivamente usati |
-| `chi2_per_y0` | χ² del fit ODR per ogni y0 |
-| `chi2_ndof_per_y0` | χ²/ndof per ogni y0 |
-
-**Nota di design:** `compute_Q` richiede che la configurazione sia *esatta* nel database. Usa `find_nearest_config` prima se operi su configurazioni non campionate.
-
-**Utilizzo tipico** in un loop di ottimizzazione:
-
-```cpp
-auto db = riptide::load_psf_database("output/psf/psf_data.root");
-
-riptide::QConfig qcfg;
-qcfg.y0_min = 0.0;  qcfg.y0_max = 10.0;  qcfg.dy0 = 0.1;
-
-double Q_best = std::numeric_limits<double>::max();
-riptide::LensConfig best_cfg{};
-
-for (const auto& [cfg, _] : db) {
-    auto res = riptide::compute_Q(cfg, db, qcfg);
-    if (res.n_traces > 0 && res.Q < Q_best) {
-        Q_best   = res.Q;
-        best_cfg = cfg;
-    }
-}
-std::cout << "Ottimale: x1=" << best_cfg.x1
-          << " x2=" << best_cfg.x2
-          << "  Q=" << Q_best << "\n";
-```
+| `scint_x`, `scint_y`, `scint_z` | 60, 20, 20 mm | Dimensioni scintillatore |
+| `n_tracks` | 100 | Numero di tracce casuali per configurazione |
+| `trace_dt` | 0.1 mm | Passo campionamento traccia |
+| `min_hits_per_point` | 10.0 | Hit minime per considerare un punto PSF valido |
+| `trace_valid_fraction` | 0.75 | Soglia tracce valide per configurazione valida |
+| `apply_temporal_unfolding` | true | Abilita/disabilita il temporal unfolding |
+| `z_unfold_step` | 0.0 (auto) | Passo di srotolamento fisso [mm/passo]; 0 = L/(N−1) |
 
 ### trace\_viewer
 
-Visualizza la traccia media sul detector con ellissi di covarianza, colorate per parametro `t` lungo la traccia (palette Rainbow: blu = inizio, rosso = fine).
-
+Visualizza la traccia media sul detector con ellissi di covarianza, colorate per parametro `t` lungo la traccia (palette Rainbow: blu = inizio, rosso = fine). Supporta sia la modalità 2D (sorgente a y₀ fissato) che 3D (segmento P1→P2 arbitrario). Opzionalmente esegue il fit ODR e mostra χ²/ndof nel pannello info.
 ```bash
+# Modalità 2D
 ./build/analysis/psf_analysis/Release/trace_viewer \
     --x1 94.9 --x2 186.4 --y0 5.0
 
+# Modalità 3D con fit e unfolding
 ./build/analysis/psf_analysis/Release/trace_viewer \
-    --x1 94.9 --x2 186.4 --y0 5.0    \
-    --psf    output/psf/psf_data.root  \
-    --output output/psf_analysis/mia_traccia.png \
-    --dt 0.1   \
-    --L  10.0  \
-    --sigma 1.0
-# → output/psf_analysis/trace_x1_94.9_x2_186.4_y0_5.0.png
+    --x1 108.0 --x2 153.0 \
+    --p1x 30.0 --p1y 10.0 --p1z 10.0 \
+    --p2x -30.0 --p2y -10.0 --p2z -9.0 \
+    --dt 1.0 --fit --unfold \
+    --output output/psf_analysis/trace_3d.png
 ```
 
 | Opzione | Default | Descrizione |
 |---|---|---|
 | `--x1`, `--x2` | — | **Obbligatori.** Posizioni lenti [mm] |
-| `--y0` | — | **Obbligatorio.** Distanza radiale sorgente [mm] |
+| `--y0` | — | Distanza radiale sorgente [mm] (modalità 2D) |
+| `--p1x/y/z`, `--p2x/y/z` | — | Estremi traccia 3D [mm] (modalità 3D) |
 | `--psf` | `output/psf/psf_data.root` | Database PSF |
 | `--output` | auto | Path immagine PNG |
-| `--dt` | `0.1` | Step traccia [mm] |
-| `--L` | `10.0` | Lunghezza traccia [mm] |
-| `--sigma` | `1.0` | Scala delle ellissi di covarianza (in unità σ) |
+| `--dt` | 0.1 | Step traccia [mm] |
+| `--L` | 10.0 | Lunghezza traccia [mm] (solo modalità 2D) |
+| `--sigma` | 1.0 | Scala delle ellissi di covarianza (in unità σ) |
+| `--fit` | off | Esegue il fit ODR e mostra χ²/ndof |
+| `--unfold` | off | Applica temporal unfolding prima del fit |
 
-### q\_map ★
+### q\_map
 
-Genera la mappa 2D della funzione di qualità `Q(x1, x2)` su tutte le configurazioni presenti nel database PSF. Individua e marca automaticamente il minimo globale di Q.
-
+Genera la mappa 2D della funzione di qualità `Q(x1, x2)` su tutte le configurazioni del database PSF, oppure la mappa di copertura geometrica in percentuale (`--coverage`). Individua e marca automaticamente il minimo di Q (o il massimo di copertura) con un marker a stella rosso.
 ```bash
-# Uso minimo (tutti i parametri dai default)
-./build/analysis/psf_analysis/Release/q_map
-
-# Uso completo
+# Mappa Q (default)
 ./build/analysis/psf_analysis/Release/q_map \
-    --psf    output/psf/psf_data.root        \
-    --config config/config.json              \
-    --output output/psf_analysis/q_map.png   \
-    --y0-min 0.0  --y0-max 10.0  --dy0 0.1  \
-    --L 10.0  --dt 0.1                       \
-    --log                                    \
-    --norm                                   \
+    --psf    output/psf/psf_data.root \
+    --config config/config.json \
+    --n-tracks 100 --dt 0.1 \
+    --log \
     --tsv output/psf_analysis/q_map.tsv
-# → output/psf_analysis/q_map.png
-# → output/psf_analysis/q_map.tsv  (se --tsv specificato)
+
+# Mappa copertura geometrica
+./build/analysis/psf_analysis/Release/q_map --coverage \
+    --psf output/psf/psf_data.root \
+    --output output/psf_analysis/coverage_map.png
 ```
 
 | Opzione | Default | Descrizione |
 |---|---|---|
 | `--psf` | `output/psf/psf_data.root` | Database PSF |
 | `--config` | `config/config.json` | Parametri griglia lenti |
-| `--output` | `output/psf_analysis/q_map.png` | Immagine PNG di output |
-| `--tsv` | (disabilitato) | Esporta valori Q in formato TSV |
-| `--y0-min` | `0.0` | Minimo y0 per il campionamento tracce [mm] |
-| `--y0-max` | `10.0` | Massimo y0 [mm] |
-| `--dy0` | `0.1` | Passo di campionamento y0 [mm] |
-| `--L` | `10.0` | Lunghezza traccia ideale [mm] |
-| `--dt` | `0.1` | Step di campionamento della traccia [mm] |
+| `--output` | auto | Immagine PNG di output |
+| `--tsv` | (disabilitato) | Esporta valori in formato TSV |
+| `--scint-x/y/z` | 60, 20, 20 mm | Dimensioni scintillatore |
+| `--n-tracks` | 100 | Tracce casuali per configurazione |
+| `--dt` | 0.1 | Step traccia [mm] |
+| `--min-hits` | 10.0 | Hit minime per punto PSF valido |
+| `--trace-frac` | 0.75 | Soglia tracce valide |
+| `--unfold-dz` | 0.0 (auto) | Passo di srotolamento fisso [mm/passo] |
+| `--no-unfold` | off | Disabilita il temporal unfolding |
+| `--coverage` | off | Modalità mappa copertura geometrica |
 | `--log` | off | Scala logaritmica sull'asse Z (colori) |
-| `--norm` | off | Normalizza Q per numero di tracce (mostra χ² medio) |
+| `--norm` | off | (non usato internamente, per compatibilità) |
 
-**Output grafico:** mappa TH2D con palette `kBird`, scala colori troncata ai percentili 5–95 per massimizzare il contrasto nell'area di interesse. Marker rosso a stella sulla configurazione ottimale. Info panel inferiore con parametri di campionamento e coordinate del minimo.
+**Output grafico (modalità Q)**: mappa TH2D con palette `kBird`, scala colori ai percentili 0–95, pannello info con parametri e coordinate del minimo.
 
-**Output TSV** (con `--tsv`): tabella `x1 \t x2 \t Q \t n_traces \t n_failed` — compatibile con qualsiasi tool di analisi esterno (Python, gnuplot, Excel).
+**Output grafico (modalità coverage)**: mappa TH2D con palette `kViridis`, range [0, 100]%, pannello info con il massimo di copertura.
+
+**Output TSV**: tabella con colonne `x1 \t x2 \t Q \t n_traces \t n_failed \t n_invalid \t config_valid` (modalità Q) oppure `x1 \t x2 \t coverage_pct \t n_y0_evaluated \t config_valid` (modalità coverage).
+
+### chi2\_map
+
+Genera la mappa 2D della linearità della risposta ottica, calcolando per ogni configurazione un fit di piano `μ_{y,z} = a + b·y₀ + c·x₀` sui dati PSF e riportando il χ²/ndof combinato (Y + Z). Complementare a `q_map`: bassa linearità (basso χ²) indica che il sistema si comporta come una lente ideale su tutto il campo.
+```bash
+./build/analysis/psf_analysis/Release/chi2_map \
+    --psf output/psf/psf_data.root \
+    --output output/psf_analysis/chi2_map.png \
+    --min-hits 10 \
+    --log
+```
+
+| Opzione | Default | Descrizione |
+|---|---|---|
+| `--psf` | `output/psf/psf_data.root` | Database PSF |
+| `--config` | `config/config.json` | Parametri griglia |
+| `--output` | `output/psf_analysis/chi2_map.png` | Immagine PNG |
+| `--tsv` | (disabilitato) | Esportazione TSV |
+| `--min-hits` | 10.0 | Hit minime per considerare un punto PSF valido |
+| `--log` | off | Scala logaritmica |
+| `--no-reduced` | off | Usa χ² totale invece di χ²/ndof |
+
+---
+
+## Temporal Unfolding
+
+Il temporal unfolding risolve la degenerazione del fit ODR per configurazioni con forte aberrazione di campo, in cui la traccia media si ripiega su se stessa nel piano (μ_y, μ_z). La trasformazione applica uno spostamento artificiale progressivo lungo la direzione **ortogonale** alla traccia stessa:
+```
+ũ_i = u_i + i · δS · n̂⊥
+```
+
+dove `n̂⊥` è il vettore normale alla traccia calcolato dai punti estremi validi, e `δS` è il passo di srotolamento (auto = L/(N−1) oppure fisso via `z_unfold_step`).
+
+La trasformazione è applicata **esclusivamente** all'interno di `compute_Q` su una copia locale della traccia. Il database PSF, `build_trace` e `trace_viewer` operano sempre sulle coordinate fisiche (μ_y, μ_z).
+
+Le matrici di covarianza Σ_i non vengono modificate perché l'offset è deterministico (non stocastico): `Cov(ũ_i, ũ_j) = Cov(u_i, u_j)`.
 
 ---
 
 ## Test unitari
 
 ### Esecuzione
-
 ```bash
 # Esecuzione diretta
 ./build/analysis/psf_analysis/Release/test_fit_trace
@@ -629,79 +677,69 @@ cd build && ctest -R fit_trace_unit -V
 
 L'eseguibile ritorna `0` se tutti i test passano, `1` altrimenti.
 
+### Suite T — `fit_trace`
+
+| Test | Scenario | Verifica |
+|---|---|---|
+| **T1** | Retta `z = y`, cov isotropa | `a=1`, `b=0`, `χ²≈0`, pull ≈ 0, `n_points_used=21` |
+| **T2** | Retta `z = 0.5y + 3`, cov isotropa | `a=0.5`, `b=3`, `χ²≈0`, `σ_a > 0`, `n_points_used=31` |
+| **T3** | Retta `z = 2y − 1`, cov anisotropa | Parametri invariati rispetto ai pesi |
+| **T4** | Outlier singolo `Δz = 0.5 mm` | Pull ≈ `Δz/σ`, χ²/ndof dominato dall'outlier |
+| **T5** | Meno di 3 punti validi | Eccezione `std::invalid_argument` |
+| **T6** | Covarianza degenere (`var = 0`) | Nessun crash, floor `1e-6 mm²`, convergenza corretta |
+| **T7** | Cov non diagonale, outlier | `σ_d ≈ √(cov_zz)` verifica formula `n̂ᵀ Σ n̂` |
+
+### Suite TV — `is_trace_valid`
+
+| Test | Scenario | Verifica |
+|---|---|---|
+| **TV1** | Tutti `valid=true` | Valida per soglie 0.75 e 1.0 |
+| **TV2** | 60% valid | Valida per soglia 50%, invalida per 75% |
+| **TV3** | Traccia vuota | `false` |
+
+### Suite TQ — `compute_Q`
+
+| Test | Scenario | Verifica |
+|---|---|---|
+| **TQ1** | PSF ideale, unfolding OFF | `Q ≈ 0`, `n_traces > 0`, `n_failed = 0` |
+| **TQ2** | Scintillatore personalizzato | `n_traces > 0`, `Q ≈ 0` |
+| **TQ3** | Config non presente | `std::invalid_argument` |
+| **TQ4** | PSF curva, due σ_z diverse | `Q(σ_piccola) > Q(σ_grande)` |
+| **TQ5** | Traccia ripiegata vs lineare, unfolding ON/OFF | `χ²(fold) >> χ²(lin)` con ON; `Δχ²(ON) >> Δχ²(OFF)` |
+
 ### Note sull'inizializzazione dei dati sintetici
 
-I test costruiscono `TracePoint` e `PSFPoint` sintetici in memoria, bypassando i file ROOT. Due invarianti sono **essenziali**:
-
-- **`TracePoint::valid = true`** — `fit_trace()` filtra i punti con `valid == false` (li considera fuori dal fotocatodo). Se non impostato esplicitamente, rimane `false` per zero-inizializzazione e `fit_trace()` lancia `std::invalid_argument` per assenza di punti utilizzabili.
-- **`PSFPoint::on_detector = true`** — `build_trace()` copia questo flag in `TracePoint::valid`. Se `false`, `is_trace_valid()` ritorna `false` e `compute_Q()` non accumula nessun χ².
-
-### Casi di test
-
-I test costruiscono dati sintetici con soluzione analitica nota — nessun file ROOT necessario.
-
-#### Suite T — `fit_trace`
-
-| Test | Scenario | Verifica |
-|---|---|---|
-| **T1** | Retta `z = y`, cov isotropa uniforme | `a=1`, `b=0`, `χ²≈0`, pull tutti ≈ 0, `n_points_used=21` |
-| **T2** | Retta `z = 0.5y + 3`, cov isotropa | `a=0.5`, `b=3`, `χ²≈0`, `σ_a > 0`, `n_points_used=31` |
-| **T3** | Retta `z = 2y − 1`, cov anisotropa (`σ_y >> σ_z`) | Parametri invariati: con residui nulli la soluzione non dipende dai pesi |
-| **T4** | Retta `z = 0` con outlier `Δz = 0.5 mm` al centro | Pull outlier ≈ `Δz/σ`, pull degli altri < 2, `χ²/ndof` dominato dall'outlier |
-| **T5** | Traccia con 0, 2 punti validi, o N punti con tutti `valid=false` | Eccezione `std::invalid_argument`; nessuna eccezione per N≥3 con `valid=true` |
-| **T6** | Covarianza degenere (`var = 0`) | Nessun crash grazie al floor `sd²_floor = 1e-6 mm²`; convergenza e parametri corretti |
-| **T7** | Retta `z = 0`, cov non diagonale; outlier `Δz` al centro | `σ_{d,outlier} ≈ √(cov_zz)` (verifica formula `n̂ᵀ Σ n̂` con `a ≈ 0`) |
-
-#### Suite TV — `is_trace_valid`
-
-| Test | Scenario | Verifica |
-|---|---|---|
-| **TV1** | Tutti i punti `valid=true` | Valida per soglie 0.75 e 1.0 |
-| **TV2** | 4 punti su 10 `valid=false` (60% validi) | Valida per soglia 50%, invalida per 75% e 100% |
-| **TV3** | Traccia vuota | Ritorna `false` |
-
-#### Suite TQ — `compute_Q`
-
-| Test | Scenario | Verifica |
-|---|---|---|
-| **TQ1** | PSF ideale (`mu_y = r`, `mu_z = 0`, `on_detector=true`), 11 tracce, unfolding OFF | `Q ≈ 0`, `n_traces = 11`, `n_failed = 0`, `Q == Σ chi2_per_y0` |
-| **TQ2** | Lista `y0_values` esplicita con 3 valori, unfolding OFF | `n_traces = 3`, `Q ≈ 0` |
-| **TQ3** | Configurazione non presente nel database | Eccezione `std::invalid_argument` |
-| **TQ4** | PSF con curvatura quadratica in z; due DB con σ_z diversa, unfolding OFF | `Q(σ_piccola) > Q(σ_grande)` — PSF stretta penalizza di più la non-linearità |
-| **TQ5** | DB ripiegato (`mu_y` non monotona) vs DB lineare; confronto con/senza unfolding | `Q(ripiegata) > Q(lineare)` con unfolding ON; differenza ridotta con unfolding OFF |
+- **`TracePoint::valid = true`** deve essere impostato esplicitamente: la zero-inizializzazione lascia `valid = false`, causando `std::invalid_argument` in `fit_trace`.
+- **`PSFPoint::on_detector = true`** deve essere impostato esplicitamente: `build_trace` copia questo flag in `TracePoint::valid`.
 
 ---
 
 ## Configurazione raccomandata per `q_map`
-
-Dopo ottimizzazione empirica sul dataset reale (`psf_data.root`), la configurazione seguente produce mappe stabili e sensibili alle non-linearità ottiche:
-
 ```bash
 ./build/analysis/psf_analysis/Release/q_map \
-    --psf    output/psf/psf_data_1.root \
-    --dy0    0.1                        \
-    --unfold-dz 0.000002                \
-    --point-frac 0.5                    \
-    --trace-frac 0.50                   \
+    --psf    output/psf/psf_data.root \
+    --n-tracks 100                    \
+    --dt 0.1                          \
+    --unfold-dz 0.000002              \
+    --trace-frac 0.50                 \
+    --min-hits 10                     \
     --log
 ```
 
 | Parametro | Valore | Motivazione |
 |---|---|---|
-| `--dy0 0.1` | Passo 0.1 mm su y₀ | Campionamento denso: ≈142 tracce per configurazione, sufficiente per mediare le fluttuazioni statistiche della PSF |
-| `--unfold-dz 0.000002` | δz = 2×10⁻⁶ mm/passo | Valore molto piccolo rispetto al passo di campionamento della traccia: introduce un segnale di srotolamento appena sufficiente a rompere la degenerazione delle tracce ripiegate, senza distorcere il χ² delle tracce lineari. Con `trace_dt = 0.1` mm e ~101 punti, l'offset totale è ≈ 0.0002 mm, molto inferiore alla σ tipica della PSF (~0.1–0.5 mm) |
-| `--point-frac 0.5` | Soglia 50% punti on-detector | Permette di valutare configurazioni in cui la PSF è parzialmente fuori dal fotocatodo — utile per mappare l'intera griglia senza perdere troppe celle |
-| `--trace-frac 0.50` | Soglia 50% tracce valide | Coerente con `--point-frac`; filtra le configurazioni chiaramente inutilizzabili mantenendo quelle borderline |
-| `--log` | Scala logaritmica | Q copre tipicamente 2–3 ordini di grandezza tra la configurazione ottimale e quelle scadenti; la scala log rende leggibile l'intera mappa |
-
-> **Nota sul valore di `--unfold-dz`:** il default automatico (`δz = trace_L / (N-1) ≈ 0.1 mm`) è ottimale per rilevare ripiegamenti netti ma può sovrastimare Q per configurazioni con leggere curvature. Il valore `0.000002` è conservativo: preserva il ranking relativo delle configurazioni senza modificare significativamente i valori assoluti di Q.
+| `--n-tracks 100` | 100 tracce | Compromesso tra stabilità statistica e tempo di calcolo (~22 s per 16 chunk) |
+| `--dt 0.1` | Passo 0.1 mm | ~101 punti per traccia di 10 mm; sufficiente per il fit ODR |
+| `--unfold-dz 0.000002` | δz = 2×10⁻⁶ mm/passo | Rotto la degenerazione senza distorcere χ² delle tracce lineari (offset totale ≈ 0.0002 mm ≪ σ_PSF) |
+| `--trace-frac 0.50` | 50% | Permette di mappare configurazioni borderline senza perdere celle |
+| `--min-hits 10` | 10 hit | Soglia conservativa per PSF affidabile |
+| `--log` | scala log | Q copre 2–3 ordini di grandezza; la scala log rende leggibile l'intera mappa |
 
 ---
 
 ## File di configurazione
 
-`config/config.json` — letto da tutti i programmi di simulazione e analisi:
-
+### `config/config.json`
 ```json
 {
   "x_min": 33.0,
@@ -711,56 +749,71 @@ Dopo ottimizzazione empirica sul dataset reale (`psf_data.root`), la configurazi
   "h1": 12.5,
   "r2": 30.9,
   "h2": 16.3,
-  "lower_percentile": 0.45,
-  "upper_percentile": 0.0
+  "source_width": 10.0,
+  "source_height": 5.0,
+  "source_thickness": 60.0,
+  "n_photons": 10000,
+  "lower_percentile": 0.0,
+  "upper_percentile": 0.0,
+  "source_x_min": -30.0,
+  "source_x_max": 30.0,
+  "source_dx": 1.0,
+  "source_y_min": 0.0,
+  "source_y_max": 14.14,
+  "source_dy": 1.0
 }
 ```
 
 | Parametro | Descrizione |
 |---|---|
-| `x_min`, `x_max` | Range di scansione [mm] |
-| `dx` | Passo della scansione [mm] |
-| `r1`, `h1` | Raggio e spessore della lente 75mm [mm] |
-| `r2`, `h2` | Raggio e spessore della lente 60mm [mm] |
-| `lower_percentile` | Soglia bassa per `plot2D` (esclude il 45% inferiore dell'efficienza) |
-| `upper_percentile` | Soglia alta per `plot2D` (0 = nessun taglio superiore) |
+| `x_min`, `x_max`, `dx` | Range e passo della scansione lenti [mm] |
+| `r1`, `h1` | Raggio e spessore della lente 75mm (solo GDML default) [mm] |
+| `r2`, `h2` | Raggio e spessore della lente 60mm (solo GDML default) [mm] |
+| `source_width/height/thickness` | Dimensioni sorgente per `optimization` [mm] |
+| `n_photons` | Fotoni per run in `optimization` |
+| `lower_percentile`, `upper_percentile` | Taglio scala colori per `plot2D` |
+| `source_x_min/max`, `source_dx` | Griglia X sorgente per `lens_simulation` [mm] |
+| `source_y_min/max`, `source_dy` | Griglia Y sorgente per `lens_simulation` [mm] |
 
-I vincoli geometrici applicati durante la scansione:
+I parametri `config_id_offset` e `run_id_offset` vengono aggiunti dinamicamente da `run.sh` durante la parallelizzazione per garantire ID globalmente univoci.
 
-```
-x1_min = x_min - r1 + h1
-x1_max = x_max - h2 - 3 - r1
-x2_min = x1 + r1 + r2 + 3       (gap minimo 3 mm tra le lenti)
-x2_max = x_max + r2 - h2
+### `config/config_profile.json`
+
+Configurazione ridotta usata per il profiling rapido (passo `dx = 30 mm`, soglie percentile più strette):
+```json
+{
+  "x_min": 33.0, "x_max": 171.0, "dx": 30.0,
+  "r1": 38.6, "h1": 12.5, "r2": 30.9, "h2": 16.3,
+  "lower_percentile": 0.45, "upper_percentile": 0.0
+}
 ```
 
 ---
 
-## Formato dei file ROOT (Ottimizzato)
+## Formato dei file ROOT
 
-I file ROOT utilizzano un formato a **vettori di hit** per massimizzare l'efficienza di archiviazione (riduzione del ~40% delle dimensioni rispetto al formato riga-per-hit).
+I file ROOT utilizzano un formato a **vettori di hit** per massimizzare l'efficienza di archiviazione (riduzione ~40% rispetto al formato riga-per-hit). La compressione è LZ4 livello 4 (`SetCompressionLevel(404)`).
 
-### lens.root (lens_simulation)
-
+### lens.root (lens\_simulation)
 ```
 lens.root
 ├── TTree "Configurations"
 │   ├── config_id  Int_t
 │   ├── x1, x2     Double_t [mm]
-│   ├── lens75_id  String   [Thorlabs ID]
-│   └── lens60_id  String   [Thorlabs ID]
+│   ├── lens75_id  String
+│   └── lens60_id  String
 │
 └── TTree "Runs"
-    ├── run_id     Int_t
-    ├── config_id  Int_t
-    ├── x_source   Float_t  [mm]
-    ├── n_hits     Int_t
-    ├── y_hits     vector<float> [mm]
-    └── z_hits     vector<float> [mm]
+    ├── run_id      Int_t
+    ├── config_id   Int_t
+    ├── x_source    Float_t  [mm]
+    ├── y_source    Float_t  [mm]
+    ├── n_hits      Int_t
+    ├── y_hits      vector<float> [mm]
+    └── z_hits      vector<float> [mm]
 ```
 
 ### events.root (optimization)
-
 ```
 events.root
 ├── TTree "Configurations"
@@ -776,24 +829,23 @@ events.root
 ```
 
 ### psf\_data.root (psf\_extractor)
-
 ```
 psf_data.root
 └── TTree "PSF"
-    ├── config_id         Int_t
-    ├── x1, x2            Double_t
-    ├── y_source          Float_t
-    ├── mean_y, mean_z    Double_t
-    ├── cov_yy, cov_yz, cov_zz  Double_t
-    ├── n_hits_filtered   Int_t
-    ├── n_hits_raw        Int_t
-    └── on_detector       Bool_t
+    ├── config_id            Int_t
+    ├── x1, x2               Double_t [mm]
+    ├── x_source             Float_t  [mm]
+    ├── y_source             Float_t  [mm]
+    ├── mean_y, mean_z       Double_t [mm]
+    ├── cov_yy, cov_yz, cov_zz  Double_t [mm²]
+    ├── n_hits_filtered      Int_t
+    ├── n_hits_raw           Int_t
+    └── on_detector          Bool_t
 ```
 
 ---
 
 ## Workflow completo
-
 ```bash
 # ── 1. Build ────────────────────────────────────────────────────────────────
 cmake -S . -B build/ -G "Ninja Multi-Config"
@@ -804,7 +856,7 @@ cmake --build build/ --config Release
 # oppure: cd build && ctest -R fit_trace_unit -V
 
 # ── 3. Scansione efficienza geometrica (opzionale, complementare a Q) ───────
-./build/Release/optimization_main -g geometry/main.gdml -o
+./build/Release/optimization_main -g geometry/main.gdml -b -o
 ./build/analysis/Release/plot2D
 # → output/efficiency2D.png
 
@@ -814,30 +866,38 @@ cmake --build build/ --config Release
 
 # ── 5. Estrazione PSF ────────────────────────────────────────────────────────
 ./build/analysis/Release/psf_extractor \
-    output/lens_simulation/lens.root \
+    output/lens_simulation/lens_<timestamp>.root \
     output/psf/psf_data.root
 # → output/psf/psf_data.root
 
-# ── 6. Mappa Q — ottimizzazione PSF-based ★ ─────────────────────────────────
+# ── 6. Mappa linearità (diagnostica veloce, nessun fit traccia) ──────────────
+./build/analysis/psf_analysis/Release/chi2_map \
+    --psf output/psf/psf_data.root --log
+# → output/psf_analysis/chi2_map.png
+
+# ── 7. Mappa Q — ottimizzazione PSF-based ────────────────────────────────────
 ./build/analysis/psf_analysis/Release/q_map \
-    --y0-min 0.0 --y0-max 10.0 --dy0 0.1
+    --psf output/psf/psf_data.root \
+    --n-tracks 100 --dt 0.1 --unfold-dz 0.000002 \
+    --trace-frac 0.50 --log \
+    --tsv output/psf_analysis/q_map.tsv
 # → output/psf_analysis/q_map.png
 # Stampa su stdout: x1*, x2*, Q_min
 
-# Con scala log e normalizzazione per una visione alternativa:
-./build/analysis/psf_analysis/Release/q_map --log --norm \
-    --output output/psf_analysis/q_map_norm_log.png
+# ── 8. Mappa copertura geometrica (complementare a Q) ────────────────────────
+./build/analysis/psf_analysis/Release/q_map --coverage \
+    --psf output/psf/psf_data.root
+# → output/psf_analysis/coverage_map.png
 
-# ── 7. Analisi traccia per la configurazione ottimale ───────────────────────
-# (sostituisci x1* e x2* con i valori stampati da q_map)
+# ── 9. Analisi traccia per la configurazione ottimale ───────────────────────
 ./build/analysis/psf_analysis/Release/trace_viewer \
-    --x1 <x1*> --x2 <x2*> --y0 5.0
+    --x1 <x1*> --x2 <x2*> --y0 5.0 --fit
 # → output/psf_analysis/trace_x1_<x1*>_x2_<x2*>_y0_5.0.png
 
-# ── 8. Strumenti di diagnostica ─────────────────────────────────────────────
+# ── 10. Diagnostica beam scan ────────────────────────────────────────────────
 ./build/analysis/Release/beam_scan_plot <x1*> <x2*>
 ./build/analysis/Release/m_c_creator   <x1*> <x2*> 5.0
 
-# ── 9. Visualizzazione interattiva geometria ─────────────────────────────────
+# ── 11. Visualizzazione interattiva geometria ────────────────────────────────
 ./build/Release/lens_simulation_main -g geometry/main.gdml -v
 ```
