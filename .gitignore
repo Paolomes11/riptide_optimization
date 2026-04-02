@@ -2,3 +2,4 @@ build/
 .cache/
 output/
 debug/
+analysis/exp1/data

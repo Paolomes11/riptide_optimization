@@ -51,3 +51,6 @@ target_include_directories(psf_extractor PRIVATE ${ROOT_INCLUDE_DIRS})
 
 # Sottocartella per analisi PSF
 add_subdirectory(psf_analysis)
+
+# Sottocartella per esperimento 1 (immagini FITS)
+add_subdirectory(exp1)
