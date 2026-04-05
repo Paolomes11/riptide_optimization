@@ -198,21 +198,20 @@ else:
 # Genera tutte le coppie valide (Adaptive Loop)
 pairs = []
 # Default GDML lens parameters (valori di backup se non trovati nel TSV)
-h1 = 12.5; offset1 = -32.35
-h2 = 16.3; offset2 = 22.75
+h1 = 12.5
+h2 = 16.3
 margin = 3.0 if mode == 'lens' else 1.0
 
 # Carica spessori reali se disponibili
 if lens75_id in thorlabs_data:
     h1 = thorlabs_data[lens75_id]['h']
-    offset1 = thorlabs_data[lens75_id]['offset']
 if lens60_id in thorlabs_data:
     h2 = thorlabs_data[lens60_id]['h']
-    offset2 = thorlabs_data[lens60_id]['offset']
 
 for x1 in np.arange(x_min, x_max + 1e-9, dx):
-    # x2_min per evitare collisioni: (x1 + offset1 + h1/2) + margin < (x2 + offset2 - h2/2)
-    x2_min_collision = x1 + (offset1 - offset2) + (h1 + h2) / 2.0 + margin
+    # x2_min per evitare collisioni: x1 + h1/2 + margin < x2 - h2/2
+    # Poiché x1 e x2 sono i centri geometrici, la collisione è solo sulla somma dei semi-spessori.
+    x2_min_collision = x1 + (h1 + h2) / 2.0 + margin
     # Align x2_start to the dx grid relative to x_min
     x2_start_raw = max(x1 + dx, x2_min_collision)
     x2_start = x_min + np.ceil(round((x2_start_raw - x_min) / dx, 8)) * dx
@@ -285,12 +284,16 @@ for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
 
   # Esegue il binario corretto con i flag corretti
   LOG="$TMPDIR_CONFIGS/chunk_${chunk}.log"
+  # In parallelo non passiamo mai --ssd al binario perché run.sh gestisce già il path di output.
+  # Passiamo solo --ssd-mount se necessario.
+  PARALLEL_SSD_ARGS="${SSD_ARGS/--ssd/}"
+
   if [[ "$MODE" == "opt" ]]; then
     # In optimization mode, we use -o
-    "$BINARY" -g "$GEOMETRY" -b -o --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+    "$BINARY" -g "$GEOMETRY" -b -o --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
   else
     # In lens simulation mode, we use -l
-    "$BINARY" -g "$GEOMETRY" -b -l --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+    "$BINARY" -g "$GEOMETRY" -b -l --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
   fi
   PIDS+=($!)
 done

@@ -281,7 +281,7 @@ int main(int argc, char** argv) {
                   g_y->GetXaxis()->GetXmax(), g_y->GetYaxis()->GetXmax());
   fit_y->SetLineColorAlpha(kOrange + 1, 0.1); // 0.4 di trasparenza
   fit_y->SetFillColorAlpha(kOrange + 1, 0.05);
-  fit_y->Draw("SURF4 SAME");
+  //fit_y->Draw("SURF4 SAME");
 
   // Grafico Z
   c->cd(2);
