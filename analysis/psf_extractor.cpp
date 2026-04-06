@@ -166,7 +166,7 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
 int main(int argc, char** argv) {
   std::string input_path  = "output/lens_simulation/lens.root";
   std::string output_path = "output/psf/psf_data.root";
-  int min_hits            = 50;
+  int min_hits            = 10;
 
   if (argc > 1)
     input_path = argv[1];
