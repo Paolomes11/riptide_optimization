@@ -32,6 +32,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <stdexcept>
 
@@ -100,6 +101,98 @@ DiffImage subtract_background(const StackedImage& signal, const StackedImage& ba
   return out;
 }
 
+// analyze_frame_by_frame
+
+FrameByFrameResult analyze_frame_by_frame(const std::vector<FitsFrame>& good_frames,
+                                          const std::vector<FitsFrame>& bad_frames,
+                                          const std::vector<FitsFrame>& bg_frames, const ROI& roi,
+                                          double clip_sigma) {
+  size_t N = good_frames.size();
+  if (bad_frames.size() != N || bg_frames.size() != N) {
+    throw std::invalid_argument("analyze_frame_by_frame: numero di frame incoerente ("
+                                + std::to_string(N) + " vs " + std::to_string(bad_frames.size())
+                                + " vs " + std::to_string(bg_frames.size()) + ")");
+  }
+
+  std::vector<double> ratios;
+  ratios.reserve(N);
+
+  for (size_t k = 0; k < N; ++k) {
+    ROI r_good = roi.resolve(good_frames[k].width(), good_frames[k].height());
+    ROI r_bad  = roi.resolve(bad_frames[k].width(), bad_frames[k].height());
+    ROI r_bg   = roi.resolve(bg_frames[k].width(), bg_frames[k].height());
+
+    auto integrate_frame = [](const FitsFrame& f, const ROI& r) {
+      double sum = 0;
+      for (int y = r.y0; y <= r.y1; ++y) {
+        for (int x = r.x0; x <= r.x1; ++x) {
+          sum += f.pixel(x, y);
+        }
+      }
+      return sum;
+    };
+
+    double sum_good = integrate_frame(good_frames[k], r_good);
+    double sum_bad  = integrate_frame(bad_frames[k], r_bad);
+    double sum_bg   = integrate_frame(bg_frames[k], r_bg);
+
+    double Ig_k = sum_good - sum_bg;
+    double Ib_k = sum_bad - sum_bg;
+
+    if (Ib_k != 0) {
+      ratios.push_back(Ig_k / Ib_k);
+    }
+  }
+
+  if (ratios.empty()) {
+    throw std::runtime_error("analyze_frame_by_frame: nessun rapporto calcolato (I_bad = 0?)");
+  }
+
+  // Outlier rejection (clipping a n_sigma)
+  if (clip_sigma > 0 && ratios.size() > 2) {
+    double sum_r = std::accumulate(ratios.begin(), ratios.end(), 0.0);
+    double mean  = sum_r / ratios.size();
+    double sq_sum =
+        std::inner_product(ratios.begin(), ratios.end(), ratios.begin(), 0.0, std::plus<>(),
+                           [mean](double a, double b) { return (a - mean) * (b - mean); });
+    double stdev = std::sqrt(sq_sum / (ratios.size() - 1));
+
+    std::vector<double> filtered;
+    for (double r : ratios) {
+      if (std::abs(r - mean) <= clip_sigma * stdev) {
+        filtered.push_back(r);
+      }
+    }
+    ratios = std::move(filtered);
+  }
+
+  size_t n_used = ratios.size();
+  if (n_used < 2) {
+    throw std::runtime_error("analyze_frame_by_frame: troppi pochi frame validi ("
+                             + std::to_string(n_used) + ")");
+  }
+
+  double mean_R = std::accumulate(ratios.begin(), ratios.end(), 0.0) / n_used;
+  double sq_sum =
+      std::inner_product(ratios.begin(), ratios.end(), ratios.begin(), 0.0, std::plus<>(),
+                         [mean_R](double a, double b) { return (a - mean_R) * (b - mean_R); });
+
+  double var_R        = sq_sum / (n_used - 1);
+  double sigma_R      = std::sqrt(var_R);
+  double sigma_mean_R = sigma_R / std::sqrt(n_used);
+  double significance = (mean_R - 1.0) / sigma_mean_R;
+
+  FrameByFrameResult res;
+  res.mean_ratio       = mean_R;
+  res.sigma_ratio_std  = sigma_R;
+  res.sigma_ratio_mean = sigma_mean_R;
+  res.significance     = significance;
+  res.n_frames_used    = static_cast<int>(n_used);
+  res.ratios           = ratios;
+
+  return res;
+}
+
 // integrate
 
 IntegralResult integrate(const DiffImage& diff, const ROI& roi) {
@@ -139,13 +232,15 @@ ComparisonResult compare(const IntegralResult& good, const IntegralResult& bad) 
 
   // Calcolo rapporto e propagazione incertezza
   if (std::abs(bad.integral) > 1e-9) {
-    res.ratio       = good.integral / bad.integral;
-    double rel_good = (std::abs(good.integral) > 1e-9) ? good.sigma_integral / good.integral : 0.0;
-    double rel_bad  = bad.sigma_integral / bad.integral;
-    res.sigma_ratio = std::abs(res.ratio) * std::sqrt(rel_good * rel_good + rel_bad * rel_bad);
+    res.ratio        = good.integral / bad.integral;
+    double rel_good  = (std::abs(good.integral) > 1e-9) ? good.sigma_integral / good.integral : 0.0;
+    double rel_bad   = bad.sigma_integral / bad.integral;
+    res.sigma_ratio  = std::abs(res.ratio) * std::sqrt(rel_good * rel_good + rel_bad * rel_bad);
+    res.significance = (res.sigma_ratio > 1e-12) ? (res.ratio - 1.0) / res.sigma_ratio : 0.0;
   } else {
-    res.ratio       = 0.0;
-    res.sigma_ratio = 0.0;
+    res.ratio        = 0.0;
+    res.sigma_ratio  = 0.0;
+    res.significance = 0.0;
   }
 
   return res;
@@ -337,7 +432,7 @@ static TH2D* rebin_for_display(TH2D* h) {
 void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
                     const StackedImage& good_stack, const StackedImage& bad_stack,
                     const StackedImage& bg_stack, const ComparisonResult& comparison,
-                    const AnalysisConfig& cfg) {
+                    const std::optional<FrameByFrameResult>& fbf, const AnalysisConfig& cfg) {
   std::filesystem::create_directories(cfg.output_dir);
 
   apply_riptide_style();
@@ -680,6 +775,22 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
     add(("    #bf{Rapporto:} I_{good} / I_{bad} = " + fmtd(comparison.ratio, 3) + " #pm "
          + fmtd(comparison.sigma_ratio, 3))
             .c_str());
+    add(("    #bf{Significativit#grave{a}:} (R-1)/#sigma_{R} = " + fmtd(comparison.significance, 2)
+         + " #sigma")
+            .c_str());
+
+    if (fbf) {
+      add(" ");
+      add("  #bf{Metodo 2: Frame-to-Frame Fluctuations}");
+      add(("    Rapporto medio R = " + fmtd(fbf->mean_ratio, 3) + " #pm "
+           + fmtd(fbf->sigma_ratio_mean, 3))
+              .c_str());
+      add(("    Incertezza esp. #sigma_{R} = " + fmtd(fbf->sigma_ratio_std, 3) + " ("
+           + std::to_string(fbf->n_frames_used) + " frame)")
+              .c_str());
+      add(("    Significativit#grave{a} S = " + fmtd(fbf->significance, 2) + " #sigma").c_str());
+    }
+
     add(" ");
     add(("    N pixel ROI: " + std::to_string(comparison.good.n_pixels)).c_str());
 
@@ -707,6 +818,22 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
   std::cout << "  σ_ΔI    = " << fmt_sci(comparison.sigma_delta, 3) << " ADU·px\n";
   std::cout << "  Rapporto = " << fmtd(comparison.ratio, 3) << " ± "
             << fmtd(comparison.sigma_ratio, 3) << "\n";
+  std::cout << "  Signif.  = " << fmtd(comparison.significance, 2) << " σ\n";
+
+  if (fbf) {
+    std::cout << "  [Metodo 2: Frame-to-Frame Fluctuations]\n";
+    std::cout << "  R̄        = " << fmtd(fbf->mean_ratio, 3) << " ± "
+              << fmtd(fbf->sigma_ratio_mean, 3) << "\n";
+    std::cout << "  σ_R      = " << fmtd(fbf->sigma_ratio_std, 3) << " (dev. std sperimentale)\n";
+    std::cout << "  N        = " << fbf->n_frames_used << " frame utilizzati\n";
+    std::cout << "  Signif.  = " << fmtd(fbf->significance, 2) << " σ\n";
+    std::cout << "  Valori R_k: ";
+    for (size_t i = 0; i < fbf->ratios.size(); ++i) {
+      std::cout << fmtd(fbf->ratios[i], 3) << (i == fbf->ratios.size() - 1 ? "" : ", ");
+    }
+    std::cout << "\n";
+  }
+
   std::cout << "─────────────────────────────────────────────────────────────────\n";
   std::cout << "Output salvato in: " << cfg.output_dir.string() << "/\n";
 }

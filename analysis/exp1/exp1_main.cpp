@@ -44,6 +44,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -188,33 +189,48 @@ int main(int argc, char** argv) {
   std::cout << "  Output: " << opt.output.string() << "\n";
 
   try {
-    // 1. Elaborazione serie per serie (stacking + clear) per risparmiare RAM
+    // 1. Lettura dati (carichiamo tutto in RAM per l'analisi frame-to-frame)
 
-    std::cout << "\n--- Elaborazione serie GOOD ---\n";
+    std::cout << "\n--- Caricamento serie FITS ---\n";
     auto good_frames = exp1::read_fits_stack(opt.data_dir / opt.good_dir, opt.max_frames);
-    auto good_stack  = do_stack(good_frames, opt);
+    auto bad_frames  = exp1::read_fits_stack(opt.data_dir / opt.bad_dir, opt.max_frames);
+    auto bg_frames   = exp1::read_fits_stack(opt.data_dir / opt.bg_dir, opt.max_frames);
+
+    // 2. Analisi frame-to-frame (nuovo metodo con incertezze sperimentali)
+
+    std::cout << "\n--- Analisi frame-to-frame ---\n";
+    std::optional<exp1::FrameByFrameResult> fbf;
+    try {
+      fbf =
+          exp1::analyze_frame_by_frame(good_frames, bad_frames, bg_frames, opt.roi, opt.clip_sigma);
+    } catch (const std::exception& e) {
+      std::cerr << "  [WARNING] Analisi frame-to-frame fallita: " << e.what() << "\n";
+    }
+
+    // 3. Stacking (metodo standard) e pulizia RAM
+
+    std::cout << "\n--- Stacking serie GOOD ---\n";
+    auto good_stack = do_stack(good_frames, opt);
     good_frames.clear();
     good_frames.shrink_to_fit();
 
-    std::cout << "\n--- Elaborazione serie BAD ---\n";
-    auto bad_frames = exp1::read_fits_stack(opt.data_dir / opt.bad_dir, opt.max_frames);
-    auto bad_stack  = do_stack(bad_frames, opt);
+    std::cout << "\n--- Stacking serie BAD ---\n";
+    auto bad_stack = do_stack(bad_frames, opt);
     bad_frames.clear();
     bad_frames.shrink_to_fit();
 
-    std::cout << "\n--- Elaborazione serie BACKGROUND ---\n";
-    auto bg_frames = exp1::read_fits_stack(opt.data_dir / opt.bg_dir, opt.max_frames);
-    auto bg_stack  = do_stack(bg_frames, opt);
+    std::cout << "\n--- Stacking serie BACKGROUND ---\n";
+    auto bg_stack = do_stack(bg_frames, opt);
     bg_frames.clear();
     bg_frames.shrink_to_fit();
 
-    // 2. Sottrazione fondo
+    // 4. Sottrazione fondo
 
     std::cout << "\n Sottrazione fondo\n";
     auto good_diff = exp1::subtract_background(good_stack, bg_stack);
     auto bad_diff  = exp1::subtract_background(bad_stack, bg_stack);
 
-    // 3. Integrazione
+    // 5. Integrazione
 
     std::cout << "\n Integrazione\n";
     auto good_int = exp1::integrate(good_diff, opt.roi);
@@ -224,11 +240,11 @@ int main(int argc, char** argv) {
               << good_int.roi_used.x1 << "," << good_int.roi_used.y1 << "]  (" << good_int.n_pixels
               << " pixel)\n";
 
-    // 4. Confronto
+    // 6. Confronto
 
     auto comparison = exp1::compare(good_int, bad_int);
 
-    // 5. Output ROOT
+    // 7. Output ROOT
 
     std::cout << "\n Produzione output\n";
     exp1::AnalysisConfig acfg;
@@ -239,7 +255,8 @@ int main(int argc, char** argv) {
     acfg.z_min_percentile = opt.z_min;
     acfg.z_max_percentile = opt.z_max;
 
-    exp1::produce_output(good_diff, bad_diff, good_stack, bad_stack, bg_stack, comparison, acfg);
+    exp1::produce_output(good_diff, bad_diff, good_stack, bad_stack, bg_stack, comparison, fbf,
+                         acfg);
 
   } catch (const std::exception& e) {
     std::cerr << "\n[ERRORE] " << e.what() << "\n";

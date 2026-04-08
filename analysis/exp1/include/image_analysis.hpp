@@ -95,10 +95,22 @@ struct ComparisonResult {
   IntegralResult good;
   IntegralResult bad;
 
-  double delta;       // integral_good - integral_bad [ADU·pixel]
-  double sigma_delta; // sqrt(σ_good² + σ_bad²)
-  double ratio;       // integral_good / integral_bad
-  double sigma_ratio; // incertezza propagata sul rapporto
+  double delta;        // integral_good - integral_bad [ADU·pixel]
+  double sigma_delta;  // sqrt(σ_good² + σ_bad²)
+  double ratio;        // integral_good / integral_bad
+  double sigma_ratio;  // incertezza propagata sul rapporto
+  double significance; // (ratio - 1) / sigma_ratio
+};
+
+// Risultato analisi frame-to-frame (incertezza sperimentale)
+
+struct FrameByFrameResult {
+  double mean_ratio;          // R̄
+  double sigma_ratio_mean;    // σ_R̄ (errore sulla media)
+  double sigma_ratio_std;     // σ_R (deviazione standard sperimentale)
+  double significance;        // S = (R̄ - 1) / σ_R̄
+  int n_frames_used;          // Numero di frame dopo outlier clipping
+  std::vector<double> ratios; // Lista dei rapporti R_k
 };
 
 // Configurazione analisi
@@ -138,6 +150,21 @@ IntegralResult integrate(const DiffImage& diff, const ROI& roi = {});
 ComparisonResult compare(const IntegralResult& good, const IntegralResult& bad);
 
 /**
+ * Calcola l'efficienza geometrica tramite fluttuazioni frame-to-frame.
+ *
+ * @param good_frames  Vettore di frame configurazione buona
+ * @param bad_frames   Vettore di frame configurazione cattiva
+ * @param bg_frames    Vettore di frame fondo
+ * @param roi          ROI per l'integrazione
+ * @param clip_sigma   Soglia per outlier rejection (es. 3.0)
+ * @return             FrameByFrameResult con media e incertezza sperimentale
+ */
+FrameByFrameResult analyze_frame_by_frame(const std::vector<FitsFrame>& good_frames,
+                                          const std::vector<FitsFrame>& bad_frames,
+                                          const std::vector<FitsFrame>& bg_frames,
+                                          const ROI& roi = {}, double clip_sigma = 3.0);
+
+/**
  * Pipeline completa: produce tutte le mappe ROOT e il pannello di confronto.
  *
  * @param good_diff   DiffImage (good - background)
@@ -145,13 +172,14 @@ ComparisonResult compare(const IntegralResult& good, const IntegralResult& bad);
  * @param good_stack  StackedImage good (per istogrammi diagnostici)
  * @param bad_stack   StackedImage bad
  * @param bg_stack    StackedImage background
- * @param comparison  Risultato del confronto
+ * @param comparison  Risultato del confronto standard
+ * @param fbf         Risultato analisi frame-to-frame (opzionale)
  * @param cfg         Configurazione output
  */
 void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
                     const StackedImage& good_stack, const StackedImage& bad_stack,
                     const StackedImage& bg_stack, const ComparisonResult& comparison,
-                    const AnalysisConfig& cfg);
+                    const std::optional<FrameByFrameResult>& fbf, const AnalysisConfig& cfg);
 
 // Helpers per ROOT
 

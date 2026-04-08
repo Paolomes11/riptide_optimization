@@ -10,6 +10,7 @@
 # Draw geometry with surface style
 /vis/viewer/set/style surface
 /vis/viewer/set/auxiliaryEdge true
+/vis/viewer/set/lineSegmentsPerCircle 100
 
 # Set viewing angle and position
 /vis/viewer/set/viewpointThetaPhi 5 90
