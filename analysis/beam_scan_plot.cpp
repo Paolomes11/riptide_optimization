@@ -384,6 +384,7 @@ int main(int argc, char** argv) {
         TGraphErrors* g2y =
             new TGraphErrors(y0_src.size(), y0_src.data(), y_det.data(), nullptr, y_err.data());
         g2y->SetMarkerStyle(20);
+        g2y->SetMarkerSize(0.5);
         g2y->SetMarkerColor(color);
         g2y->SetLineColor(color);
         mg_y->Add(g2y, "PL");
@@ -391,6 +392,7 @@ int main(int argc, char** argv) {
         TGraphErrors* g2z =
             new TGraphErrors(y0_src.size(), y0_src.data(), z_det.data(), nullptr, z_err.data());
         g2z->SetMarkerStyle(20);
+        g2z->SetMarkerSize(0.5);
         g2z->SetMarkerColor(color);
         g2z->SetLineColor(color);
         mg_z->Add(g2z, "PL");
@@ -402,12 +404,12 @@ int main(int argc, char** argv) {
     c2d->cd(1);
     gPad->SetLeftMargin(0.15);
     mg_y->Draw("A");
-    leg->Draw();
+    //leg->Draw();
 
     c2d->cd(2);
     gPad->SetLeftMargin(0.15);
     mg_z->Draw("A");
-    leg->Draw();
+    //leg->Draw();
 
     std::string filename_2d = (output_dir
                                / ("beam_scan_2D_x1_" + format_double(found_x1, 2) + "_x2_"

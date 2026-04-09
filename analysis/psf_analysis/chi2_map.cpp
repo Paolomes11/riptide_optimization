@@ -16,11 +16,6 @@
  * chi2_map — Mappa 2D del chi-quadro ottenuto dal fit di un piano
  *            alle posizioni medie sul detector (mu_y, mu_z) in funzione
  *            della posizione sorgente (x_src, y_src).
- *
- * Simile a q_map, ma invece di calcolare la qualità delle tracce singole,
- * valuta la linearità globale della risposta del sistema (mappa di campo).
- * Un chi-quadro basso indica che il sistema si comporta come una lente
- * ideale (trasformazione lineare tra spazio sorgente e spazio detector).
  */
 
 #include "psf_interpolator.hpp"
@@ -60,7 +55,11 @@ struct CliConfig {
 
   double min_hits  = 10.0;
   bool log_scale   = false;
-  bool use_reduced = true; // usa chi2/ndof invece di chi2 totale
+  bool use_reduced = true;
+
+  // Parametri percentili per la scala colori
+  double perc_low  = 0.0;
+  double perc_high = 95.0;
 };
 
 static CliConfig parse_args(int argc, char** argv) {
@@ -88,6 +87,10 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.log_scale = true;
     else if (key == "--no-reduced")
       cfg.use_reduced = false;
+    else if (key == "--p-low")
+      cfg.perc_low = std::stod(next());
+    else if (key == "--p-high")
+      cfg.perc_high = std::stod(next());
     else {
       std::cerr << "Opzione sconosciuta: " << key << "\n";
       std::exit(1);
@@ -137,7 +140,6 @@ static std::string fmt(double v, int n = 1) {
   return o.str();
 }
 
-// Disegno canvas comune (stessa struttura di q_map)
 struct PadLayout {
   TCanvas* canvas;
   TPad* pad_plot;
@@ -207,7 +209,6 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale
     box->Draw();
   }
 
-  // Box N/A
   double inv_y0 = std::max(0.0, cb_y0 - 0.09);
   double inv_y1 = cb_y0 - 0.01;
   TBox* inv_box = new TBox(cb_x0, inv_y0, cb_x1, inv_y1);
@@ -264,26 +265,22 @@ static void draw_info_panel(TPad* pad_info, int total_cfgs, int n_invalid, doubl
 
   info.SetTextSize(0.20);
   info.SetTextColor(kBlack);
-
   info.DrawLatex(col1, row1, ("Min hits PSF: " + fmt(min_hits, 0)).c_str());
   info.DrawLatex(col1, row2,
                  (use_reduced ? "Metrica: #chi^{2}/ndof (Y+Z)" : "Metrica: #chi^{2} (Y+Z)"));
-
   info.DrawLatex(
       col2, row1,
       ("#bf{x_{1}^{*}} = " + fmt(best_x1, 1) + " mm,   #bf{x_{2}^{*}} = " + fmt(best_x2, 1) + " mm")
           .c_str());
-  {
-    std::ostringstream qs;
-    qs << std::fixed << std::setprecision(3) << best_chi2;
-    info.DrawLatex(col2, row2, ("#bf{min #chi^{2}} = " + qs.str()).c_str());
-  }
+
+  std::ostringstream qs;
+  qs << std::fixed << std::setprecision(3) << best_chi2;
+  info.DrawLatex(col2, row2, ("#bf{min #chi^{2}} = " + qs.str()).c_str());
 }
 
 int main(int argc, char** argv) {
   CliConfig cli = parse_args(argc, argv);
 
-  // 1. Legge config.json
   using json = nlohmann::json;
   std::ifstream f_cfg(cli.config_path);
   if (!f_cfg.is_open()) {
@@ -294,7 +291,6 @@ int main(int argc, char** argv) {
   f_cfg >> jcfg;
   const double dx = jcfg["dx"];
 
-  // 2. Carica PSF database
   riptide::PSFDatabase db;
   try {
     db = riptide::load_psf_database(cli.psf_path);
@@ -302,12 +298,9 @@ int main(int argc, char** argv) {
     std::cerr << "Errore: " << e.what() << "\n";
     return 1;
   }
-  if (db.empty()) {
-    std::cerr << "Errore: database vuoto\n";
+  if (db.empty())
     return 1;
-  }
 
-  // Limiti griglia
   double x1_lo = 1e18, x1_hi = -1e18, x2_lo = 1e18, x2_hi = -1e18;
   for (const auto& [cfg, _] : db) {
     x1_lo = std::min(x1_lo, cfg.x1);
@@ -321,7 +314,6 @@ int main(int argc, char** argv) {
   double ax_x1_lo = x1_lo - hx, ax_x1_hi = x1_hi + hx;
   double ax_x2_lo = x2_lo - hx, ax_x2_hi = x2_hi + hx;
 
-  // Modello di fit
   TF2* fit_func = new TF2("fit_plane", "[0] + [1]*x + [2]*y", -100, 100, -100, 100);
 
   struct Chi2Entry {
@@ -339,24 +331,19 @@ int main(int argc, char** argv) {
   for (const auto& [cfg, points] : db) {
     std::vector<const riptide::PSFPoint*> valid_points;
     for (const auto& p : points) {
-      if (p.on_detector && p.n_hits >= cli.min_hits) {
+      if (p.on_detector && p.n_hits >= cli.min_hits)
         valid_points.push_back(&p);
-      }
     }
 
     if (valid_points.size() < 10) {
       entries.push_back({cfg.x1, cfg.x2, 0.0, false});
     } else {
-      // Evitiamo la registrazione globale in ROOT per non avere warning di "Replacing existing"
       bool old_reg = TH1::AddDirectoryStatus();
       TH1::AddDirectory(false);
-
-      TGraph2DErrors g_y(valid_points.size());
-      TGraph2DErrors g_z(valid_points.size());
+      TGraph2DErrors g_y(valid_points.size()), g_z(valid_points.size());
 
       for (size_t i = 0; i < valid_points.size(); ++i) {
         const auto* p = valid_points[i];
-        // X = y_source, Y = x_source, Z = mu
         g_y.SetPoint(i, p->y_source, p->x_source, p->mu_y);
         g_y.SetPointError(i, 0, 0, std::sqrt(p->cov_yy));
         g_z.SetPoint(i, p->y_source, p->x_source, p->mu_z);
@@ -365,32 +352,26 @@ int main(int argc, char** argv) {
 
       fit_func->SetParameters(0, 0, 0);
       g_y.Fit(fit_func, "QW");
-      double chi2_y = cli.use_reduced ? (fit_func->GetChisquare() / std::max(1, fit_func->GetNDF()))
-                                      : fit_func->GetChisquare();
+      double c2y = cli.use_reduced ? (fit_func->GetChisquare() / std::max(1, fit_func->GetNDF()))
+                                   : fit_func->GetChisquare();
 
       fit_func->SetParameters(0, 0, 0);
       g_z.Fit(fit_func, "QW");
-      double chi2_z = cli.use_reduced ? (fit_func->GetChisquare() / std::max(1, fit_func->GetNDF()))
-                                      : fit_func->GetChisquare();
+      double c2z = cli.use_reduced ? (fit_func->GetChisquare() / std::max(1, fit_func->GetNDF()))
+                                   : fit_func->GetChisquare();
 
-      entries.push_back({cfg.x1, cfg.x2, chi2_y + chi2_z, true});
-
+      entries.push_back({cfg.x1, cfg.x2, c2y + c2z, true});
       TH1::AddDirectory(old_reg);
     }
 
     if ((config_idx + 1) % print_step == 0 || config_idx + 1 == total_cfgs) {
-      std::cout << "  [" << std::setw(3) << config_idx + 1 << "/" << total_cfgs << "]"
-                << "  x1=" << fmt(cfg.x1) << "  x2=" << fmt(cfg.x2);
-      if (entries.back().valid)
-        std::cout << "  chi2=" << std::fixed << std::setprecision(3) << entries.back().chi2;
-      else
-        std::cout << "  [INVALIDA]";
-      std::cout << "\n";
+      std::cout << "  [" << std::setw(3) << config_idx + 1 << "/" << total_cfgs
+                << "] x1=" << fmt(cfg.x1)
+                << " chi2=" << (entries.back().valid ? fmt(entries.back().chi2, 3) : "N/A") << "\n";
     }
     config_idx++;
   }
 
-  // Trova migliore
   auto it_best =
       std::min_element(entries.begin(), entries.end(), [](const Chi2Entry& a, const Chi2Entry& b) {
         if (!a.valid)
@@ -400,17 +381,23 @@ int main(int argc, char** argv) {
         return a.chi2 < b.chi2;
       });
 
-  if (!it_best->valid) {
-    std::cerr << "Errore: nessuna configurazione valida.\n";
-    return 1;
+  // --- CALCOLO LIMITI PERCENTILI ---
+  std::vector<double> v;
+  for (const auto& e : entries)
+    if (e.valid)
+      v.push_back(e.chi2);
+  std::sort(v.begin(), v.end());
+
+  double z_min = 0.0, z_max = 1.0;
+  if (!v.empty()) {
+    size_t i_lo = static_cast<size_t>((cli.perc_low / 100.0) * (v.size() - 1));
+    size_t i_hi = static_cast<size_t>((cli.perc_high / 100.0) * (v.size() - 1));
+    z_min       = v[std::clamp(i_lo, (size_t)0, v.size() - 1)];
+    z_max       = v[std::clamp(i_hi, (size_t)0, v.size() - 1)];
+    if (z_min == z_max)
+      z_max += 1.0;
   }
 
-  std::cout << "\n★  Configurazione ottimale:\n"
-            << "   x1 = " << fmt(it_best->x1, 2) << " mm\n"
-            << "   x2 = " << fmt(it_best->x2, 2) << " mm\n"
-            << "   chi2_tot = " << it_best->chi2 << "\n";
-
-  // Plot
   apply_style();
   gStyle->SetPalette(kBird);
 
@@ -426,23 +413,10 @@ int main(int argc, char** argv) {
       h_inv.SetBinContent(bx, by, 1.0);
   }
 
-  h_chi2.GetXaxis()->SetTitle("x_{1}  [mm]  (lente 75 mm)");
-  h_chi2.GetYaxis()->SetTitle("x_{2}  [mm]  (lente 60 mm)");
-  h_chi2.GetXaxis()->CenterTitle(true);
-  h_chi2.GetYaxis()->CenterTitle(true);
-
-  // Range colori
-  std::vector<double> v;
-  for (const auto& e : entries)
-    if (e.valid)
-      v.push_back(e.chi2);
-  std::sort(v.begin(), v.end());
-  if (!v.empty()) {
-    // Impostiamo il minimo al valore reale più basso per non creare "buchi" bianchi
-    // dove il fit è ottimo (sotto il 5° percentile).
-    h_chi2.SetMinimum(v[0]);
-    h_chi2.SetMaximum(v[static_cast<size_t>(v.size() * 0.95)]);
-  }
+  h_chi2.SetMinimum(z_min);
+  h_chi2.SetMaximum(z_max);
+  h_chi2.GetXaxis()->SetTitle("x_{1} [mm]");
+  h_chi2.GetYaxis()->SetTitle("x_{2} [mm]");
 
   auto pl = make_canvas(cli.log_scale);
   pl.pad_plot->cd();
@@ -462,9 +436,8 @@ int main(int argc, char** argv) {
   title.SetTextAlign(22);
   title.DrawLatex(0.535, 0.953, "Linearit#grave{a} della risposta (fit piano #mu_{y,z})");
 
-  draw_colorbar(pl.pad_cb, h_chi2.GetMinimum(), h_chi2.GetMaximum(), cli.log_scale,
-                cli.use_reduced ? "#chi^{2}/ndof (Y+Z)" : "#chi^{2} (Y+Z)",
-                TColor::GetColor(80, 80, 80));
+  draw_colorbar(pl.pad_cb, z_min, z_max, cli.log_scale,
+                cli.use_reduced ? "#chi^{2}/ndof" : "#chi^{2}", TColor::GetColor(80, 80, 80));
 
   draw_info_panel(
       pl.pad_info, total_cfgs,
@@ -474,7 +447,6 @@ int main(int argc, char** argv) {
   pl.canvas->Update();
   std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());
   pl.canvas->Print(cli.output_path.c_str());
-  std::cout << "Mappa salvata in: " << cli.output_path << "\n";
 
   return 0;
 }
