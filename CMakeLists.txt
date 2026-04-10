@@ -27,6 +27,7 @@ set(COMMON_SRC
     src/common/physics_list.cpp
     src/common/primary_generator_action.cpp
     src/common/stepping_action.cpp
+    src/common/importance_sampling.cpp
 )
 add_library(common_lib ${COMMON_SRC})
 target_include_directories(common_lib PUBLIC ${CMAKE_SOURCE_DIR}/include/common)
