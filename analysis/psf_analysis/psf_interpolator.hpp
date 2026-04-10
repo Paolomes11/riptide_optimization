@@ -35,7 +35,8 @@ struct PSFPoint {
   double cov_yz;    // covarianza y-z [mm^2]
   double cov_zz;    // varianza z [mm^2]
   bool on_detector; // mantenuto per compatibilità (true se n_hits >= soglia)
-  int n_hits;       // numero di fotoni arrivati (usato per efficienza locale)
+  double n_hits;    // numero di fotoni arrivati (pesato, usato per efficienza locale)
+  double n_hits_count;
 };
 
 // Matrice di covarianza 2x2
@@ -49,7 +50,8 @@ struct PSFValue {
   double mu_z;
   Cov2 cov;
   bool on_detector;
-  int n_hits_interp;
+  double n_hits_interp;
+  double n_hits_count_interp;
 };
 
 // Un punto della traccia sul detector
@@ -63,7 +65,8 @@ struct TracePoint {
   double mu_z;  // posizione media z sul detector [mm]
   Cov2 cov;     // matrice di covarianza associata [mm^2]
   bool valid;   // mantenuto per compatibilità
-  int n_hits;   // fotoni arrivati
+  double n_hits;
+  double n_hits_count;
 };
 
 // Chiave di configurazione lenti (x1, x2)

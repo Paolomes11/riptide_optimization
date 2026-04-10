@@ -331,7 +331,7 @@ int main(int argc, char** argv) {
   for (const auto& [cfg, points] : db) {
     std::vector<const riptide::PSFPoint*> valid_points;
     for (const auto& p : points) {
-      if (p.on_detector && p.n_hits >= cli.min_hits)
+      if (p.on_detector && p.n_hits_count >= cli.min_hits)
         valid_points.push_back(&p);
     }
 
@@ -345,9 +345,9 @@ int main(int argc, char** argv) {
       for (size_t i = 0; i < valid_points.size(); ++i) {
         const auto* p = valid_points[i];
         g_y.SetPoint(i, p->y_source, p->x_source, p->mu_y);
-        g_y.SetPointError(i, 0, 0, std::sqrt(p->cov_yy));
+        g_y.SetPointError(i, 0, 0, std::sqrt(std::max(0.0, p->cov_yy)));
         g_z.SetPoint(i, p->y_source, p->x_source, p->mu_z);
-        g_z.SetPointError(i, 0, 0, std::sqrt(p->cov_zz));
+        g_z.SetPointError(i, 0, 0, std::sqrt(std::max(0.0, p->cov_zz)));
       }
 
       fit_func->SetParameters(0, 0, 0);
@@ -360,7 +360,12 @@ int main(int argc, char** argv) {
       double c2z = cli.use_reduced ? (fit_func->GetChisquare() / std::max(1, fit_func->GetNDF()))
                                    : fit_func->GetChisquare();
 
-      entries.push_back({cfg.x1, cfg.x2, c2y + c2z, true});
+      double c2 = c2y + c2z;
+      if (!std::isfinite(c2)) {
+        entries.push_back({cfg.x1, cfg.x2, 0.0, false});
+      } else {
+        entries.push_back({cfg.x1, cfg.x2, c2, true});
+      }
       TH1::AddDirectory(old_reg);
     }
 

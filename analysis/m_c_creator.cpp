@@ -51,8 +51,11 @@ int main(int argc, char** argv) {
 
   TTree* tConfig = (TTree*)file->Get("Configurations");
   TTree* tRuns   = (TTree*)file->Get("Runs");
+  if (!tRuns) {
+    tRuns = (TTree*)file->Get("LensSimulation");
+  }
   if (!tConfig || !tRuns) {
-    std::cerr << "Impossibile leggere Configurations o Runs TTree\n";
+    std::cerr << "Impossibile leggere Configurations o Runs/LensSimulation TTree\n";
     return 1;
   }
 
@@ -63,8 +66,9 @@ int main(int argc, char** argv) {
   tConfig->SetBranchAddress("x1", &x1);
   tConfig->SetBranchAddress("x2", &x2);
 
-  int run_id, run_config, n_hits_run;
-  float y_source;
+  int run_id, run_config;
+  double n_hits_run;
+  double y_source;
   std::vector<float>* y_hits_ptr = nullptr;
   std::vector<float>* z_hits_ptr = nullptr;
 
@@ -130,7 +134,8 @@ int main(int argc, char** argv) {
     if (run_id == target_run_id) {
       if (y_hits_ptr && z_hits_ptr) {
         for (size_t j = 0; j < y_hits_ptr->size(); ++j) {
-          hits.push_back({static_cast<double>((*y_hits_ptr)[j]), static_cast<double>((*z_hits_ptr)[j])});
+          hits.push_back(
+              {static_cast<double>((*y_hits_ptr)[j]), static_cast<double>((*z_hits_ptr)[j])});
         }
       }
       break;

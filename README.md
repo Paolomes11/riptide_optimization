@@ -808,7 +808,7 @@ lens.root
     ├── config_id   Int_t
     ├── x_source    Float_t  [mm]
     ├── y_source    Float_t  [mm]
-    ├── n_hits      Int_t
+    ├── n_hits      Double_t
     ├── y_hits      vector<float> [mm]
     └── z_hits      vector<float> [mm]
 ```
@@ -825,7 +825,7 @@ events.root
 └── TTree "Efficiency"
     ├── config_id  Int_t
     ├── n_photons  Int_t
-    └── n_hits     Int_t
+    └── n_hits     Double_t
 ```
 
 ### psf\_data.root (psf\_extractor)
@@ -838,8 +838,8 @@ psf_data.root
     ├── y_source             Float_t  [mm]
     ├── mean_y, mean_z       Double_t [mm]
     ├── cov_yy, cov_yz, cov_zz  Double_t [mm²]
-    ├── n_hits_filtered      Int_t
-    ├── n_hits_raw           Int_t
+    ├── n_hits_filtered      Double_t
+    ├── n_hits_raw           Double_t
     └── on_detector          Bool_t
 ```
 

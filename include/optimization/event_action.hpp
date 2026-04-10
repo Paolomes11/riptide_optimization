@@ -26,7 +26,7 @@ class EventAction : public G4UserEventAction {
   int config_id; // Identificatore della configurazione delle lenti
 
   // Per contare gli hit totali di un run (una configurazione)
-  int m_lastRunHitCount = 0;
+  double m_lastRunHitCount = 0;
 
   // puntatore statico
   static inline EventAction* s_currentEventAction = nullptr;
@@ -36,13 +36,13 @@ class EventAction : public G4UserEventAction {
   virtual ~EventAction() = default;
 
   // Funzione che viene chiamata dal SensitiveDetector per registrare un hit
-  void AddPhotonHit();
+  void AddPhotonHit(double weight = 1.0);
 
   // Funzione per impostare l'identificatore della configurazione
   void SetConfigId(int config_id);
 
   // n_hits getter e resetter
-  int GetLastRunHitCount() const {
+  double GetLastRunHitCount() const {
     return m_lastRunHitCount;
   }
 

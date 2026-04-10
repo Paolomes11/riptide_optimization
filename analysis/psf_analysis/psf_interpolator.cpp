@@ -38,17 +38,18 @@ PSFDatabase load_psf_database(const std::string& root_path) {
 
   Int_t config_id;
   Double_t x1, x2;
-  Float_t x_source_f, y_source_f;
+  Double_t x_source_d, y_source_d;
   Double_t mean_y, mean_z;
   Double_t cov_yy, cov_yz, cov_zz;
-  Int_t n_hits_filtered;
+  Double_t n_hits_filtered;
+  Int_t n_hits_filtered_count = 0;
   Bool_t on_detector;
 
   tree->SetBranchAddress("config_id", &config_id);
   tree->SetBranchAddress("x1", &x1);
   tree->SetBranchAddress("x2", &x2);
-  tree->SetBranchAddress("x_source", &x_source_f);
-  tree->SetBranchAddress("y_source", &y_source_f);
+  tree->SetBranchAddress("x_source", &x_source_d);
+  tree->SetBranchAddress("y_source", &y_source_d);
   tree->SetBranchAddress("mean_y", &mean_y);
   tree->SetBranchAddress("mean_z", &mean_z);
   tree->SetBranchAddress("cov_yy", &cov_yy);
@@ -57,12 +58,19 @@ PSFDatabase load_psf_database(const std::string& root_path) {
   tree->SetBranchAddress("n_hits_filtered", &n_hits_filtered);
   tree->SetBranchAddress("on_detector", &on_detector);
 
+  bool has_count_branch = (tree->GetBranch("n_hits_filtered_count") != nullptr);
+  if (has_count_branch) {
+    tree->SetBranchAddress("n_hits_filtered_count", &n_hits_filtered_count);
+  }
+
   PSFDatabase db;
   for (Long64_t i = 0; i < tree->GetEntries(); ++i) {
     tree->GetEntry(i);
     LensConfig cfg{x1, x2};
-    db[cfg].push_back({static_cast<double>(x_source_f), static_cast<double>(y_source_f), mean_y,
-                       mean_z, cov_yy, cov_yz, cov_zz, (bool)on_detector, n_hits_filtered});
+    db[cfg].push_back(
+        {x_source_d, y_source_d, mean_y, mean_z, cov_yy, cov_yz, cov_zz, (bool)on_detector,
+         n_hits_filtered,
+         has_count_branch ? static_cast<double>(n_hits_filtered_count) : n_hits_filtered});
   }
 
   // Sort per x crescente, poi y crescente per facilitare l'interpolazione 2D
@@ -155,11 +163,13 @@ PSFValue interpolate(double x, double y, const LensConfig& cfg, const PSFDatabas
 
     if (it_y == pts_at_x.begin()) {
       const auto& p = **it_y;
-      return {p.mu_y, p.mu_z, {p.cov_yy, p.cov_yz, p.cov_zz}, p.on_detector, p.n_hits};
+      return {p.mu_y,        p.mu_z,   {p.cov_yy, p.cov_yz, p.cov_zz},
+              p.on_detector, p.n_hits, p.n_hits_count};
     }
     if (it_y == pts_at_x.end()) {
       const auto& p = **std::prev(it_y);
-      return {p.mu_y, p.mu_z, {p.cov_yy, p.cov_yz, p.cov_zz}, p.on_detector, p.n_hits};
+      return {p.mu_y,        p.mu_z,   {p.cov_yy, p.cov_yz, p.cov_zz},
+              p.on_detector, p.n_hits, p.n_hits_count};
     }
 
     const auto& p1 = **it_y;
@@ -173,7 +183,8 @@ PSFValue interpolate(double x, double y, const LensConfig& cfg, const PSFDatabas
         lerp_y(p0.mu_z, p1.mu_z),
         {lerp_y(p0.cov_yy, p1.cov_yy), lerp_y(p0.cov_yz, p1.cov_yz), lerp_y(p0.cov_zz, p1.cov_zz)},
         p0.on_detector && p1.on_detector,
-        static_cast<int>(lerp_y(p0.n_hits, p1.n_hits))};
+        lerp_y(p0.n_hits, p1.n_hits),
+        lerp_y(p0.n_hits_count, p1.n_hits_count)};
   };
 
   // 3. Esegui l'interpolazione bilineare
@@ -206,7 +217,7 @@ PSFValue interpolate(double x, double y, const LensConfig& cfg, const PSFDatabas
     v0.cov.yy        = sigma_avg;
     v0.cov.zz        = sigma_avg;
     v0.cov.yz        = 0.0;
-    if (v0.n_hits_interp > 0)
+    if (v0.n_hits_count_interp > 0.0)
       v0.on_detector = true;
   }
   if (y < r1_min && r1_min > 1e-6) {
@@ -217,7 +228,7 @@ PSFValue interpolate(double x, double y, const LensConfig& cfg, const PSFDatabas
     v1.cov.yy        = sigma_avg;
     v1.cov.zz        = sigma_avg;
     v1.cov.yz        = 0.0;
-    if (v1.n_hits_interp > 0)
+    if (v1.n_hits_count_interp > 0.0)
       v1.on_detector = true;
   }
 
@@ -228,7 +239,8 @@ PSFValue interpolate(double x, double y, const LensConfig& cfg, const PSFDatabas
       lerp_x(v0.mu_z, v1.mu_z),
       {lerp_x(v0.cov.yy, v1.cov.yy), lerp_x(v0.cov.yz, v1.cov.yz), lerp_x(v0.cov.zz, v1.cov.zz)},
       v0.on_detector && v1.on_detector,
-      static_cast<int>(lerp_x(v0.n_hits_interp, v1.n_hits_interp))};
+      lerp_x(v0.n_hits_interp, v1.n_hits_interp),
+      lerp_x(v0.n_hits_count_interp, v1.n_hits_count_interp)};
 }
 
 //  Costruzione traccia 3D ──────────────────────────────────────────────────────
@@ -289,7 +301,8 @@ std::vector<TracePoint> build_trace_3d(const Point3D& p1, const Point3D& p2, con
                      mu_z_rot,
                      {c_yy, c_yz, c_zz},
                      psf0.on_detector,
-                     psf0.n_hits_interp});
+                     psf0.n_hits_interp,
+                     psf0.n_hits_count_interp});
   }
   return trace;
 }
@@ -354,7 +367,7 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, double min_hits_pe
   vz.reserve(trace.size());
   vcov.reserve(trace.size());
   for (const auto& pt : trace) {
-    if (pt.valid && pt.n_hits >= min_hits_per_point) {
+    if (pt.valid && pt.n_hits_count >= min_hits_per_point) {
       vy.push_back(pt.mu_y);
       vz.push_back(pt.mu_z);
       vcov.push_back(pt.cov);
@@ -649,7 +662,7 @@ CoverageResult compute_coverage(const LensConfig& cfg, const PSFDatabase& db, co
 
     int nv = 0;
     for (const auto& pt : trace) {
-      if (pt.n_hits >= qcfg.min_hits_per_point)
+      if (pt.n_hits_count >= qcfg.min_hits_per_point)
         ++nv;
     }
     sum_frac += static_cast<double>(nv) / static_cast<double>(trace.size());

@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
   double x2_val;
   int config_id;
   int n_photons_val;
-  int n_hits_val;
+  double n_hits_val;
   char l1_id_buf[256];
   char l2_id_buf[256];
 
@@ -179,8 +179,8 @@ int main(int argc, char** argv) {
 
   for (int i = 0; i < tree_config->GetEntries(); ++i) {
     tree_config->GetEntry(i);
-    std::string s1 = tree_config->GetBranch("lens75_id") ? l1_id_buf : "default";
-    std::string s2 = tree_config->GetBranch("lens60_id") ? l2_id_buf : "default";
+    std::string s1        = tree_config->GetBranch("lens75_id") ? l1_id_buf : "default";
+    std::string s2        = tree_config->GetBranch("lens60_id") ? l2_id_buf : "default";
     config_map[config_id] = {x1_val, x2_val, s1, s2};
 
     bool found = false;

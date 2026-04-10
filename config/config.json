@@ -10,6 +10,7 @@
   "source_height": 5.0,
   "source_thickness": 60.0,
   "n_photons": 10000,
+  "use_importance_sampling": true,
   "lower_percentile": 0.0,
   "upper_percentile": 0.0,
   "source_x_min": -30.0,

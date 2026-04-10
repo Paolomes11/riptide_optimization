@@ -120,12 +120,13 @@ static bool near(double a, double b, double tol = 1e-6, const std::string& label
 static riptide::TracePoint make_point(double t, double mu_y, double mu_z, double var_y,
                                       double var_z, double cov_yz = 0.0) {
   riptide::TracePoint p{};
-  p.t      = t;
-  p.mu_y   = mu_y;
-  p.mu_z   = mu_z;
-  p.cov    = {var_y, cov_yz, var_z};
-  p.valid  = true;
-  p.n_hits = 1000; // Valido per default
+  p.t            = t;
+  p.mu_y         = mu_y;
+  p.mu_z         = mu_z;
+  p.cov          = {var_y, cov_yz, var_z};
+  p.valid        = true;
+  p.n_hits       = 1000; // Valido per default
+  p.n_hits_count = 1000;
   return p;
 }
 
@@ -147,7 +148,7 @@ static riptide::PSFDatabase make_synthetic_db(double x1 = 50.0, double x2 = 120.
   riptide::LensConfig cfg{x1, x2};
   // Griglia 1D (x=0, y in [0, 10]) per compatibilità con i vecchi test
   for (double y = 0; y <= 10.0; y += 1.0) {
-    db[cfg].push_back({0.0, y, y, 0.0, sy * sy, 0.0, sz * sz, true, 1000});
+    db[cfg].push_back({0.0, y, y, 0.0, sy * sy, 0.0, sz * sz, true, 1000, 1000});
   }
   return db;
 }
@@ -464,7 +465,7 @@ static void test_TQ4() {
     riptide::LensConfig cfg{50.0, 120.0};
     for (double x = -30.0; x <= 30.0; x += 10.0) {
       for (double y = 0.0; y <= 10.0; y += 1.0) {
-        db[cfg].push_back({x, y, y, 0.05 * y * y, 1e-6, 0.0, cov_zz_val, true, 1000});
+        db[cfg].push_back({x, y, y, 0.05 * y * y, 1e-6, 0.0, cov_zz_val, true, 1000, 1000});
       }
     }
     return db;
@@ -521,13 +522,14 @@ static void test_TQ5() {
     tr.reserve(N);
     for (int i = 0; i < N; ++i) {
       riptide::TracePoint pt{};
-      pt.t      = -L / 2.0 + i * (L / (N - 1));
-      pt.r      = std::abs(mu_y_v[i]);
-      pt.mu_y   = mu_y_v[i];
-      pt.mu_z   = mu_z_v[i];
-      pt.cov    = {var, 0.0, var};
-      pt.valid  = true;
-      pt.n_hits = 1000;
+      pt.t            = -L / 2.0 + i * (L / (N - 1));
+      pt.r            = std::abs(mu_y_v[i]);
+      pt.mu_y         = mu_y_v[i];
+      pt.mu_z         = mu_z_v[i];
+      pt.cov          = {var, 0.0, var};
+      pt.valid        = true;
+      pt.n_hits       = 1000;
+      pt.n_hits_count = 1000;
       tr.push_back(pt);
     }
     return tr;

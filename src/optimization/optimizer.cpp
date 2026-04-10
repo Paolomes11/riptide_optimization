@@ -16,9 +16,12 @@
 #include "action_initialization.hpp"
 #include "detector_construction.hpp"
 #include "event_action.hpp"
+#include "importance_sampling.hpp"
+#include "primary_generator_action.hpp"
 
 #include <G4AnalysisManager.hh>
 #include <G4RunManager.hh>
+#include <G4SystemOfUnits.hh>
 #include <G4UImanager.hh>
 
 #include <nlohmann/json.hpp>
@@ -104,7 +107,7 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
   analysisManager->CreateNtuple("Efficiency", "Geometrical efficiency");
   analysisManager->CreateNtupleIColumn("config_id");
   analysisManager->CreateNtupleIColumn("n_photons");
-  analysisManager->CreateNtupleIColumn("n_hits");
+  analysisManager->CreateNtupleDColumn("n_hits");
   analysisManager->FinishNtuple(1);
 
   // Parametri di ottimizzazione
@@ -173,6 +176,36 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
       det->SetLensPositions(x1, x2);
       run_manager->GeometryHasBeenModified();
 
+      // Calcola il cono globale per la sorgente estesa
+      if (config.value("use_importance_sampling", false)) {
+        double sw                          = source_width;
+        double st                          = source_thickness;
+        double sh                          = source_height;
+        std::vector<G4ThreeVector> corners = {
+            G4ThreeVector(-st / 2, sh, -sw / 2), G4ThreeVector(st / 2, sh, -sw / 2),
+            G4ThreeVector(-st / 2, sh, sw / 2), G4ThreeVector(st / 2, sh, sw / 2)};
+        G4ThreeVector axis;
+        double maxTheta;
+        ImportanceSamplingHelper::CalculateGlobalCone(corners, det->GetLens75Params(), axis,
+                                                      maxTheta);
+
+        // Angolo solido emisferico originale (piatto)
+        double originalOmega = 2.0 * M_PI;
+        double cosMaxTheta   = std::cos(maxTheta);
+        double newOmega      = 2.0 * M_PI * (1.0 - cosMaxTheta);
+        double weight        = newOmega / originalOmega;
+
+        spdlog::info("Configured Importance Sampling: theta_max = {:.2f} deg, weight = {:.4f}",
+                     maxTheta * 180.0 / M_PI, weight);
+
+        auto* primaryGen =
+            const_cast<PrimaryGeneratorAction*>(static_cast<const PrimaryGeneratorAction*>(
+                run_manager->GetUserPrimaryGeneratorAction()));
+        if (primaryGen) {
+          primaryGen->SetStaticCone(axis, maxTheta);
+        }
+      }
+
       analysisManager->FillNtupleIColumn(0, 0, config_counter);
       analysisManager->FillNtupleDColumn(0, 1, x1);
       analysisManager->FillNtupleDColumn(0, 2, x2);
@@ -196,10 +229,10 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
         UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
       }
 
-      int n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0;
+      double n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0.0;
       analysisManager->FillNtupleIColumn(1, 0, config_counter);
       analysisManager->FillNtupleIColumn(1, 1, n_photons);
-      analysisManager->FillNtupleIColumn(1, 2, n_hits);
+      analysisManager->FillNtupleDColumn(1, 2, n_hits);
       analysisManager->AddNtupleRow(1);
 
       spdlog::info("Run done: config_id={}, hits={}/{}", config_counter, n_hits, n_photons);

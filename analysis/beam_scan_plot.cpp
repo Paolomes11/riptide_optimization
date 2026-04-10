@@ -78,10 +78,14 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  TTree* runs    = (TTree*)f.Get("Runs");
+  TTree* runs = (TTree*)f.Get("Runs");
+  if (!runs) {
+    runs = (TTree*)f.Get("LensSimulation");
+  }
   TTree* configs = (TTree*)f.Get("Configurations");
   if (!runs || !configs) {
-    std::cerr << "Required trees not found in " << input_file << "!" << std::endl;
+    std::cerr << "Required trees (Runs/LensSimulation and Configurations) not found in "
+              << input_file << "!" << std::endl;
     return 1;
   }
 
@@ -122,8 +126,9 @@ int main(int argc, char** argv) {
   }
 
   // Runs per la configurazione
-  int run_id, config_id, n_hits_run;
-  float x_source, y_source;
+  int run_id, config_id;
+  double n_hits_run;
+  double x_source, y_source;
   std::vector<float>* y_hits_ptr = nullptr;
   std::vector<float>* z_hits_ptr = nullptr;
 
@@ -281,7 +286,7 @@ int main(int argc, char** argv) {
                   g_y->GetXaxis()->GetXmax(), g_y->GetYaxis()->GetXmax());
   fit_y->SetLineColorAlpha(kOrange + 1, 0.1); // 0.4 di trasparenza
   fit_y->SetFillColorAlpha(kOrange + 1, 0.05);
-  //fit_y->Draw("SURF4 SAME");
+  // fit_y->Draw("SURF4 SAME");
 
   // Grafico Z
   c->cd(2);
@@ -404,12 +409,12 @@ int main(int argc, char** argv) {
     c2d->cd(1);
     gPad->SetLeftMargin(0.15);
     mg_y->Draw("A");
-    //leg->Draw();
+    // leg->Draw();
 
     c2d->cd(2);
     gPad->SetLeftMargin(0.15);
     mg_z->Draw("A");
-    //leg->Draw();
+    // leg->Draw();
 
     std::string filename_2d = (output_dir
                                / ("beam_scan_2D_x1_" + format_double(found_x1, 2) + "_x2_"

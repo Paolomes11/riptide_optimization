@@ -54,17 +54,20 @@ struct Hit {
 struct PSFResult {
   double mean_y, mean_z;
   double cov_yy, cov_yz, cov_zz;
-  int n_hits_raw;      // hit prima del filtro
-  int n_hits_filtered; // hit dopo il filtro
+  double n_hits_raw;      // hit prima del filtro (pesate)
+  double n_hits_filtered; // hit dopo il filtro (pesate)
+  int n_hits_raw_count;
+  int n_hits_filtered_count;
 };
 
 bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sigma_cut = 3.0,
-                 int n_iter = 4) {
+                 int n_iter = 4, double weight = 1.0) {
   if (raw_hits.empty())
     return false;
 
-  result.n_hits_raw     = static_cast<int>(raw_hits.size());
-  std::vector<Hit> hits = raw_hits;
+  result.n_hits_raw       = static_cast<double>(raw_hits.size()) * weight;
+  result.n_hits_raw_count = static_cast<int>(raw_hits.size());
+  std::vector<Hit> hits   = raw_hits;
 
   double mean_y = 0, mean_z = 0;
 
@@ -152,12 +155,13 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
 
   double denom = static_cast<double>(n - 1);
 
-  result.mean_y          = mean_y;
-  result.mean_z          = mean_z;
-  result.cov_yy          = cov_yy / denom;
-  result.cov_yz          = cov_yz / denom;
-  result.cov_zz          = cov_zz / denom;
-  result.n_hits_filtered = static_cast<int>(n);
+  result.mean_y                = mean_y;
+  result.mean_z                = mean_z;
+  result.cov_yy                = cov_yy / denom;
+  result.cov_yz                = cov_yz / denom;
+  result.cov_zz                = cov_zz / denom;
+  result.n_hits_filtered       = static_cast<double>(n) * weight;
+  result.n_hits_filtered_count = static_cast<int>(n);
 
   return true;
 }
@@ -175,7 +179,7 @@ int main(int argc, char** argv) {
   if (argc > 3)
     min_hits = std::stoi(argv[3]);
 
-  std::cout << "Soglia on_detector: n_hits_filtered >= " << min_hits << "\n";
+  std::cout << "Soglia on_detector: n_hits_filtered_count >= " << min_hits << "\n";
 
   // Apri file di input
   TFile* fin = TFile::Open(input_path.c_str(), "READ");
@@ -187,8 +191,12 @@ int main(int argc, char** argv) {
   TTree* tConfig = dynamic_cast<TTree*>(fin->Get("Configurations"));
   TTree* tRuns   = dynamic_cast<TTree*>(fin->Get("Runs"));
 
+  if (!tRuns) {
+    tRuns = dynamic_cast<TTree*>(fin->Get("LensSimulation"));
+  }
+
   if (!tConfig || !tRuns) {
-    std::cerr << "Errore: TTree Configurations o Runs mancanti nel file di input\n";
+    std::cerr << "Errore: TTree Configurations o Runs/LensSimulation mancanti nel file di input\n";
     return 1;
   }
 
@@ -208,8 +216,9 @@ int main(int argc, char** argv) {
   std::cout << "Configurazioni lette: " << config_map.size() << "\n";
 
   // Leggi Runs
-  int run_id_r, run_cfg_id, n_hits_r;
-  float x_source_r, y_source_r;
+  int run_id_r, run_cfg_id;
+  double n_hits_r;
+  double x_source_r, y_source_r;
   std::vector<float>* y_hits_ptr = nullptr;
   std::vector<float>* z_hits_ptr = nullptr;
 
@@ -233,24 +242,27 @@ int main(int argc, char** argv) {
 
   int out_config_id;
   double out_x1, out_x2;
-  float out_x_source, out_y_source;
+  double out_x_source, out_y_source;
   double out_mean_y, out_mean_z;
   double out_cov_yy, out_cov_yz, out_cov_zz;
-  int out_n_hits_raw, out_n_hits_filtered;
+  double out_n_hits_raw, out_n_hits_filtered;
+  int out_n_hits_raw_count, out_n_hits_filtered_count;
   bool out_on_detector;
 
   tPSF->Branch("config_id", &out_config_id, "config_id/I");
   tPSF->Branch("x1", &out_x1, "x1/D");
   tPSF->Branch("x2", &out_x2, "x2/D");
-  tPSF->Branch("x_source", &out_x_source, "x_source/F");
-  tPSF->Branch("y_source", &out_y_source, "y_source/F");
+  tPSF->Branch("x_source", &out_x_source, "x_source/D");
+  tPSF->Branch("y_source", &out_y_source, "y_source/D");
   tPSF->Branch("mean_y", &out_mean_y, "mean_y/D");
   tPSF->Branch("mean_z", &out_mean_z, "mean_z/D");
   tPSF->Branch("cov_yy", &out_cov_yy, "cov_yy/D");
   tPSF->Branch("cov_yz", &out_cov_yz, "cov_yz/D");
   tPSF->Branch("cov_zz", &out_cov_zz, "cov_zz/D");
-  tPSF->Branch("n_hits_raw", &out_n_hits_raw, "n_hits_raw/I");
-  tPSF->Branch("n_hits_filtered", &out_n_hits_filtered, "n_hits_filtered/I");
+  tPSF->Branch("n_hits_raw", &out_n_hits_raw, "n_hits_raw/D");
+  tPSF->Branch("n_hits_filtered", &out_n_hits_filtered, "n_hits_filtered/D");
+  tPSF->Branch("n_hits_raw_count", &out_n_hits_raw_count, "n_hits_raw_count/I");
+  tPSF->Branch("n_hits_filtered_count", &out_n_hits_filtered_count, "n_hits_filtered_count/I");
   tPSF->Branch("on_detector", &out_on_detector, "on_detector/O");
 
   // Loop su tutti i run
@@ -281,19 +293,21 @@ int main(int argc, char** argv) {
 
     // Caso run con zero hit
     if (hits_buf.empty()) {
-      out_config_id       = run_cfg_id;
-      out_x1              = it->second.first;
-      out_x2              = it->second.second;
-      out_x_source        = x_source_r;
-      out_y_source        = y_source_r;
-      out_mean_y          = 0.0;
-      out_mean_z          = 0.0;
-      out_cov_yy          = 0.0;
-      out_cov_yz          = 0.0;
-      out_cov_zz          = 0.0;
-      out_n_hits_raw      = 0;
-      out_n_hits_filtered = 0;
-      out_on_detector     = false;
+      out_config_id             = run_cfg_id;
+      out_x1                    = it->second.first;
+      out_x2                    = it->second.second;
+      out_x_source              = x_source_r;
+      out_y_source              = y_source_r;
+      out_mean_y                = 0.0;
+      out_mean_z                = 0.0;
+      out_cov_yy                = 0.0;
+      out_cov_yz                = 0.0;
+      out_cov_zz                = 0.0;
+      out_n_hits_raw            = 0;
+      out_n_hits_filtered       = 0;
+      out_n_hits_raw_count      = 0;
+      out_n_hits_filtered_count = 0;
+      out_on_detector           = false;
       tPSF->Fill();
       ++flagged_off;
       continue;
@@ -301,44 +315,49 @@ int main(int argc, char** argv) {
 
     // Calcola PSF
     PSFResult res{};
-    bool ok = compute_psf(hits_buf, res);
+    double w = (hits_buf.empty()) ? 1.0 : (n_hits_r / static_cast<double>(hits_buf.size()));
+    bool ok  = compute_psf(hits_buf, res, 3.0, 4, w);
 
     if (!ok) {
       // Meno di 3 hit dopo il filtro: salva con on_detector = false
-      out_config_id       = run_cfg_id;
-      out_x1              = it->second.first;
-      out_x2              = it->second.second;
-      out_x_source        = x_source_r;
-      out_y_source        = y_source_r;
-      out_mean_y          = 0.0;
-      out_mean_z          = 0.0;
-      out_cov_yy          = 0.0;
-      out_cov_yz          = 0.0;
-      out_cov_zz          = 0.0;
-      out_n_hits_raw      = static_cast<int>(hits_buf.size());
-      out_n_hits_filtered = 0;
-      out_on_detector     = false;
+      out_config_id             = run_cfg_id;
+      out_x1                    = it->second.first;
+      out_x2                    = it->second.second;
+      out_x_source              = x_source_r;
+      out_y_source              = y_source_r;
+      out_mean_y                = 0.0;
+      out_mean_z                = 0.0;
+      out_cov_yy                = 0.0;
+      out_cov_yz                = 0.0;
+      out_cov_zz                = 0.0;
+      out_n_hits_raw            = n_hits_r;
+      out_n_hits_filtered       = 0.0;
+      out_n_hits_raw_count      = static_cast<int>(hits_buf.size());
+      out_n_hits_filtered_count = 0;
+      out_on_detector           = false;
       tPSF->Fill();
       ++flagged_off;
       continue;
     }
 
     // Imposta il flag: on_detector solo se ci sono abbastanza hit
-    bool on_det = (res.n_hits_filtered >= min_hits);
+    bool on_det = (res.n_hits_filtered_count >= min_hits);
 
-    out_config_id       = run_cfg_id;
-    out_x1              = it->second.first;
-    out_x2              = it->second.second;
-    out_x_source        = x_source_r;
-    out_y_source        = y_source_r;
-    out_mean_y          = res.mean_y;
-    out_mean_z          = res.mean_z;
-    out_cov_yy          = res.cov_yy;
-    out_cov_yz          = res.cov_yz;
-    out_cov_zz          = res.cov_zz;
-    out_n_hits_raw      = res.n_hits_raw;
-    out_n_hits_filtered = res.n_hits_filtered;
-    out_on_detector     = on_det;
+    out_config_id             = run_cfg_id;
+    out_x1                    = it->second.first;
+    out_x2                    = it->second.second;
+    out_x_source              = x_source_r;
+    out_y_source              = y_source_r;
+    out_mean_y                = res.mean_y;
+    out_mean_z                = res.mean_z;
+    out_cov_yy                = res.cov_yy;
+    out_cov_yz                = res.cov_yz;
+    out_cov_zz                = res.cov_zz;
+    out_n_hits_raw            = res.n_hits_raw;
+    out_n_hits_filtered       = res.n_hits_filtered;
+    out_n_hits_raw_count      = res.n_hits_raw_count;
+    out_n_hits_filtered_count = res.n_hits_filtered_count;
+    out_on_detector           = on_det;
     tPSF->Fill();
 
     if (!on_det)

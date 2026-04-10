@@ -19,11 +19,10 @@
 
 namespace riptide {
 
-void EventAction::AddPhotonHit(double y, double z) {
-  PhotonHit photon;
-  photon.y = y;
-  photon.z = z;
-  eventHits.push_back(photon);
+// Funzione che viene chiamata dal SensitiveDetector per registrare un hit
+void EventAction::AddPhotonHit(double y, double z, double weight) {
+  eventHits.push_back({static_cast<float>(y), static_cast<float>(z)});
+  m_lastRunHitCount += weight;
 }
 
 void EventAction::BeginOfEventAction(const G4Event* /*event*/) {
@@ -32,8 +31,7 @@ void EventAction::BeginOfEventAction(const G4Event* /*event*/) {
 
 // Alla fine dell'evento, aggiorna il conteggio totale dei fotoni
 void EventAction::EndOfEventAction(const G4Event* /*event*/) {
-  m_lastRunHitCount = static_cast<int>(eventHits.size());
-
+  // m_lastRunHitCount è aggiornato in AddPhotonHit e tiene conto dei pesi.
   // Non puliamo eventHits qui, lo facciamo manualmente in lens_scan/optimizer
   // all'inizio di ogni run per permettere l'accumulo vettoriale.
 }

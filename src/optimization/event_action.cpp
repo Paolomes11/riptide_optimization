@@ -20,8 +20,8 @@
 namespace riptide {
 
 // Funzione che viene chiamata dal SensitiveDetector per registrare un hit
-void EventAction::AddPhotonHit() {
-  m_lastRunHitCount++;
+void EventAction::AddPhotonHit(double weight) {
+  m_lastRunHitCount += weight;
 }
 
 // Funzione per impostare l'identificatore della configurazione

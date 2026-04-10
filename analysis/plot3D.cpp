@@ -95,7 +95,8 @@ int main(int argc, char** argv) {
     tree_eff = (TTree*)file.Get("Runs");
 
   double x1_val, x2_val;
-  int config_id, n_photons_val, n_hits_val;
+  int config_id, n_photons_val;
+  double n_hits_val;
   char l1_id_buf[256], l2_id_buf[256];
 
   tree_config->SetBranchAddress("x1", &x1_val);
@@ -130,11 +131,8 @@ int main(int argc, char** argv) {
     lens2_idx[lens2_list[i]] = i;
 
   tree_eff->SetBranchAddress("config_id", &config_id);
+  tree_eff->SetBranchAddress("n_photons", &n_photons_val);
   tree_eff->SetBranchAddress("n_hits", &n_hits_val);
-  if (tree_eff->GetBranch("n_photons"))
-    tree_eff->SetBranchAddress("n_photons", &n_photons_val);
-  else
-    n_photons_val = config.value("n_photons", 10000);
 
   std::map<int, double> efficiency_sum;
   std::map<int, int> n_entries;

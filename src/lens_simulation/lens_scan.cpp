@@ -16,9 +16,12 @@
 #include "action_initialization.hpp"
 #include "detector_construction.hpp"
 #include "event_action.hpp"
+#include "importance_sampling.hpp"
+#include "primary_generator_action.hpp"
 
 #include <G4AnalysisManager.hh>
 #include <G4RunManager.hh>
+#include <G4SystemOfUnits.hh>
 #include <G4UImanager.hh>
 
 #include <nlohmann/json.hpp>
@@ -88,13 +91,12 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   std::vector<float> z_hits_vec;
 
   // Ntuple 1: posizione sorgente / run + Hits (vettori)
-  analysisManager->CreateNtuple("Runs", "Source positions and hits per configuration");
-  analysisManager->CreateNtupleIColumn("run_id");
+  analysisManager->CreateNtuple("Runs", "PSF data");
   analysisManager->CreateNtupleIColumn("config_id");
-  analysisManager->CreateNtupleFColumn("x_source");
-  analysisManager->CreateNtupleFColumn("y_source");
-  analysisManager->CreateNtupleIColumn("n_hits");
-
+  analysisManager->CreateNtupleIColumn("run_id");
+  analysisManager->CreateNtupleDColumn("x_source");
+  analysisManager->CreateNtupleDColumn("y_source");
+  analysisManager->CreateNtupleDColumn("n_hits");
   analysisManager->CreateNtupleFColumn("y_hits", y_hits_vec);
   analysisManager->CreateNtupleFColumn("z_hits", z_hits_vec);
   analysisManager->FinishNtuple(1);
@@ -165,6 +167,34 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
         UImanager->ApplyCommand("/gps/pos/centre " + std::to_string(x_source) + " "
                                 + std::to_string(y_source) + " 0 mm");
 
+        // Calcola il cono statico per questo run (sorgente puntiforme)
+        if (config.value("use_importance_sampling", false)) {
+          G4ThreeVector pos(x_source, y_source, 0);
+          G4ThreeVector axis;
+          double maxTheta;
+          auto params = det->GetLens75Params();
+          axis        = (G4ThreeVector(params.x, 0, 0) - pos).unit();
+          ImportanceSamplingHelper::CalculateCone(pos, params, axis, maxTheta);
+
+          // Angolo solido emisferico originale (piatto)
+          double originalOmega = 2.0 * M_PI;
+          double cosMaxTheta   = std::cos(maxTheta);
+          double newOmega      = 2.0 * M_PI * (1.0 - cosMaxTheta);
+          double weight        = newOmega / originalOmega;
+
+          if (run_counter == 0) {
+            spdlog::info("Configured Importance Sampling: theta_max = {:.2f} deg, weight = {:.4f}",
+                         maxTheta * 180.0 / M_PI, weight);
+          }
+
+          auto* primaryGen =
+              const_cast<PrimaryGeneratorAction*>(static_cast<const PrimaryGeneratorAction*>(
+                  run_manager->GetUserPrimaryGeneratorAction()));
+          if (primaryGen) {
+            primaryGen->SetStaticCone(axis, maxTheta);
+          }
+        }
+
         int run_id        = run_counter++;
         auto* eventAction = dynamic_cast<EventAction*>(
             const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
@@ -190,11 +220,12 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
             z_hits_vec.push_back(h.z);
           }
 
-          analysisManager->FillNtupleIColumn(1, 0, run_id);
-          analysisManager->FillNtupleIColumn(1, 1, config_counter);
-          analysisManager->FillNtupleFColumn(1, 2, static_cast<float>(x_source));
-          analysisManager->FillNtupleFColumn(1, 3, static_cast<float>(y_source));
-          analysisManager->FillNtupleIColumn(1, 4, static_cast<int>(hits.size()));
+          double n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0.0;
+          analysisManager->FillNtupleIColumn(1, 0, config_counter);
+          analysisManager->FillNtupleIColumn(1, 1, run_id);
+          analysisManager->FillNtupleDColumn(1, 2, x_source);
+          analysisManager->FillNtupleDColumn(1, 3, y_source);
+          analysisManager->FillNtupleDColumn(1, 4, n_hits);
           analysisManager->AddNtupleRow(1);
         }
 

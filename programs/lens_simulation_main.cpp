@@ -28,8 +28,10 @@
 #include <G4VisExecutive.hh>
 
 #include <lyra/lyra.hpp>
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <memory>
 #include <sstream>
@@ -115,8 +117,19 @@ int main(int argc, char** argv) {
       run_manager.SetUserInitialization(
           new riptide::DetectorConstruction(geometry_path.string(), 75.9, 164.4));
     }
+    // Carica configurazione JSON per importance sampling
+    bool use_importance_sampling = false;
+    std::ifstream f(config_file);
+    if (f.is_open()) {
+      auto config             = nlohmann::json::parse(f);
+      use_importance_sampling = config.value("use_importance_sampling", false);
+      if (use_importance_sampling) {
+        spdlog::info("Geometric importance sampling enabled");
+      }
+    }
+
     run_manager.SetUserInitialization(new riptide::PhysicsList());
-    run_manager.SetUserInitialization(new riptide::ActionInitialization());
+    run_manager.SetUserInitialization(new riptide::ActionInitialization(use_importance_sampling));
     run_manager.Initialize();
 
     auto UImanager              = G4UImanager::GetUIpointer();

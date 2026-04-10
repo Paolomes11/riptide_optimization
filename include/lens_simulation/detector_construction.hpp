@@ -19,6 +19,7 @@
 #include <G4VPhysicalVolume.hh>
 #include <G4VUserDetectorConstruction.hh>
 
+#include "importance_sampling.hpp"
 #include "lens_cutter.hpp"
 #include <filesystem>
 #include <optional>
@@ -34,10 +35,15 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   double m_lens60_x;
 
   // Dimensioni e offset (aggiornate in Construct)
-  double m_lens75_thickness     = 12.5;
-  double m_lens60_thickness     = 16.3;
-  double m_lens75_center_offset = -32.35;
-  double m_lens60_center_offset = 22.75;
+  double m_lens75_thickness      = 12.5;
+  double m_lens60_thickness      = 16.3;
+  double m_lens75_edge_thickness = 1.0;
+  double m_lens75_center_offset  = -32.35;
+  double m_lens60_center_offset  = 22.75;
+  double m_lens75_diameter       = 50.8; // Default 2 inch
+  double m_lens75_R1             = 75.0; // Default
+  double m_lens75_R2             = 75.0;
+  bool m_lens75_is_biconvex      = true;
 
   // IDs per lenti Thorlabs (opzionali)
   std::optional<std::string> m_lens75_id;
@@ -67,22 +73,23 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   // Getter per dimensioni e posizioni
   double GetLens75Thickness() const;
   double GetLens60Thickness() const;
-
-  double GetLens75CenterOffset() const;
-  double GetLens60CenterOffset() const;
-
   double GetLens75X() const {
     return m_lens75_x;
   }
+
+  // Restituisce i parametri completi per l'importance sampling
+  ImportanceSamplingHelper::LensParams GetLens75Params() const;
+
+  double GetLens75CenterOffset() const;
+  double GetLens60CenterOffset() const;
   double GetLens60X() const {
     return m_lens60_x;
   }
-
   std::string GetLens75Id() const {
-    return m_lens75_id.value_or("LB4553");
+    return m_lens75_id.value_or("");
   }
   std::string GetLens60Id() const {
-    return m_lens60_id.value_or("LB4592");
+    return m_lens60_id.value_or("");
   }
 };
 

@@ -63,7 +63,8 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory*) {
   if (!eventAction)
     return false;
 
-  eventAction->AddPhotonHit();
+  double weight = step->GetTrack()->GetWeight();
+  eventAction->AddPhotonHit(weight);
   step->GetTrack()->SetTrackStatus(fStopAndKill);
   return true;
 }

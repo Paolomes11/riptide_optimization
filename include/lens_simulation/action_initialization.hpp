@@ -21,8 +21,13 @@
 namespace riptide {
 
 class ActionInitialization : public G4VUserActionInitialization {
+  bool m_useImportanceSampling = false;
+
  public:
-  ActionInitialization() = default;
+  ActionInitialization(bool useImportanceSampling = false)
+      : m_useImportanceSampling(useImportanceSampling) {
+  }
+  virtual ~ActionInitialization() = default;
 
   void BuildForMaster() const override;
   void Build() const override;

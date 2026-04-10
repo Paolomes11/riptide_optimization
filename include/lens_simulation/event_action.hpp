@@ -33,7 +33,7 @@ class EventAction : public G4UserEventAction {
   std::vector<PhotonHit> eventHits;
 
   // Per evitare run_id
-  int m_lastRunHitCount = 0;
+  double m_lastRunHitCount = 0;
 
   // puntatore statico
   static inline EventAction* s_currentEventAction = nullptr;
@@ -43,7 +43,7 @@ class EventAction : public G4UserEventAction {
   virtual ~EventAction() = default;
 
   // Funzione che viene chiamata dal SensitiveDetector per registrare un hit
-  void AddPhotonHit(double y, double z);
+  void AddPhotonHit(double y, double z, double weight = 1.0);
 
   // Getter per ottenere tutti gli hit di questo evento
   const std::vector<PhotonHit>& GetEventHits() const {
@@ -56,7 +56,7 @@ class EventAction : public G4UserEventAction {
   }
 
   // n_hits getter e clearer
-  int GetLastRunHitCount() const {
+  double GetLastRunHitCount() const {
     return m_lastRunHitCount;
   }
 

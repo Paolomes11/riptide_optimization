@@ -13,10 +13,12 @@
  */
 
 #include "action_initialization.hpp"
+#include "detector_construction.hpp"
 #include "event_action.hpp"
 #include "primary_generator_action.hpp"
 #include "run_action.hpp"
 #include "stepping_action.hpp"
+#include <G4RunManager.hh>
 
 namespace riptide {
 
@@ -26,7 +28,13 @@ void ActionInitialization::BuildForMaster() const {
 
 void ActionInitialization::Build() const {
   // Azioni standard
-  SetUserAction(new PrimaryGeneratorAction());
+  auto* primaryGen = new PrimaryGeneratorAction();
+  if (m_useImportanceSampling) {
+    auto* det = static_cast<const DetectorConstruction*>(
+        G4RunManager::GetRunManager()->GetUserDetectorConstruction());
+    primaryGen->SetImportanceSampling(true, [det]() { return det->GetLens75Params(); });
+  }
+  SetUserAction(primaryGen);
   SetUserAction(new RunAction());
 
   // SteppingAction per ottimizzazione uccisione fotoni

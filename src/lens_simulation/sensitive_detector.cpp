@@ -39,8 +39,9 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* /*hi
   }
 
   // Registra il fotone come "hit"
-  auto pos   = pre->GetPosition();
-  eventAction->AddPhotonHit(pos.y(), pos.z());
+  auto pos      = pre->GetPosition();
+  double weight = track->GetWeight();
+  eventAction->AddPhotonHit(pos.y(), pos.z(), weight);
 
   // Kill the photon after detection to stop tracking
   track->SetTrackStatus(fStopAndKill);

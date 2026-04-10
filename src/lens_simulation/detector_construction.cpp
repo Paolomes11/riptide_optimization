@@ -210,8 +210,13 @@ void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::st
       double offset = sign * lens->get_center_offset();
 
       if (is_lens75) {
-        m_lens75_thickness     = lens->center_thickness;
-        m_lens75_center_offset = offset;
+        m_lens75_thickness      = lens->center_thickness;
+        m_lens75_edge_thickness = lens->edge_thickness;
+        m_lens75_center_offset  = offset;
+        m_lens75_diameter       = lens->diameter;
+        m_lens75_R1             = lens->radius_of_curvature;
+        m_lens75_R2 = (lens->type == LensType::Biconvex) ? lens->radius_of_curvature : 1e12; // Flat
+        m_lens75_is_biconvex = (lens->type == LensType::Biconvex);
       } else {
         m_lens60_thickness     = lens->center_thickness;
         m_lens60_center_offset = offset;
@@ -227,6 +232,11 @@ void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::st
     replace_solid(m_lens75_phys, lens75_id, true);
   if (m_lens60_phys)
     replace_solid(m_lens60_phys, lens60_id, false);
+}
+
+ImportanceSamplingHelper::LensParams DetectorConstruction::GetLens75Params() const {
+  return {m_lens75_x,         m_lens75_diameter,       m_lens75_R1,         m_lens75_R2,
+          m_lens75_thickness, m_lens75_edge_thickness, m_lens75_is_biconvex};
 }
 
 double DetectorConstruction::GetLens75Thickness() const {
