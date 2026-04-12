@@ -3,9 +3,12 @@
 /gps/energy 2.5 eV
 
 # Sorgente: piccola sferetta
-/gps/pos/type Volume
-/gps/pos/shape Sphere
-/gps/pos/radius 0.1 mm
+#/gps/pos/type Volume
+#/gps/pos/shape Sphere
+#/gps/pos/radius 0.1 mm
+
+# Sorgente: puntiforme
+/gps/pos/type Point
 
 # Emissione: isotropa verso il detector (+X)
 /gps/ang/type iso

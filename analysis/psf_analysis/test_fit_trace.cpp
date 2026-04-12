@@ -356,6 +356,31 @@ static void test_T7() {
         T);
 }
 
+// T8: selezione automatica asse — traccia quasi verticale
+// Con Δz >> Δy, il fit deve scegliere FitAxis::YvsZ e produrre chi2 ≈ 0.
+static void test_T8() {
+  std::cout << "\n[T8] Selezione automatica asse: traccia quasi verticale\n";
+  const std::string T = "T8";
+
+  const int N = 21;
+  std::vector<riptide::TracePoint> trace;
+  trace.reserve(N);
+  for (int i = 0; i < N; ++i) {
+    double z = -5.0 + 10.0 * i / (N - 1);
+    double y = 0.02 * z;
+    trace.push_back(make_point(static_cast<double>(i), y, z, 0.0001, 0.01));
+  }
+
+  riptide::LineFitResult res = riptide::fit_trace(trace);
+
+  check(res.axis == riptide::FitAxis::YvsZ, "axis == YvsZ per traccia verticale", T);
+  check(res.converged, "converged", T);
+  near(res.chi2, 0.0, 1e-6, "chi2 ≈ 0 (punti collineari)", T);
+  near(res.chi2_ndof, 0.0, 1e-6, "chi2/ndof ≈ 0", T);
+  near(res.a, 0.02, 1e-6, "a ≈ 0.02 (pendenza y vs z)", T);
+  near(res.b, 0.0, 1e-6, "b ≈ 0 (intercetta)", T);
+}
+
 // Suite TV
 static void test_TV() {
   std::cout << "\n[TV1] is_trace_valid: tutti i punti validi\n";
@@ -397,14 +422,14 @@ static void test_TQ1() {
   qcfg.n_tracks                 = 10;
   qcfg.scint_x                  = 10.0;
   qcfg.scint_y                  = 10.0;
-  qcfg.scint_z                  = 10.0;
+  qcfg.scint_z                  = 0.0;
   qcfg.trace_dt                 = 0.5;
   qcfg.apply_temporal_unfolding = false;
 
   riptide::QResult res;
   bool threw = false;
   try {
-    res = riptide::compute_Q(cfg, db, qcfg);
+    res = riptide::compute_Q(cfg, db, qcfg, true);
   } catch (const std::exception& e) {
     std::cerr << "  ECCEZIONE: " << e.what() << "\n";
     threw = true;
@@ -430,12 +455,12 @@ static void test_TQ2() {
   riptide::QConfig qcfg;
   qcfg.scint_x                  = 20.0;
   qcfg.scint_y                  = 10.0;
-  qcfg.scint_z                  = 10.0;
+  qcfg.scint_z                  = 0.0;
   qcfg.n_tracks                 = 50;
   qcfg.trace_dt                 = 0.5;
   qcfg.apply_temporal_unfolding = false;
 
-  auto res = riptide::compute_Q(cfg, db, qcfg);
+  auto res = riptide::compute_Q(cfg, db, qcfg, true);
   check(res.n_traces > 0, "n_traces > 0", T);
   near(res.Q, 0.0, 1e-4, "Q ≈ 0", T);
 }
@@ -586,6 +611,7 @@ int main() {
   test_T5();
   test_T6();
   test_T7();
+  test_T8();
   test_TV();
   test_TQ1();
   test_TQ2();

@@ -40,6 +40,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -58,7 +59,6 @@ struct Config {
   std::string psf_path = "output/psf/psf_data.root";
   std::string output   = "";
   bool fit             = false;
-  bool unfold          = false;
 };
 
 Config parse_args(int argc, char** argv) {
@@ -100,8 +100,6 @@ Config parse_args(int argc, char** argv) {
       cfg.output = next();
     else if (key == "--fit")
       cfg.fit = true;
-    else if (key == "--unfold")
-      cfg.unfold = true;
   }
   return cfg;
 }
@@ -267,50 +265,83 @@ int main(int argc, char** argv) {
 
   double total_L = std::hypot(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
 
-  // Eventuale unfolding e fit
+  // Eventuale fit
   riptide::LineFitResult fit_res;
   bool has_fit = false;
   if (cfg.fit) {
-    std::vector<riptide::TracePoint> fit_input = trace;
-    if (cfg.unfold) {
-      double dz = total_L / static_cast<double>(trace.size() - 1);
-      for (size_t i = 0; i < fit_input.size(); ++i)
-        fit_input[i].mu_z += static_cast<double>(i) * dz;
-    }
     try {
-      fit_res = riptide::fit_trace(fit_input);
+      fit_res = riptide::fit_trace(trace);
       has_fit = true;
     } catch (const std::exception& e) {
       std::cerr << "Fit fallito: " << e.what() << "\n";
     }
   }
 
-  double y_min = 1e9, y_max = -1e9, z_min = 1e9, z_max = -1e9;
-  double max_sigma_y = 0, max_sigma_z = 0;
+  const int N = static_cast<int>(trace.size());
 
+  std::vector<double> gy, gz;
+  gy.reserve(N);
+  gz.reserve(N);
   for (const auto& pt : trace) {
-    y_min       = std::min(y_min, pt.mu_y);
-    y_max       = std::max(y_max, pt.mu_y);
-    z_min       = std::min(z_min, pt.mu_z);
-    z_max       = std::max(z_max, pt.mu_z);
-    max_sigma_y = std::max(max_sigma_y, std::sqrt(pt.cov.yy));
-    max_sigma_z = std::max(max_sigma_z, std::sqrt(pt.cov.zz));
+    gy.push_back(pt.mu_y);
+    gz.push_back(pt.mu_z);
   }
 
-  // Margine Y: 3 sigma o 15% del range di mu_y (il maggiore), floor 0.005 mm
-  double mu_y_range = (y_max > y_min) ? (y_max - y_min) : 0.0;
-  double margin_y   = std::max({3.0 * max_sigma_y * cfg.sigma_scale, 0.15 * mu_y_range, 0.005});
-  double py_min     = y_min - margin_y;
-  double py_max     = y_max + margin_y;
+  double y_min       = std::numeric_limits<double>::infinity();
+  double y_max       = -std::numeric_limits<double>::infinity();
+  double z_min       = std::numeric_limits<double>::infinity();
+  double z_max       = -std::numeric_limits<double>::infinity();
+  double max_sigma_y = 0.0, max_sigma_z = 0.0;
 
-  double z_center = (z_min + z_max) / 2.0;
-  // Margine Z: 3 sigma o 15% del range di mu_z.
-  // NON si usa il range Y come floor: le due scale sono indipendenti.
-  // Floor assoluto 0.005 mm per evitare range degeneri.
-  double mu_z_range = (z_max > z_min) ? (z_max - z_min) : 0.0;
-  double z_half     = std::max({3.0 * max_sigma_z * cfg.sigma_scale, 0.15 * mu_z_range, 0.0005});
-  double pz_min     = z_center - z_half;
-  double pz_max     = z_center + z_half;
+  for (const auto& pt : trace) {
+    max_sigma_y = std::max(max_sigma_y, std::sqrt(std::max(0.0, pt.cov.yy)));
+    max_sigma_z = std::max(max_sigma_z, std::sqrt(std::max(0.0, pt.cov.zz)));
+
+    auto el = cov_to_ellipse(pt.mu_y, pt.mu_z, pt.cov, cfg.sigma_scale);
+    if (el.a > 0.0 && el.b > 0.0) {
+      double theta = el.theta_deg * M_PI / 180.0;
+      double c     = std::cos(theta);
+      double s     = std::sin(theta);
+      double dy    = std::sqrt(el.a * el.a * c * c + el.b * el.b * s * s);
+      double dz    = std::sqrt(el.a * el.a * s * s + el.b * el.b * c * c);
+      y_min        = std::min(y_min, pt.mu_y - dy);
+      y_max        = std::max(y_max, pt.mu_y + dy);
+      z_min        = std::min(z_min, pt.mu_z - dz);
+      z_max        = std::max(z_max, pt.mu_z + dz);
+    } else {
+      y_min = std::min(y_min, pt.mu_y);
+      y_max = std::max(y_max, pt.mu_y);
+      z_min = std::min(z_min, pt.mu_z);
+      z_max = std::max(z_max, pt.mu_z);
+    }
+  }
+
+  if (has_fit) {
+    double y_start = y_min;
+    double y_end   = y_max;
+    double z_start = fit_res.a * y_start + fit_res.b;
+    double z_end   = fit_res.a * y_end + fit_res.b;
+    y_min          = std::min({y_min, y_start, y_end});
+    y_max          = std::max({y_max, y_start, y_end});
+    z_min          = std::min({z_min, z_start, z_end});
+    z_max          = std::max({z_max, z_start, z_end});
+  }
+
+  if (!std::isfinite(y_min) || !std::isfinite(y_max) || !std::isfinite(z_min)
+      || !std::isfinite(z_max)) {
+    std::cerr << "Errore: bounds non finiti\n";
+    return 1;
+  }
+
+  double y_range  = std::max(0.0, y_max - y_min);
+  double z_range  = std::max(0.0, z_max - z_min);
+  double margin_y = std::max({0.05 * y_range, 3.0 * max_sigma_y * cfg.sigma_scale, 0.005});
+  double margin_z = std::max({0.05 * z_range, 3.0 * max_sigma_z * cfg.sigma_scale, 0.005});
+
+  double py_min = y_min - margin_y;
+  double py_max = y_max + margin_y;
+  double pz_min = z_min - margin_z;
+  double pz_max = z_max + margin_z;
 
   //  Applica stile e crea palette
 
@@ -376,8 +407,6 @@ int main(int argc, char** argv) {
   frame->GetYaxis()->SetNdivisions(505);
   frame->Draw("AXIS");
 
-  const int N = static_cast<int>(trace.size());
-
   // Indice del punto centrale (t più vicino a 0, ovvero il verde della palette)
   int i_center = N / 2;
 
@@ -420,14 +449,6 @@ int main(int argc, char** argv) {
   }
 
   // Linea del centroide
-  std::vector<double> gy, gz;
-  gy.reserve(N);
-  gz.reserve(N);
-  for (const auto& pt : trace) {
-    gy.push_back(pt.mu_y);
-    gz.push_back(pt.mu_z);
-  }
-
   TGraph* g_line = new TGraph(N, gy.data(), gz.data());
   g_line->SetLineColor(kBlack);
   g_line->SetLineWidth(2);
@@ -435,21 +456,24 @@ int main(int argc, char** argv) {
 
   // Disegna fit se presente
   if (has_fit) {
-    double y_start = gy.front();
-    double y_end   = gy.back();
-    double z_start = fit_res.a * y_start + fit_res.b;
-    double z_end   = fit_res.a * y_end + fit_res.b;
-    if (cfg.unfold) {
-      // Se c'è unfolding, non possiamo disegnare la retta 2D direttamente perché
-      // i punti mu_z originali non sono quelli del fit.
-      // Però possiamo mostrare i punti "unfolded" se l'utente vuole.
+    TLine* l_fit = nullptr;
+    if (fit_res.axis == riptide::FitAxis::ZvsY) {
+      double y_start = py_min;
+      double y_end   = py_max;
+      double z_start = fit_res.a * y_start + fit_res.b;
+      double z_end   = fit_res.a * y_end + fit_res.b;
+      l_fit          = new TLine(y_start, z_start, y_end, z_end);
     } else {
-      TLine* l_fit = new TLine(y_start, z_start, y_end, z_end);
-      l_fit->SetLineColor(kRed + 1);
-      l_fit->SetLineStyle(2);
-      l_fit->SetLineWidth(3);
-      l_fit->Draw("same");
+      double z_start = pz_min;
+      double z_end   = pz_max;
+      double y_start = fit_res.a * z_start + fit_res.b;
+      double y_end   = fit_res.a * z_end + fit_res.b;
+      l_fit          = new TLine(y_start, z_start, y_end, z_end);
     }
+    l_fit->SetLineColor(kRed + 1);
+    l_fit->SetLineStyle(2);
+    l_fit->SetLineWidth(3);
+    l_fit->Draw("same");
   }
 
   // Marker colorati: stessa logica centro → bordi
@@ -602,9 +626,14 @@ int main(int argc, char** argv) {
 
   // Colonna 3
   if (has_fit) {
-    info.DrawLatex(col3_x, row1_y, ("#chi^{2}/ndof = " + fmt(fit_res.chi2_ndof, 3)).c_str());
-    info.DrawLatex(col3_x, row2_y,
-                   ("fit: z = " + fmt(fit_res.a, 3) + "y + " + fmt(fit_res.b, 3)).c_str());
+    info.DrawLatex(col3_x, row1_y,
+                   ("#chi^{2}/ndof = " + fmt(fit_res.chi2_ndof, 3) + "   (N = "
+                    + std::to_string(fit_res.n_points_used) + "/" + std::to_string(N) + ")")
+                       .c_str());
+    std::string fit_str = (fit_res.axis == riptide::FitAxis::ZvsY)
+                            ? "fit: z = " + fmt(fit_res.a, 3) + "y + " + fmt(fit_res.b, 3)
+                            : "fit: y = " + fmt(fit_res.a, 3) + "z + " + fmt(fit_res.b, 3);
+    info.DrawLatex(col3_x, row2_y, fit_str.c_str());
   } else {
     info.DrawLatex(col3_x, row1_y, ("#sigma_{y,max} = " + fmt(max_sigma_y, 4) + " mm").c_str());
     info.DrawLatex(col3_x, row2_y, ("#sigma_{z,max} = " + fmt(max_sigma_z, 4) + " mm").c_str());

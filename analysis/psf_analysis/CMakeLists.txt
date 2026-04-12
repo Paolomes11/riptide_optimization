@@ -84,3 +84,26 @@ set_tests_properties(fit_trace_unit PROPERTIES
     LABELS "unit;psf_analysis"
     TIMEOUT 30
 )
+
+add_executable(test_chi2_diagnostics
+    test_chi2_diagnostics.cpp
+)
+target_link_libraries(test_chi2_diagnostics
+    PRIVATE psf_analysis
+    ${ROOT_LIBRARIES}
+)
+target_include_directories(test_chi2_diagnostics
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${ROOT_INCLUDE_DIRS}
+)
+target_compile_features(test_chi2_diagnostics PRIVATE cxx_std_17)
+
+add_test(
+    NAME chi2_diagnostics
+    COMMAND test_chi2_diagnostics
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(chi2_diagnostics PROPERTIES
+    LABELS "unit;psf_analysis;chi2"
+    TIMEOUT 30
+)

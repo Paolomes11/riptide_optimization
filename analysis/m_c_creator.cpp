@@ -21,10 +21,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <string>
 #include <vector>
 
 struct Hit {
@@ -33,17 +35,50 @@ struct Hit {
 };
 
 int main(int argc, char** argv) {
-  if (argc != 4) {
-    std::cerr << "Uso: " << argv[0] << " x1_target x2_target y0_target\n";
+  std::string input_path  = "output/lens_simulation/lens.root";
+  std::string output_name = "";
+
+  std::vector<std::string> positional;
+  positional.reserve(static_cast<size_t>(std::max(0, argc - 1)));
+
+  for (int i = 1; i < argc; ++i) {
+    std::string a = argv[i];
+    if (a == "-i" || a == "--input") {
+      if (i + 1 >= argc) {
+        std::cerr << "Errore: flag " << a << " richiede un argomento\n";
+        return 1;
+      }
+      input_path = argv[++i];
+      continue;
+    }
+    if (a == "-o" || a == "--output") {
+      if (i + 1 >= argc) {
+        std::cerr << "Errore: flag " << a << " richiede un argomento\n";
+        return 1;
+      }
+      output_name = argv[++i];
+      continue;
+    }
+    positional.push_back(a);
+  }
+
+  if (positional.size() != 3 && positional.size() != 4) {
+    std::cerr << "Uso: " << argv[0]
+              << " [--input <path>] [--output <name|path>] x1_target x2_target y0_target "
+                 "[x0_target]\n";
     return 1;
   }
 
-  double x1_target = std::stod(argv[1]);
-  double x2_target = std::stod(argv[2]);
-  double y0_target = std::stod(argv[3]);
+  double x1_target = std::stod(positional[0]);
+  double x2_target = std::stod(positional[1]);
+  double y0_target = std::stod(positional[2]);
+  double x0_target = 0.0;
+  if (positional.size() == 4) {
+    x0_target = std::stod(positional[3]);
+  }
 
   // apri file ROOT
-  TFile* file = TFile::Open("output/lens_simulation/lens_20260320_152738.root");
+  TFile* file = TFile::Open(input_path.c_str());
   if (!file || file->IsZombie()) {
     std::cerr << "Errore nell'aprire il file ROOT\n";
     return 1;
@@ -68,13 +103,15 @@ int main(int argc, char** argv) {
 
   int run_id, run_config;
   double n_hits_run;
-  double y_source;
+  double x_source                = 0.0;
+  double y_source                = 0.0;
   std::vector<float>* y_hits_ptr = nullptr;
   std::vector<float>* z_hits_ptr = nullptr;
 
   tRuns->SetBranchAddress("run_id", &run_id);
   tRuns->SetBranchAddress("config_id", &run_config);
-  tRuns->SetBranchAddress("x_source", &y_source);
+  tRuns->SetBranchAddress("x_source", &x_source);
+  tRuns->SetBranchAddress("y_source", &y_source);
   tRuns->SetBranchAddress("n_hits", &n_hits_run);
   tRuns->SetBranchAddress("y_hits", &y_hits_ptr);
   tRuns->SetBranchAddress("z_hits", &z_hits_ptr);
@@ -103,20 +140,24 @@ int main(int argc, char** argv) {
   std::cout << "Configurazione scelta: config_id=" << target_config_id << ", x1=" << x1_sel
             << ", x2=" << x2_sel << "\n";
 
-  // trova run più vicino a y0_target
+  // trova run più vicino a (x0_target, y0_target)
   int target_run_id = -1;
   best_dist         = std::numeric_limits<double>::max();
-  float y_sel       = 0;
+  double x_sel      = 0.0;
+  double y_sel      = 0.0;
 
   for (Long64_t i = 0; i < tRuns->GetEntries(); ++i) {
     tRuns->GetEntry(i);
     if (run_config != target_config_id)
       continue;
 
-    double dist = std::abs(y_source - y0_target);
+    double dx   = x_source - x0_target;
+    double dy   = y_source - y0_target;
+    double dist = std::sqrt(dx * dx + dy * dy);
     if (dist < best_dist) {
       best_dist     = dist;
       target_run_id = run_id;
+      x_sel         = x_source;
       y_sel         = y_source;
     }
   }
@@ -125,14 +166,21 @@ int main(int argc, char** argv) {
     std::cerr << "Nessun run trovato per questa configurazione!\n";
     return 1;
   }
-  std::cout << "Run scelto: run_id=" << target_run_id << ", y_source=" << y_sel << "\n";
+  std::cout << "Run scelto: run_id=" << target_run_id << ", x_source=" << x_sel
+            << ", y_source=" << y_sel << "\n";
 
   // Carica le hit dal run scelto
   std::vector<Hit> hits;
+  double run_weight = 1.0;
+  int n_hits_count  = 0;
   for (Long64_t i = 0; i < tRuns->GetEntries(); ++i) {
     tRuns->GetEntry(i);
     if (run_id == target_run_id) {
       if (y_hits_ptr && z_hits_ptr) {
+        n_hits_count = static_cast<int>(y_hits_ptr->size());
+        if (n_hits_count > 0) {
+          run_weight = n_hits_run / static_cast<double>(n_hits_count);
+        }
         for (size_t j = 0; j < y_hits_ptr->size(); ++j) {
           hits.push_back(
               {static_cast<double>((*y_hits_ptr)[j]), static_cast<double>((*z_hits_ptr)[j])});
@@ -146,6 +194,9 @@ int main(int argc, char** argv) {
     std::cerr << "Nessuna hit trovata!\n";
     return 1;
   }
+
+  std::cout << "Conteggi run: n_hits(pesato)=" << n_hits_run << ", n_hits_count=" << n_hits_count
+            << ", peso_per_hit=" << run_weight << "\n";
 
   // calcolo robusto media e covarianza con taglio ellittico
   const double max_sigma         = 2.0; // soglia (raggio ellisse)
@@ -219,6 +270,9 @@ int main(int argc, char** argv) {
 
   std::cout << "Hit dopo filtraggio: " << hits_filtered.size() << ", media y=" << y_mean
             << ", sigma y=" << y_sigma << ", media z=" << z_mean << ", sigma z=" << z_sigma << "\n";
+  std::cout << "Conteggi filtrati: n_hits_filtered(pesato)="
+            << static_cast<double>(hits_filtered.size()) * run_weight
+            << ", n_hits_filtered_count=" << hits_filtered.size() << "\n";
 
   // debug migliorato
   std::cout << "Prime 10 hit raccolte (y, z):\n";
@@ -236,14 +290,15 @@ int main(int argc, char** argv) {
   gStyle->SetOptStat(0);
   c->SetGrid();
 
-  TH2D* hist = new TH2D("hist",
-                        ("Hits: x1=" + std::to_string(x1_sel) + ", x2=" + std::to_string(x2_sel)
-                         + ", y0=" + std::to_string(y0_target))
-                            .c_str(),
-                        200, y_min, y_max, 200, z_min, z_max);
+  TH2D* hist =
+      new TH2D("hist",
+               ("Hits: x1=" + std::to_string(x1_sel) + ", x2=" + std::to_string(x2_sel)
+                + ", x0=" + std::to_string(x0_target) + ", y0=" + std::to_string(y0_target))
+                   .c_str(),
+               200, y_min, y_max, 200, z_min, z_max);
 
   for (auto& h : hits_filtered)
-    hist->Fill(h.y, h.z);
+    hist->Fill(h.y, h.z, run_weight);
 
   hist->GetXaxis()->SetTitle("Y [mm]");
   hist->GetYaxis()->SetTitle("Z [mm]");
@@ -252,11 +307,27 @@ int main(int argc, char** argv) {
   hist->GetYaxis()->SetTitleOffset(1.2);
   hist->Draw("COLZ");
 
-  std::ostringstream filename;
-  filename << "output/mean_covariance_maps/detector_hits_config_" << target_config_id << "_y0_"
-           << y0_target << ".png";
-  c->SaveAs(filename.str().c_str());
-  std::cout << "Immagine salvata in: " << filename.str() << "\n";
+  std::filesystem::path out_dir = "output/mean_covariance_maps";
+  std::filesystem::create_directories(out_dir);
+
+  std::filesystem::path out_path;
+  if (!output_name.empty()) {
+    out_path = std::filesystem::path(output_name);
+    if (!out_path.has_parent_path()) {
+      out_path = out_dir / out_path;
+    }
+    if (out_path.extension() != ".png") {
+      out_path.replace_extension(".png");
+    }
+  } else {
+    std::ostringstream filename;
+    filename << "detector_hits_config_" << target_config_id << "_x0_" << x0_target << "_y0_"
+             << y0_target << ".png";
+    out_path = out_dir / filename.str();
+  }
+
+  c->SaveAs(out_path.string().c_str());
+  std::cout << "Immagine salvata in: " << out_path << "\n";
 
   return 0;
 }

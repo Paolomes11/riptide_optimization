@@ -63,8 +63,11 @@ struct TracePoint {
   double z_src; // posizione z sorgente associata [mm]
   double mu_y;  // posizione media y sul detector [mm]
   double mu_z;  // posizione media z sul detector [mm]
-  Cov2 cov;     // matrice di covarianza associata [mm^2]
-  bool valid;   // mantenuto per compatibilità
+  // Errore standard sulla posizione media (mu_y, mu_z) [mm^2].
+  // = Sigma_distribuzione / n_hits_count.
+  // NON e' la covarianza della distribuzione dei fotoni sulla macchia PSF.
+  Cov2 cov;
+  bool valid; // mantenuto per compatibilità
   double n_hits;
   double n_hits_count;
 };
@@ -85,6 +88,11 @@ struct LensConfig {
 // Database PSF: mappa (x1,x2) -> lista ordinata di PSFPoint per y_source crescente
 using PSFDatabase = std::map<LensConfig, std::vector<PSFPoint>>;
 
+/// Asse scelto automaticamente da fit_trace() in base allo spread dei dati.
+/// ZvsY → modello z = a·y + b  (default, tracce oblique o quasi-orizzontali)
+/// YvsZ → modello y = a·z + b  (attivato quando spread_z > 3·spread_y)
+enum class FitAxis { ZvsY, YvsZ };
+
 /**
  * Risultato del fit ODR pesato della traccia media sul detector.
  * Modello: z = a*y + b
@@ -100,6 +108,7 @@ struct LineFitResult {
   double chi2_ndof;
   int n_iter;
   bool converged;
+  FitAxis axis = FitAxis::ZvsY; // asse selezionato automaticamente
 
   // Residui perpendicolari
   std::vector<double> residuals;

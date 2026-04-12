@@ -292,6 +292,10 @@ std::vector<TracePoint> build_trace_3d(const Point3D& p1, const Point3D& p2, con
     double c_yz =
         cos_p * sin_p * c0_yy + (cos_p * cos_p - sin_p * sin_p) * c0_yz - cos_p * sin_p * c0_zz;
 
+    // Scala la covarianza per n_hits_count: converte da dispersione della
+    // distribuzione dei fotoni a errore standard sulla posizione media mu_i.
+    // Questo è l'unico punto in cui la conversione deve avvenire.
+    double n_count = std::max(1.0, psf0.n_hits_count_interp);
     trace.push_back({t,
                      r,
                      x,
@@ -299,7 +303,7 @@ std::vector<TracePoint> build_trace_3d(const Point3D& p1, const Point3D& p2, con
                      z,
                      mu_y_rot,
                      mu_z_rot,
-                     {c_yy, c_yz, c_zz},
+                     {c_yy / n_count, c_yz / n_count, c_zz / n_count},
                      psf0.on_detector,
                      psf0.n_hits_interp,
                      psf0.n_hits_count_interp});
@@ -360,12 +364,9 @@ static bool solve_wls(const std::vector<double>& y, const std::vector<double>& z
 
 LineFitResult fit_trace(const std::vector<TracePoint>& trace, double min_hits_per_point,
                         int max_iter, double tol) {
-  // Estrai solo i punti validi (con abbastanza fotoni)
+  // --- Estrai punti validi ---
   std::vector<double> vy, vz;
   std::vector<Cov2> vcov;
-  vy.reserve(trace.size());
-  vz.reserve(trace.size());
-  vcov.reserve(trace.size());
   for (const auto& pt : trace) {
     if (pt.valid && pt.n_hits_count >= min_hits_per_point) {
       vy.push_back(pt.mu_y);
@@ -373,43 +374,69 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, double min_hits_pe
       vcov.push_back(pt.cov);
     }
   }
-
   const int N = static_cast<int>(vy.size());
   if (N < 3)
     throw std::invalid_argument("fit_trace: punti validi insufficienti (trovati: "
                                 + std::to_string(N) + ", richiesti: 3).");
 
+  // --- Selezione automatica dell'asse tramite spread non pesato ---
+  double mean_y = 0.0, mean_z = 0.0;
+  for (int i = 0; i < N; ++i) {
+    mean_y += vy[i];
+    mean_z += vz[i];
+  }
+  mean_y /= static_cast<double>(N);
+  mean_z /= static_cast<double>(N);
+
+  double var_y = 0.0, var_z = 0.0;
+  for (int i = 0; i < N; ++i) {
+    var_y += (vy[i] - mean_y) * (vy[i] - mean_y);
+    var_z += (vz[i] - mean_z) * (vz[i] - mean_z);
+  }
+
+  const FitAxis axis = (var_z > 9.0 * var_y) ? FitAxis::YvsZ : FitAxis::ZvsY;
+
+  // u = variabile indipendente, v = dipendente
+  const std::vector<double>& u = (axis == FitAxis::ZvsY) ? vy : vz;
+  const std::vector<double>& v = (axis == FitAxis::ZvsY) ? vz : vy;
+
+  // Accessor covarianza: se switchiamo assi, scambiamo yy↔zz; yz rimane invariato
+  auto get_cov_uu = [&](int i) { return (axis == FitAxis::ZvsY) ? vcov[i].yy : vcov[i].zz; };
+  auto get_cov_vv = [&](int i) { return (axis == FitAxis::ZvsY) ? vcov[i].zz : vcov[i].yy; };
+  auto get_cov_uv = [&](int i) { return vcov[i].yz; };
+
   LineFitResult res{};
+  res.axis          = axis;
   res.n_iter        = 0;
   res.converged     = false;
   res.n_points_used = N;
 
-  // Stima iniziale OLS
+  // --- Stima iniziale OLS ---
   {
     std::vector<double> w1(N, 1.0);
     double va, vb, cab;
-    if (!solve_wls(vy, vz, w1, res.a, res.b, va, vb, cab)) {
+    if (!solve_wls(u, v, w1, res.a, res.b, va, vb, cab)) {
       res.a = 0.0;
-      res.b = vz[0];
+      res.b = v[0];
     }
   }
 
-  // Loop IRLS
+  // --- Loop IRLS ---
   std::vector<double> ww(N);
   for (int iter = 0; iter < max_iter; ++iter) {
     res.n_iter    = iter + 1;
     double a_prev = res.a;
     double norm   = std::sqrt(1.0 + res.a * res.a);
-    double ny     = -res.a / norm;
-    double nz     = 1.0 / norm;
+    double nu     = -res.a / norm;
+    double nv     = 1.0 / norm;
 
     for (int i = 0; i < N; ++i) {
-      double sd2 = ny * ny * vcov[i].yy + 2.0 * ny * nz * vcov[i].yz + nz * nz * vcov[i].zz;
-      ww[i]      = 1.0 / std::max(sd2, 1e-6);
+      double sd2 =
+          nu * nu * get_cov_uu(i) + 2.0 * nu * nv * get_cov_uv(i) + nv * nv * get_cov_vv(i);
+      ww[i] = 1.0 / std::max(sd2, 1e-6);
     }
-
     double new_a, new_b;
-    if (!solve_wls(vy, vz, ww, new_a, new_b, res.sigma_a, res.sigma_b, res.cov_ab)) {
+    if (!solve_wls(u, v, ww, new_a, new_b, res.sigma_a, res.sigma_b, res.cov_ab)) {
       std::cerr << "[fit_trace] WLS singolare iter=" << iter + 1 << "\n";
       break;
     }
@@ -421,19 +448,20 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, double min_hits_pe
     }
   }
 
-  // χ², residui, pull
+  // --- χ², residui, pull ---
   double normf = std::sqrt(1.0 + res.a * res.a);
-  double nyf   = -res.a / normf;
-  double nzf   = 1.0 / normf;
+  double nuf   = -res.a / normf;
+  double nvf   = 1.0 / normf;
   res.chi2     = 0.0;
   res.residuals.resize(N);
   res.residual_sig.resize(N);
   res.pull.resize(N);
 
   for (int i = 0; i < N; ++i) {
-    double d   = (res.a * vy[i] - vz[i] + res.b) / normf;
-    double sd2 = nyf * nyf * vcov[i].yy + 2.0 * nyf * nzf * vcov[i].yz + nzf * nzf * vcov[i].zz;
-    double sd  = std::sqrt(std::max(sd2, 1e-6));
+    double d = (res.a * u[i] - v[i] + res.b) / normf;
+    double sd2 =
+        nuf * nuf * get_cov_uu(i) + 2.0 * nuf * nvf * get_cov_uv(i) + nvf * nvf * get_cov_vv(i);
+    double sd           = std::sqrt(std::max(sd2, 1e-6));
     res.residuals[i]    = d;
     res.residual_sig[i] = sd;
     res.pull[i]         = d / sd;

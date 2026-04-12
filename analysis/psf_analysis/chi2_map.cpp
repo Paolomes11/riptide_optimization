@@ -56,6 +56,8 @@ struct CliConfig {
   double min_hits  = 10.0;
   bool log_scale   = false;
   bool use_reduced = true;
+  bool dist_to_n   = false;
+  double dist_n    = 1.0;
 
   // Parametri percentili per la scala colori
   double perc_low  = 0.0;
@@ -85,7 +87,13 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.min_hits = std::stod(next());
     else if (key == "--log")
       cfg.log_scale = true;
-    else if (key == "--no-reduced")
+    else if (key == "--dist-to-n") {
+      cfg.dist_to_n = true;
+      cfg.dist_n    = std::stod(next());
+    } else if (key == "--dist-to-one") {
+      cfg.dist_to_n = true;
+      cfg.dist_n    = 1.0;
+    } else if (key == "--no-reduced")
       cfg.use_reduced = false;
     else if (key == "--p-low")
       cfg.perc_low = std::stod(next());
@@ -237,7 +245,8 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale
 }
 
 static void draw_info_panel(TPad* pad_info, int total_cfgs, int n_invalid, double best_x1,
-                            double best_x2, double best_chi2, double min_hits, bool use_reduced) {
+                            double best_x2, double best_metric, double best_chi2_red,
+                            double min_hits, bool use_reduced, bool dist_to_n, double dist_n) {
   pad_info->cd();
   pad_info->SetFillColor(TColor::GetColor(245, 245, 248));
 
@@ -266,16 +275,30 @@ static void draw_info_panel(TPad* pad_info, int total_cfgs, int n_invalid, doubl
   info.SetTextSize(0.20);
   info.SetTextColor(kBlack);
   info.DrawLatex(col1, row1, ("Min hits PSF: " + fmt(min_hits, 0)).c_str());
-  info.DrawLatex(col1, row2,
-                 (use_reduced ? "Metrica: #chi^{2}/ndof (Y+Z)" : "Metrica: #chi^{2} (Y+Z)"));
+  if (dist_to_n) {
+    info.DrawLatex(col1, row2,
+                   ("Metrica: |#chi^{2}/ndof - " + fmt(dist_n, 3) + "|  (Y+Z)").c_str());
+  } else {
+    info.DrawLatex(col1, row2,
+                   (use_reduced ? "Metrica: #chi^{2}/ndof (Y+Z)" : "Metrica: #chi^{2} (Y+Z)"));
+  }
   info.DrawLatex(
       col2, row1,
       ("#bf{x_{1}^{*}} = " + fmt(best_x1, 1) + " mm,   #bf{x_{2}^{*}} = " + fmt(best_x2, 1) + " mm")
           .c_str());
 
-  std::ostringstream qs;
-  qs << std::fixed << std::setprecision(3) << best_chi2;
-  info.DrawLatex(col2, row2, ("#bf{min #chi^{2}} = " + qs.str()).c_str());
+  std::ostringstream ms;
+  ms << std::fixed << std::setprecision(4) << best_metric;
+  if (dist_to_n) {
+    std::ostringstream cr;
+    cr << std::fixed << std::setprecision(3) << best_chi2_red;
+    info.DrawLatex(col2, row2,
+                   ("#bf{min |#chi^{2}/ndof - " + fmt(dist_n, 3) + "|} = " + ms.str()
+                    + "   (#chi^{2}/ndof = " + cr.str() + ")")
+                       .c_str());
+  } else {
+    info.DrawLatex(col2, row2, ("#bf{min} = " + ms.str()).c_str());
+  }
 }
 
 int main(int argc, char** argv) {
@@ -318,7 +341,8 @@ int main(int argc, char** argv) {
 
   struct Chi2Entry {
     double x1, x2;
-    double chi2;
+    double metric;
+    double chi2_red;
     bool valid;
   };
   std::vector<Chi2Entry> entries;
@@ -336,7 +360,7 @@ int main(int argc, char** argv) {
     }
 
     if (valid_points.size() < 10) {
-      entries.push_back({cfg.x1, cfg.x2, 0.0, false});
+      entries.push_back({cfg.x1, cfg.x2, 0.0, 0.0, false});
     } else {
       bool old_reg = TH1::AddDirectoryStatus();
       TH1::AddDirectory(false);
@@ -344,35 +368,57 @@ int main(int argc, char** argv) {
 
       for (size_t i = 0; i < valid_points.size(); ++i) {
         const auto* p = valid_points[i];
+        // Converti covarianza della distribuzione in errore sulla media.
+        double n_count = std::max(1.0, p->n_hits_count);
+        double err_y   = std::sqrt(std::max(0.0, p->cov_yy) / n_count);
+        double err_z   = std::sqrt(std::max(0.0, p->cov_zz) / n_count);
         g_y.SetPoint(i, p->y_source, p->x_source, p->mu_y);
-        g_y.SetPointError(i, 0, 0, std::sqrt(std::max(0.0, p->cov_yy)));
+        g_y.SetPointError(i, 0, 0, err_y);
         g_z.SetPoint(i, p->y_source, p->x_source, p->mu_z);
-        g_z.SetPointError(i, 0, 0, std::sqrt(std::max(0.0, p->cov_zz)));
+        g_z.SetPointError(i, 0, 0, err_z);
       }
 
       fit_func->SetParameters(0, 0, 0);
       g_y.Fit(fit_func, "QW");
-      double c2y = cli.use_reduced ? (fit_func->GetChisquare() / std::max(1, fit_func->GetNDF()))
-                                   : fit_func->GetChisquare();
+      double c2y     = fit_func->GetChisquare();
+      double ndf_y   = static_cast<double>(std::max(1, fit_func->GetNDF()));
+      double c2y_red = c2y / ndf_y;
 
       fit_func->SetParameters(0, 0, 0);
       g_z.Fit(fit_func, "QW");
-      double c2z = cli.use_reduced ? (fit_func->GetChisquare() / std::max(1, fit_func->GetNDF()))
-                                   : fit_func->GetChisquare();
+      double c2z     = fit_func->GetChisquare();
+      double ndf_z   = static_cast<double>(std::max(1, fit_func->GetNDF()));
+      double c2z_red = c2z / ndf_z;
 
-      double c2 = c2y + c2z;
-      if (!std::isfinite(c2)) {
-        entries.push_back({cfg.x1, cfg.x2, 0.0, false});
+      double c2_tot     = c2y + c2z;
+      double ndf_tot    = std::max(1.0, ndf_y + ndf_z);
+      double c2_tot_red = c2_tot / ndf_tot;
+
+      double metric = 0.0;
+      if (cli.dist_to_n) {
+        metric = std::abs(c2_tot_red - cli.dist_n);
       } else {
-        entries.push_back({cfg.x1, cfg.x2, c2, true});
+        metric = cli.use_reduced ? c2_tot_red : c2_tot;
+      }
+
+      if (!std::isfinite(metric) || !std::isfinite(c2_tot_red)) {
+        entries.push_back({cfg.x1, cfg.x2, 0.0, 0.0, false});
+      } else {
+        entries.push_back({cfg.x1, cfg.x2, metric, c2_tot_red, true});
       }
       TH1::AddDirectory(old_reg);
     }
 
     if ((config_idx + 1) % print_step == 0 || config_idx + 1 == total_cfgs) {
+      std::string metric_label = "chi2";
+      if (cli.dist_to_n) {
+        metric_label = "|chi2/ndof-n|";
+      } else if (cli.use_reduced) {
+        metric_label = "chi2/ndof";
+      }
       std::cout << "  [" << std::setw(3) << config_idx + 1 << "/" << total_cfgs
-                << "] x1=" << fmt(cfg.x1)
-                << " chi2=" << (entries.back().valid ? fmt(entries.back().chi2, 3) : "N/A") << "\n";
+                << "] x1=" << fmt(cfg.x1) << " " << metric_label << "="
+                << (entries.back().valid ? fmt(entries.back().metric, 4) : "N/A") << "\n";
     }
     config_idx++;
   }
@@ -383,14 +429,16 @@ int main(int argc, char** argv) {
           return false;
         if (!b.valid)
           return true;
-        return a.chi2 < b.chi2;
+        if (a.metric != b.metric)
+          return a.metric < b.metric;
+        return a.chi2_red < b.chi2_red;
       });
 
   // --- CALCOLO LIMITI PERCENTILI ---
   std::vector<double> v;
   for (const auto& e : entries)
     if (e.valid)
-      v.push_back(e.chi2);
+      v.push_back(e.metric);
   std::sort(v.begin(), v.end());
 
   double z_min = 0.0, z_max = 1.0;
@@ -401,6 +449,17 @@ int main(int argc, char** argv) {
     z_max       = v[std::clamp(i_hi, (size_t)0, v.size() - 1)];
     if (z_min == z_max)
       z_max += 1.0;
+  }
+  if (cli.log_scale && z_min <= 0.0) {
+    double min_pos = std::numeric_limits<double>::infinity();
+    for (double vv : v) {
+      if (vv > 0.0)
+        min_pos = std::min(min_pos, vv);
+    }
+    if (std::isfinite(min_pos))
+      z_min = min_pos;
+    else
+      z_min = 1e-6;
   }
 
   apply_style();
@@ -413,7 +472,7 @@ int main(int argc, char** argv) {
     int bx = h_chi2.GetXaxis()->FindFixBin(e.x1);
     int by = h_chi2.GetYaxis()->FindFixBin(e.x2);
     if (e.valid)
-      h_chi2.SetBinContent(bx, by, e.chi2);
+      h_chi2.SetBinContent(bx, by, e.metric);
     else
       h_inv.SetBinContent(bx, by, 1.0);
   }
@@ -439,15 +498,27 @@ int main(int argc, char** argv) {
   title.SetTextFont(42);
   title.SetTextSize(0.046);
   title.SetTextAlign(22);
-  title.DrawLatex(0.535, 0.953, "Linearit#grave{a} della risposta (fit piano #mu_{y,z})");
+  if (cli.dist_to_n) {
+    title.DrawLatex(
+        0.535, 0.953,
+        ("Distanza da #chi^{2}/ndof = " + fmt(cli.dist_n, 3) + "  (fit piano #mu_{y,z})").c_str());
+  } else {
+    title.DrawLatex(0.535, 0.953, "Linearit#grave{a} della risposta (fit piano #mu_{y,z})");
+  }
 
-  draw_colorbar(pl.pad_cb, z_min, z_max, cli.log_scale,
-                cli.use_reduced ? "#chi^{2}/ndof" : "#chi^{2}", TColor::GetColor(80, 80, 80));
+  std::string cb_title = "#chi^{2}";
+  if (cli.dist_to_n) {
+    cb_title = "|#chi^{2}/ndof - n|";
+  } else if (cli.use_reduced) {
+    cb_title = "#chi^{2}/ndof";
+  }
+  draw_colorbar(pl.pad_cb, z_min, z_max, cli.log_scale, cb_title, TColor::GetColor(80, 80, 80));
 
   draw_info_panel(
       pl.pad_info, total_cfgs,
       std::count_if(entries.begin(), entries.end(), [](const Chi2Entry& e) { return !e.valid; }),
-      it_best->x1, it_best->x2, it_best->chi2, cli.min_hits, cli.use_reduced);
+      it_best->x1, it_best->x2, it_best->metric, it_best->chi2_red, cli.min_hits, cli.use_reduced,
+      cli.dist_to_n, cli.dist_n);
 
   pl.canvas->Update();
   std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());
