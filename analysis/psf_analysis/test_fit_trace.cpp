@@ -19,63 +19,18 @@
  * I dati vengono costruiti sinteticamente come vettori di TracePoint o
  * PSFDatabase, bypassando load_psf_database() e build_trace().
  *
- * INVARIANTI DI INIZIALIZZAZIONE
+ * I test usano una PSF analitica molto semplice:
+ * mu_y(r) = r
+ * mu_z(r) = 0
+ * cov     = isotropa (var)
  *
- * TracePoint::valid = true
- *   fit_trace() filtra i punti con valid==false (fuori dal fotocatodo).
- *   La zero-inizializzazione di struct lascia valid=false → fit_trace()
- *   non trova punti utilizzabili e lancia std::invalid_argument.
- *   make_point() imposta valid=true esplicitamente.
+ * In questo modo le tracce sul detector sono semplicemente
+ * mu_y = sqrt(y0^2 + t^2)
+ * mu_z = 0
  *
- * PSFPoint::on_detector = true
- *   build_trace() copia on_detector in TracePoint::valid.
- *   Se false → is_trace_valid() ritorna false → compute_Q() accumula
- *   n_invalid invece di n_traces → Q rimane 0 per motivo sbagliato.
- *   make_synthetic_db() imposta on_detector=true esplicitamente.
+ * Questo permette di calcolare i risultati attesi di fit_trace.
  *
- * NOTA SUL TEST TQ5 (temporal unfolding)
- *
- * L'unfolding z̃_i = μ_z_i + i·δz modifica la coordinata z di ogni punto.
- * Con μ_z = 0 per tutti i punti, z̃_i = i·δz è identico per qualsiasi DB.
- * Il chi2 del fit ODR su (μ_y_i, z̃_i) dipende SOLO da come μ_y_i si
- * distribuisce rispetto alla retta ottimale.
- *
- * Impossibilità di usare PSFDatabase + build_trace() per questo test:
- *   r(t) = sqrt(y0^2 + t^2) è simmetrica in t per qualsiasi y0>0, quindi
- *   μ_y_i = μ_y_{N-1-i} per qualsiasi DB con μ_y(r) monotona. Non è
- *   possibile costruire una traccia "lineare" (μ_y_i ∝ i) tramite
- *   build_trace() senza accesso a r(t) lineare in i, che richiederebbe y0=0
- *   con t ∈ [0, L] — ma build_trace usa t ∈ [-L/2, +L/2] → r = |t| → ripiegata.
- *
- * Soluzione: costruiamo TracePoint direttamente con μ_z già srotolato:
- *
- *   Traccia LINEARE:   μ_y_i = i·k, z̃_i = i·δz
- *     → punti (i·k, i·δz) su retta z̃ = (δz/k)·μ_y → chi2 ≈ 0
- *
- *   Traccia RIPIEGATA: μ_y_i = |i-N/2|·k, z̃_i = i·δz
- *     → punti (|i-N/2|·k, i·δz) NON collineari → chi2 >> 0
- *
- * Con unfolding OFF (μ_z = 0 per tutti): entrambe le tracce hanno z=0
- * → retta ottimale z=0 → chi2 = 0 per entrambe → delta_chi2 = 0.
- *
- * SUITE DI TEST
- *
- *   T1  Retta z=y, cov isotropa              → a=1, b=0, chi2=0, pull≈0
- *   T2  Retta z=0.5y+3, cov isotropa         → a=0.5, b=3, chi2=0
- *   T3  Retta z=2y-1, cov anisotropa          → parametri invariati
- *   T4  Outlier singolo Δz=0.5mm              → pull_outlier≈Δz/σ
- *   T5  < 3 punti validi                      → std::invalid_argument
- *   T6  Covarianza degenere (var=0)            → convergenza con floor
- *   T7  Cov non diagonale, outlier             → sigma_d=sqrt(cov_zz)
- *   TV1 is_trace_valid, tutti valid            → true
- *   TV2 is_trace_valid, 60% valid              → dipende dalla soglia
- *   TV3 is_trace_valid, traccia vuota          → false
- *   TQ1 PSF ideale, unfolding OFF              → Q≈0
- *   TQ2 y0_values esplicito, unfolding OFF     → n_traces=3, Q≈0
- *   TQ3 Config non presente                    → std::invalid_argument
- *   TQ4 PSF curva, due σ_z diverse             → Q(piccola)>Q(grande)
- *   TQ5 Unfolding ON: lineare vs ripiegata     → chi2(fold)>>chi2(lin),
- *                                                 delta_ON >> delta_OFF
+ * I test su compute_Q verificano il comportamento ad alto livello.
  */
 
 #include "psf_interpolator.hpp"
@@ -419,12 +374,11 @@ static void test_TQ1() {
   riptide::LensConfig cfg{50.0, 120.0};
 
   riptide::QConfig qcfg;
-  qcfg.n_tracks                 = 10;
-  qcfg.scint_x                  = 10.0;
-  qcfg.scint_y                  = 10.0;
-  qcfg.scint_z                  = 0.0;
-  qcfg.trace_dt                 = 0.5;
-  qcfg.apply_temporal_unfolding = false;
+  qcfg.n_tracks = 10;
+  qcfg.scint_x  = 10.0;
+  qcfg.scint_y  = 10.0;
+  qcfg.scint_z  = 0.0;
+  qcfg.trace_dt = 0.5;
 
   riptide::QResult res;
   bool threw = false;
@@ -453,12 +407,11 @@ static void test_TQ2() {
   riptide::LensConfig cfg{50.0, 120.0};
 
   riptide::QConfig qcfg;
-  qcfg.scint_x                  = 20.0;
-  qcfg.scint_y                  = 10.0;
-  qcfg.scint_z                  = 0.0;
-  qcfg.n_tracks                 = 50;
-  qcfg.trace_dt                 = 0.5;
-  qcfg.apply_temporal_unfolding = false;
+  qcfg.scint_x  = 20.0;
+  qcfg.scint_y  = 10.0;
+  qcfg.scint_z  = 0.0;
+  qcfg.n_tracks = 50;
+  qcfg.trace_dt = 0.5;
 
   auto res = riptide::compute_Q(cfg, db, qcfg, true);
   check(res.n_traces > 0, "n_traces > 0", T);
@@ -498,12 +451,11 @@ static void test_TQ4() {
 
   riptide::LensConfig cfg{50.0, 120.0};
   riptide::QConfig qcfg;
-  qcfg.n_tracks                 = 50;
-  qcfg.scint_x                  = 60.0;
-  qcfg.scint_y                  = 20.0;
-  qcfg.scint_z                  = 20.0;
-  qcfg.trace_dt                 = 1.0;
-  qcfg.apply_temporal_unfolding = false;
+  qcfg.n_tracks = 50;
+  qcfg.scint_x  = 60.0;
+  qcfg.scint_y  = 20.0;
+  qcfg.scint_z  = 20.0;
+  qcfg.trace_dt = 1.0;
 
   auto rt = riptide::compute_Q(cfg, make_curved(1e-4), qcfg);
   auto rb = riptide::compute_Q(cfg, make_curved(1e-2), qcfg);
@@ -511,98 +463,10 @@ static void test_TQ4() {
   check(rt.Q > rb.Q, "Q(sigma=0.01) > Q(sigma=0.1)", T);
 }
 
-// TQ5: discriminatore del temporal unfolding
-//
-// Perché costruiamo TracePoint direttamente invece di usare PSFDatabase:
-//   r(t) = sqrt(y0^2+t^2) è simmetrica per qualsiasi y0>0, quindi
-//   mu_y_i = mu_y_{N-1-i} tramite build_trace(). Non è possibile ottenere
-//   una traccia con mu_y_i ∝ i (lineare in i) passando da PSFDatabase,
-//   perché r non è lineare in t.
-//
-//   Costruendo i TracePoint a mano con mu_z già srotolato (mu_z = i*dz),
-//   simuliamo esattamente l'output che compute_Q() passerebbe a fit_trace()
-//   dopo aver applicato apply_unfolding().
-//
-//   Traccia LINEARE:   mu_y_i = i*k,        mu_z_i = i*dz
-//     → punti (i*k, i*dz) su retta z = (dz/k)*y → chi2 ≈ 0
-//
-//   Traccia RIPIEGATA: mu_y_i = |i-N/2|*k,  mu_z_i = i*dz
-//     → punti non collineari → chi2 >> 0
-//
-//   Con unfolding OFF: mu_z = 0 per tutti → chi2 = 0 per entrambe.
-//
-static void test_TQ5() {
-  std::cout << "\n[TQ5] Temporal unfolding: traccia ripiegata penalizzata vs lineare\n";
-  const std::string T = "TQ5";
-
-  const int N      = 21;
-  const double L   = 10.0;
-  const double dz  = L / (N - 1); // δz automatico = 0.5 mm/passo
-  const double k   = 0.5;         // ampiezza mu_y [mm/passo]
-  const double var = 0.01;        // sigma = 0.1 mm
-
-  // Costruisce N TracePoint con mu_y e mu_z specificati, tutti valid=true.
-  auto make_trace = [&](const std::vector<double>& mu_y_v, const std::vector<double>& mu_z_v) {
-    std::vector<riptide::TracePoint> tr;
-    tr.reserve(N);
-    for (int i = 0; i < N; ++i) {
-      riptide::TracePoint pt{};
-      pt.t            = -L / 2.0 + i * (L / (N - 1));
-      pt.r            = std::abs(mu_y_v[i]);
-      pt.mu_y         = mu_y_v[i];
-      pt.mu_z         = mu_z_v[i];
-      pt.cov          = {var, 0.0, var};
-      pt.valid        = true;
-      pt.n_hits       = 1000;
-      pt.n_hits_count = 1000;
-      tr.push_back(pt);
-    }
-    return tr;
-  };
-
-  std::vector<double> z_unf(N), z_zero(N, 0.0);
-  std::vector<double> mu_y_lin(N), mu_y_fold(N);
-  for (int i = 0; i < N; ++i) {
-    z_unf[i]     = i * dz;
-    mu_y_lin[i]  = i * k;
-    mu_y_fold[i] = std::abs(i - N / 2) * k;
-  }
-
-  // Con unfolding ON (mu_z già modificato con i*dz)
-  auto res_lin_on  = riptide::fit_trace(make_trace(mu_y_lin, z_unf));
-  auto res_fold_on = riptide::fit_trace(make_trace(mu_y_fold, z_unf));
-
-  std::cout << "  [unf ON]  chi2_lin=" << res_lin_on.chi2 << "  chi2_fold=" << res_fold_on.chi2
-            << "\n";
-
-  check(res_fold_on.chi2 > res_lin_on.chi2 + 1.0,
-        "unf ON: chi2(fold)=" + std::to_string(res_fold_on.chi2)
-            + " >> chi2(lin)=" + std::to_string(res_lin_on.chi2),
-        T);
-
-  // Con unfolding OFF (mu_z = 0 per tutti → chi2 = 0 per entrambe)
-  auto res_lin_off  = riptide::fit_trace(make_trace(mu_y_lin, z_zero));
-  auto res_fold_off = riptide::fit_trace(make_trace(mu_y_fold, z_zero));
-
-  std::cout << "  [unf OFF] chi2_lin=" << res_lin_off.chi2 << "  chi2_fold=" << res_fold_off.chi2
-            << "\n";
-
-  near(res_lin_off.chi2, 0.0, 1e-9, "unf OFF: chi2_lin ≈ 0", T);
-  near(res_fold_off.chi2, 0.0, 1e-9, "unf OFF: chi2_fold ≈ 0", T);
-
-  // La differenza con unfolding ON deve essere molto maggiore che con OFF
-  double delta_on  = res_fold_on.chi2 - res_lin_on.chi2;
-  double delta_off = res_fold_off.chi2 - res_lin_off.chi2;
-  check(delta_on > delta_off + 1.0,
-        "delta_chi2(unf ON)=" + std::to_string(delta_on)
-            + " >> delta_chi2(unf OFF)=" + std::to_string(delta_off),
-        T);
-}
-
 // main
 int main() {
   std::cout << "  test_fit_trace — riptide PSF unit tests\n";
-  std::cout << "  (fit_trace, is_trace_valid, compute_Q, temporal unfolding)\n\n";
+  std::cout << "  (fit_trace, is_trace_valid, compute_Q)\n\n";
 
   test_T1();
   test_T2();
@@ -617,7 +481,6 @@ int main() {
   test_TQ2();
   test_TQ3();
   test_TQ4();
-  test_TQ5();
 
   std::cout << "\n--------------------------------------\n";
   std::cout << "TEST SUMMARY: " << g_n_pass << " PASS, " << g_n_fail << " FAIL\n";

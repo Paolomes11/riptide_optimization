@@ -474,52 +474,50 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, double min_hits_pe
   return res;
 }
 
-// ─── Temporal unfolding ortogonale ───────────────────────────────────────────
+double expected_chi2_ndof_ar1(int N, double rho) {
+  if (N <= 2)
+    return 0.0;
 
-static std::vector<TracePoint> apply_unfolding(const std::vector<TracePoint>& trace,
-                                               const QConfig& qcfg) {
-  std::vector<TracePoint> unfolded = trace;
-  const int N                      = static_cast<int>(unfolded.size());
-  if (N < 2)
-    return unfolded;
+  rho = std::clamp(rho, 0.0, 0.999999);
 
-  // 1. Identifica la direzione della traccia (vettore tra primo e ultimo punto valido)
-  int i_first = -1, i_last = -1;
+  std::vector<double> y;
+  y.reserve(static_cast<size_t>(N));
+  for (int i = 0; i < N; ++i)
+    y.push_back(-5.0 + 10.0 * static_cast<double>(i) / static_cast<double>(N - 1));
+
+  double S1 = static_cast<double>(N);
+  double Sy = 0.0;
+  for (double yi : y)
+    Sy += yi;
+  double Syy = 0.0;
+  for (double yi : y)
+    Syy += yi * yi;
+
+  double det = Syy * S1 - Sy * Sy;
+  if (std::abs(det) < 1e-12)
+    return 0.0;
+
+  double inv00 = S1 / det;
+  double inv01 = -Sy / det;
+  double inv10 = -Sy / det;
+  double inv11 = Syy / det;
+
+  double M00 = 0.0, M01 = 0.0, M11 = 0.0;
   for (int i = 0; i < N; ++i) {
-    if (trace[i].valid) {
-      if (i_first == -1)
-        i_first = i;
-      i_last = i;
+    for (int j = 0; j < N; ++j) {
+      double Rij = std::pow(rho, std::abs(i - j));
+      M00 += y[static_cast<size_t>(i)] * Rij * y[static_cast<size_t>(j)];
+      M01 += y[static_cast<size_t>(i)] * Rij;
+      M11 += Rij;
     }
   }
+  double M10 = M01;
 
-  // Se non ci sono abbastanza punti validi, non possiamo calcolare una normale
-  if (i_first == -1 || i_last == i_first)
-    return unfolded;
+  double trace_HR   = inv00 * M00 + inv01 * M10 + inv10 * M01 + inv11 * M11;
+  double trace_R    = static_cast<double>(N);
+  double trace_IH_R = trace_R - trace_HR;
 
-  double dy_axis = trace[i_last].mu_y - trace[i_first].mu_y;
-  double dz_axis = trace[i_last].mu_z - trace[i_first].mu_z;
-
-  // Angolo della traccia sul detector
-  double alpha = std::atan2(dz_axis, dy_axis);
-
-  // Direzione ortogonale (normale): alpha + 90 gradi
-  double theta = alpha + M_PI / 2.0;
-  double nx    = std::cos(theta);
-  double ny    = std::sin(theta);
-
-  // 2. Calcola il passo di srotolamento (magnitudo dello spostamento)
-  double L  = trace.back().t - trace.front().t;
-  double dS = (qcfg.z_unfold_step > 0.0) ? qcfg.z_unfold_step : L / static_cast<double>(N - 1);
-
-  // 3. Applica l'unfolding lungo la normale
-  for (int i = 0; i < N; ++i) {
-    double shift = static_cast<double>(i) * dS;
-    unfolded[i].mu_y += shift * nx;
-    unfolded[i].mu_z += shift * ny;
-  }
-
-  return unfolded;
+  return trace_IH_R / static_cast<double>(N - 2);
 }
 
 // ─── compute_Q ───────────────────────────────────────────────────────────────
@@ -539,6 +537,8 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
   res.chi2_per_trace.reserve(qcfg.n_tracks);
   res.chi2_ndof_per_trace.reserve(qcfg.n_tracks);
   res.trace_valid_flags.reserve(qcfg.n_tracks);
+  std::vector<LineFitResult> fits_valid;
+  fits_valid.reserve(static_cast<size_t>(qcfg.n_tracks));
 
   // Generazione tracce casuali nello scintillatore
   for (int i = 0; i < qcfg.n_tracks; ++i) {
@@ -595,20 +595,10 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
       continue;
     }
 
-    // 3. Unfolding
-    std::vector<TracePoint> unfolded;
-    const std::vector<TracePoint>* fit_input;
-    if (qcfg.apply_temporal_unfolding) {
-      unfolded  = apply_unfolding(trace, qcfg);
-      fit_input = &unfolded;
-    } else {
-      fit_input = &trace;
-    }
-
-    // 4. Fit
+    // 3. Fit
     LineFitResult fit;
     try {
-      fit = fit_trace(*fit_input, qcfg.min_hits_per_point, qcfg.fit_max_iter, qcfg.fit_tol);
+      fit = fit_trace(trace, qcfg.min_hits_per_point, qcfg.fit_max_iter, qcfg.fit_tol);
     } catch (...) {
       ++res.n_failed;
       continue;
@@ -628,6 +618,7 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
     res.Q += fit.chi2_ndof;
     res.chi2_per_trace.push_back(fit.chi2);
     res.chi2_ndof_per_trace.push_back(fit.chi2_ndof);
+    fits_valid.push_back(fit);
     ++res.n_traces;
   }
 
@@ -639,6 +630,41 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
   } else {
     res.Q            = 0.0;
     res.config_valid = false;
+  }
+
+  double rho_num    = 0.0;
+  double rho_den    = 0.0;
+  int N_medio_sum   = 0;
+  int N_medio_count = 0;
+  for (const auto& fit : fits_valid) {
+    const auto& p = fit.pull;
+    int M         = static_cast<int>(p.size());
+    if (M < 3)
+      continue;
+
+    double num = 0.0;
+    double den = 0.0;
+    for (int i = 1; i < M; ++i)
+      num += p[static_cast<size_t>(i - 1)] * p[static_cast<size_t>(i)];
+    for (int i = 0; i < M; ++i)
+      den += p[static_cast<size_t>(i)] * p[static_cast<size_t>(i)];
+
+    if (den < 1e-12)
+      continue;
+
+    double rho_t = num / den;
+    double w     = static_cast<double>(M - 2);
+    rho_num += w * rho_t;
+    rho_den += w;
+    N_medio_sum += M;
+    ++N_medio_count;
+  }
+
+  if (rho_den > 0.0 && N_medio_count > 0) {
+    res.rho_estimate = rho_num / rho_den;
+    double N_med     = static_cast<double>(N_medio_sum) / static_cast<double>(N_medio_count);
+    res.Q_target     = expected_chi2_ndof_ar1(static_cast<int>(N_med), res.rho_estimate);
+    res.Q_dist       = std::abs(res.Q - res.Q_target);
   }
 
   return res;

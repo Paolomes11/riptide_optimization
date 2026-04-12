@@ -231,13 +231,6 @@ struct QConfig {
   double min_hits_per_point   = 10.0; // hit minime per considerare un punto PSF valido
   double trace_valid_fraction = 0.75; // frazione minima di tracce valide per config valida
 
-  // Temporal unfolding
-  // Se > 0: offset fisso in mm applicato per passo della traccia.
-  // Se == 0 (default): calcolato automaticamente come L_traccia / (N-1),
-  //   in modo che l'offset totale sia pari alla lunghezza della traccia.
-  double z_unfold_step          = 0.0;  // [mm/passo], 0 = automatico
-  bool apply_temporal_unfolding = true; // default attivo
-
   bool verbose = false;
 };
 
@@ -258,12 +251,18 @@ struct QResult {
   int n_invalid;     // tracce scartate per validità PSF insufficiente
   bool config_valid; // false se la config non supera la soglia trace_valid_fraction
 
+  double rho_estimate = 0.0;
+  double Q_target     = 1.0;
+  double Q_dist       = 0.0;
+
   std::vector<double> chi2_per_trace;
   std::vector<double> chi2_ndof_per_trace;
   std::vector<bool> trace_valid_flags; // una entry per ogni traccia campionata
 
   std::vector<QWarning> warnings;
 };
+
+double expected_chi2_ndof_ar1(int N, double rho);
 
 /**
  * Calcola la funzione di qualità Q(x1, x2) per una configurazione di lenti.

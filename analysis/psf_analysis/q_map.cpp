@@ -119,7 +119,9 @@ struct CliConfig {
   bool no_unfold   = false;
 
   // Modalità
-  bool coverage_mode = false; // se true: mappa copertura invece di Q
+  bool coverage_mode  = false; // se true: mappa copertura invece di Q
+  bool dist_to_target = false;
+  double dist_target  = -1.0;
 
   bool log_scale = false;
   bool normalize = false;
@@ -164,7 +166,18 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.no_unfold = true;
     else if (key == "--coverage")
       cfg.coverage_mode = true;
-    else if (key == "--log")
+    else if (key == "--dist-to-target") {
+      cfg.dist_to_target = true;
+      if (i + 1 < argc) {
+        std::string maybe_val = argv[i + 1];
+        if (!maybe_val.empty() && maybe_val.rfind("--", 0) != 0) {
+          cfg.dist_target = std::stod(next());
+        }
+      }
+    } else if (key == "--target") {
+      cfg.dist_target    = std::stod(next());
+      cfg.dist_to_target = true;
+    } else if (key == "--log")
       cfg.log_scale = true;
     else if (key == "--norm")
       cfg.normalize = true;
@@ -324,7 +337,9 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale
 
 // Disegno info panel comune
 static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, int total_cfgs,
-                              int n_invalid, double best_x1, double best_x2, double best_Q) {
+                              int n_invalid, double best_x1, double best_x2, double best_metric,
+                              double best_Q_raw, double best_rho, double best_target,
+                              bool dist_to_target) {
   pad_info->cd();
   pad_info->SetFillColor(TColor::GetColor(245, 245, 248));
 
@@ -368,9 +383,24 @@ static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, int 
       ("#bf{x_{1}^{*}} = " + fmt(best_x1, 1) + " mm,   #bf{x_{2}^{*}} = " + fmt(best_x2, 1) + " mm")
           .c_str());
   {
-    std::ostringstream qs;
-    qs << std::scientific << std::setprecision(3) << best_Q;
-    info.DrawLatex(col2, row2, ("#bf{Q_{min}} = " + qs.str()).c_str());
+    std::ostringstream ss_metric;
+    ss_metric << std::scientific << std::setprecision(3) << best_metric;
+    std::ostringstream ss_qraw;
+    ss_qraw << std::scientific << std::setprecision(3) << best_Q_raw;
+    std::ostringstream ss_tgt;
+    ss_tgt << std::scientific << std::setprecision(3) << best_target;
+    std::ostringstream ss_rho;
+    ss_rho << std::fixed << std::setprecision(3) << best_rho;
+
+    std::string line;
+    if (dist_to_target) {
+      line = "#bf{|Q-target|_{min}} = " + ss_metric.str() + "   Q = " + ss_qraw.str()
+           + "   Q_{target} = " + ss_tgt.str() + "   #hat{#rho} = " + ss_rho.str();
+    } else {
+      line = "#bf{Q_{min}} = " + ss_qraw.str() + "   Q_{target} = " + ss_tgt.str()
+           + "   #hat{#rho} = " + ss_rho.str();
+    }
+    info.DrawLatex(col2, row2, line.c_str());
   }
 }
 
@@ -453,10 +483,6 @@ int main(int argc, char** argv) {
   qcfg.fit_tol              = 1e-8;
   qcfg.min_hits_per_point   = cli.min_hits;
   qcfg.trace_valid_fraction = cli.trace_frac;
-
-  // Temporal unfolding (usato solo in modalità Q)
-  qcfg.apply_temporal_unfolding = !cli.no_unfold;
-  qcfg.z_unfold_step            = cli.unfold_dz;
 
   // Diagnostica console
   if (cli.coverage_mode) {
@@ -684,7 +710,10 @@ int main(int argc, char** argv) {
 
   struct QEntry {
     double x1, x2;
-    double Q;
+    double metric;
+    double Q_raw;
+    double Q_target;
+    double rho_est;
     int n_traces;
     int n_failed;
     int n_invalid;
@@ -704,29 +733,36 @@ int main(int argc, char** argv) {
     } catch (const std::exception& e) {
       std::cerr << "  [WARN] compute_Q failed x1=" << cfg.x1 << " x2=" << cfg.x2 << ": " << e.what()
                 << "\n";
-      entries.push_back({cfg.x1, cfg.x2, 0.0, 0, 0, 0, false});
+      entries.push_back({cfg.x1, cfg.x2, 0.0, 0.0, 1.0, 0.0, 0, 0, 0, false});
       ++n_cfg_invalid;
       ++config_idx;
       continue;
     }
 
-    double Q_val = res.Q;
-    // res.Q è già il Chi-squared ridotto medio (calcolato in compute_Q)
-    // Non applichiamo più la normalizzazione esterna se res.Q è già la media.
+    double target = (cli.dist_target > 0.0) ? cli.dist_target : res.Q_target;
+    double metric = cli.dist_to_target ? std::abs(res.Q - target) : res.Q;
 
     if (!res.config_valid)
       ++n_cfg_invalid;
 
-    entries.push_back(
-        {cfg.x1, cfg.x2, Q_val, res.n_traces, res.n_failed, res.n_invalid, res.config_valid});
+    entries.push_back({cfg.x1, cfg.x2, metric, res.Q, target, res.rho_estimate, res.n_traces,
+                       res.n_failed, res.n_invalid, res.config_valid});
 
     if ((config_idx + 1) % print_step == 0 || config_idx + 1 == total_cfgs) {
       std::cout << "  [" << std::setw(3) << config_idx + 1 << "/" << total_cfgs << "]"
                 << "  x1=" << fmt(cfg.x1) << "  x2=" << fmt(cfg.x2);
-      if (res.config_valid)
-        std::cout << "  Q=" << std::scientific << std::setprecision(3) << Q_val;
-      else
+      if (res.config_valid) {
+        if (cli.dist_to_target) {
+          std::cout << "  |Q-target|=" << std::scientific << std::setprecision(3) << metric
+                    << "  Q=" << std::scientific << std::setprecision(3) << res.Q
+                    << "  rho=" << std::fixed << std::setprecision(3) << res.rho_estimate;
+        } else {
+          std::cout << "  Q=" << std::scientific << std::setprecision(3) << metric
+                    << "  rho=" << std::fixed << std::setprecision(3) << res.rho_estimate;
+        }
+      } else {
         std::cout << "  [INVALIDA]";
+      }
       std::cout << std::defaultfloat << "\n";
     }
     ++config_idx;
@@ -742,7 +778,7 @@ int main(int argc, char** argv) {
           return false;
         if (!b.config_valid)
           return true;
-        return a.Q < b.Q;
+        return a.metric < b.metric;
       });
 
   if (!it_best->config_valid) {
@@ -751,18 +787,29 @@ int main(int argc, char** argv) {
   }
   std::cout << "\n★  Configurazione ottimale:\n"
             << "   x1 = " << fmt(it_best->x1, 2) << " mm\n"
-            << "   x2 = " << fmt(it_best->x2, 2) << " mm\n"
-            << "   Q  = " << it_best->Q << "\n";
+            << "   x2 = " << fmt(it_best->x2, 2) << " mm\n";
+  if (cli.dist_to_target) {
+    std::cout << "   |Q-target| = " << it_best->metric << "\n"
+              << "   Q_raw      = " << it_best->Q_raw << "\n"
+              << "   Q_target   = " << it_best->Q_target << "\n";
+  } else {
+    std::cout << "   Q          = " << it_best->Q_raw << "\n"
+              << "   Q_target   = " << it_best->Q_target << "\n";
+  }
+  std::cout << "   rho_hat    = " << it_best->rho_est << "\n";
 
   // Esportazione TSV
   if (!cli.tsv_path.empty()) {
     std::filesystem::create_directories(std::filesystem::path(cli.tsv_path).parent_path());
     std::ofstream tsv(cli.tsv_path);
-    tsv << "x1\tx2\tQ\tn_traces\tn_failed\tn_invalid\tconfig_valid\n";
+    tsv << "x1\tx2\tmetric\tQ_raw\tQ_target\trho_hat\tn_traces\tn_failed\tn_invalid\tconfig_"
+           "valid\n";
     for (const auto& e : entries)
-      tsv << e.x1 << "\t" << e.x2 << "\t" << (e.config_valid ? std::to_string(e.Q) : "NaN") << "\t"
-          << e.n_traces << "\t" << e.n_failed << "\t" << e.n_invalid << "\t"
-          << (e.config_valid ? "1" : "0") << "\n";
+      tsv << e.x1 << "\t" << e.x2 << "\t" << (e.config_valid ? std::to_string(e.metric) : "NaN")
+          << "\t" << (e.config_valid ? std::to_string(e.Q_raw) : "NaN") << "\t"
+          << (e.config_valid ? std::to_string(e.Q_target) : "NaN") << "\t"
+          << (e.config_valid ? std::to_string(e.rho_est) : "NaN") << "\t" << e.n_traces << "\t"
+          << e.n_failed << "\t" << e.n_invalid << "\t" << (e.config_valid ? "1" : "0") << "\n";
     std::cout << "TSV salvato in: " << cli.tsv_path << "\n";
   }
 
@@ -780,7 +827,7 @@ int main(int argc, char** argv) {
     int bx = h_Q.GetXaxis()->FindFixBin(e.x1);
     int by = h_Q.GetYaxis()->FindFixBin(e.x2);
     if (e.config_valid)
-      h_Q.SetBinContent(bx, by, e.Q);
+      h_Q.SetBinContent(bx, by, e.metric);
     else
       h_inv.SetBinContent(bx, by, 1.0);
   }
@@ -799,8 +846,8 @@ int main(int argc, char** argv) {
     std::vector<double> q_vals;
     q_vals.reserve(entries.size());
     for (const auto& e : entries)
-      if (e.config_valid && e.Q > 0.0)
-        q_vals.push_back(e.Q);
+      if (e.config_valid && std::isfinite(e.metric))
+        q_vals.push_back(e.metric);
     std::sort(q_vals.begin(), q_vals.end());
     if (!q_vals.empty()) {
       size_t N = q_vals.size();
@@ -834,26 +881,6 @@ int main(int argc, char** argv) {
                   (" #bf{min} (" + fmt(it_best->x1, 1) + ", " + fmt(it_best->x2, 1) + ")").c_str());
   }
 
-  // Etichetta unfolding
-  {
-    TLatex unf_lbl;
-    unf_lbl.SetNDC(true);
-    unf_lbl.SetTextFont(42);
-    unf_lbl.SetTextSize(0.028);
-    unf_lbl.SetTextColor(kGray + 2);
-    unf_lbl.SetTextAlign(12);
-    if (qcfg.apply_temporal_unfolding) {
-      if (qcfg.z_unfold_step > 0.0)
-        unf_lbl.DrawLatex(
-            0.145, 0.915,
-            ("#delta z_{unfold} = " + fmt(qcfg.z_unfold_step, 6) + " mm/passo").c_str());
-      else
-        unf_lbl.DrawLatex(0.145, 0.915, "temporal unfolding: AUTO (offset = L)");
-    } else {
-      unf_lbl.DrawLatex(0.145, 0.915, "temporal unfolding: OFF");
-    }
-  }
-
   // Titolo
   {
     TLatex title;
@@ -862,18 +889,27 @@ int main(int argc, char** argv) {
     title.SetTextSize(0.046);
     title.SetTextAlign(22);
     title.SetTextColor(kBlack);
-    const std::string z_lbl = "Q = #LT#chi^{2}_{red}#GT";
+    std::string z_lbl;
+    if (cli.dist_to_target)
+      z_lbl = "|Q-target| = |#LT#chi^{2}_{red}#GT - Q_{target}|";
+    else
+      z_lbl = "Q = #LT#chi^{2}_{red}#GT";
     title.DrawLatex(0.535, 0.953, ("Mappa della funzione di qualit#grave{a}  " + z_lbl).c_str());
   }
 
   pl.pad_plot->RedrawAxis();
 
-  const std::string z_lbl_cb = "#LT#chi^{2}_{red}#GT";
+  std::string z_lbl_cb;
+  if (cli.dist_to_target)
+    z_lbl_cb = "|#LT#chi^{2}_{red}#GT - Q_{target}|";
+  else
+    z_lbl_cb = "#LT#chi^{2}_{red}#GT";
   draw_colorbar(pl.pad_cb, h_Q.GetMinimum(), h_Q.GetMaximum(), cli.log_scale, z_lbl_cb,
                 invalid_color, /*show_invalid_box=*/true);
 
   draw_info_panel_q(pl.pad_info, qcfg, total_cfgs, n_cfg_invalid, it_best->x1, it_best->x2,
-                    it_best->Q);
+                    it_best->metric, it_best->Q_raw, it_best->rho_est, it_best->Q_target,
+                    cli.dist_to_target);
 
   pl.canvas->Update();
   std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());
