@@ -21,7 +21,7 @@
   "source_dy": 0.5,
   "dof_x_virtual_mm": 180.0,
   "dof_x_virtual_offset": 30.0,
-  "dof_n_photons": 10000,
+  "dof_n_photons": 100000,
   "dof_x_scan_min": 180.0,
   "dof_x_scan_max": 400.0,
   "dof_x_scan_step": 0.5,

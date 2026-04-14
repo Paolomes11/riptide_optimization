@@ -127,14 +127,15 @@ static double weighted_mean(const std::vector<double>& x, const std::vector<doub
   return sum_x / sum_w;
 }
 
-static std::vector<size_t> select_core_indices_around_mean(const std::vector<double>& x,
+static std::vector<size_t> select_core_indices_around_mean(const std::vector<double>& y,
+                                                           const std::vector<double>& z,
                                                            const std::vector<double>& w,
                                                            double core_fraction) {
-  if (x.empty()) {
+  if (y.empty() || z.size() != y.size() || w.size() != y.size()) {
     return {};
   }
   if (core_fraction >= 1.0) {
-    std::vector<size_t> idx(x.size());
+    std::vector<size_t> idx(y.size());
     std::iota(idx.begin(), idx.end(), 0);
     return idx;
   }
@@ -142,23 +143,63 @@ static std::vector<size_t> select_core_indices_around_mean(const std::vector<dou
     return {};
   }
 
-  double mu = weighted_mean(x, w);
-  if (!std::isfinite(mu)) {
-    return {};
-  }
-
   double sum_w = 0.0;
-  for (double wi : w) {
-    sum_w += wi;
+  double sum_y = 0.0;
+  double sum_z = 0.0;
+  for (size_t i = 0; i < y.size(); ++i) {
+    sum_w += w[i];
+    sum_y += w[i] * y[i];
+    sum_z += w[i] * z[i];
   }
   if (sum_w <= 0.0) {
     return {};
   }
+  double mu_y = sum_y / sum_w;
+  double mu_z = sum_z / sum_w;
 
-  std::vector<size_t> idx(x.size());
+  double cov_yy = 0.0;
+  double cov_zz = 0.0;
+  double cov_yz = 0.0;
+  for (size_t i = 0; i < y.size(); ++i) {
+    double dy = y[i] - mu_y;
+    double dz = z[i] - mu_z;
+    cov_yy += w[i] * dy * dy;
+    cov_zz += w[i] * dz * dz;
+    cov_yz += w[i] * dy * dz;
+  }
+  cov_yy /= sum_w;
+  cov_zz /= sum_w;
+  cov_yz /= sum_w;
+
+  double scale = 0.5 * (cov_yy + cov_zz);
+  double eps   = 1e-9 + 1e-6 * std::max(0.0, scale);
+  cov_yy += eps;
+  cov_zz += eps;
+
+  double det = cov_yy * cov_zz - cov_yz * cov_yz;
+  if (!std::isfinite(det) || std::abs(det) < 1e-18) {
+    cov_yz = 0.0;
+    det    = cov_yy * cov_zz;
+    if (!std::isfinite(det) || std::abs(det) < 1e-18) {
+      return {};
+    }
+  }
+
+  double inv_yy = cov_zz / det;
+  double inv_zz = cov_yy / det;
+  double inv_yz = -cov_yz / det;
+
+  std::vector<size_t> idx(y.size());
   std::iota(idx.begin(), idx.end(), 0);
-  std::sort(idx.begin(), idx.end(),
-            [&](size_t a, size_t b) { return std::abs(x[a] - mu) < std::abs(x[b] - mu); });
+  std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) {
+    double dya = y[a] - mu_y;
+    double dza = z[a] - mu_z;
+    double dyb = y[b] - mu_y;
+    double dzb = z[b] - mu_z;
+    double d2a = dya * dya * inv_yy + dza * dza * inv_zz + 2.0 * dya * dza * inv_yz;
+    double d2b = dyb * dyb * inv_yy + dzb * dzb * inv_zz + 2.0 * dyb * dzb * inv_yz;
+    return d2a < d2b;
+  });
 
   std::vector<size_t> keep;
   keep.reserve(idx.size());
@@ -461,7 +502,7 @@ int main(int argc, char** argv) {
   }
 
   if (cli.core_fraction < 1.0) {
-    auto keep = select_core_indices_around_mean(y_focus, w, cli.core_fraction);
+    auto keep = select_core_indices_around_mean(y_focus, z_focus, w, cli.core_fraction);
     apply_selection(y0, z0, dy, dz, w, ysrc, keep);
 
     x_scan.clear();
@@ -715,12 +756,13 @@ int main(int argc, char** argv) {
     if (y_right_max <= 0.0) {
       y_right_max = 1.0;
     }
-    double scale = sigma_z_max / y_right_max;
+    double y_left_max = 1.05 * sigma_z_max;
+    double scale      = y_left_max / y_right_max;
 
     TCanvas c("c_combo", "sigma_combo", 1100, 750);
     c.SetLeftMargin(0.16);
     c.SetBottomMargin(0.14);
-    c.SetRightMargin(0.16);
+    c.SetRightMargin(0.22);
     c.SetTopMargin(0.08);
 
     TGraph g1(static_cast<int>(x_scan.size()));
@@ -735,27 +777,31 @@ int main(int argc, char** argv) {
     g1.SetLineColor(kBlue + 1);
     g1.SetLineWidth(2);
     g1.Draw("AL");
+    g1.GetYaxis()->SetRangeUser(0.0, y_left_max);
 
     g2.SetLineColor(kRed + 1);
     g2.SetLineStyle(7);
     g2.SetLineWidth(2);
     g2.Draw("L SAME");
 
-    TLine line(x_focus, 0.0, x_focus, sigma_z_max);
+    TLine line(x_focus, 0.0, x_focus, y_left_max);
     line.SetLineColor(kBlack);
     line.SetLineWidth(2);
     line.Draw("same");
 
-    TGaxis axis(scan_max, 0.0, scan_max, sigma_z_max, 0.0, y_right_max, 510, "+L");
+    double axis_x = scan_max + 0.01 * (scan_max - scan_min);
+    TGaxis axis(axis_x, 0.0, axis_x, y_left_max, 0.0, y_right_max, 510, "+L");
     axis.SetLineColor(kRed + 1);
     axis.SetLabelColor(kRed + 1);
     axis.SetTitleColor(kRed + 1);
     axis.SetTitle("#sigma_{y}(x_{det})/M(x*) [mm]");
     axis.SetTitleFont(42);
     axis.SetLabelFont(42);
+    axis.SetTitleOffset(1.35);
+    axis.SetLabelOffset(0.01);
     axis.Draw();
 
-    TLegend leg(0.62, 0.78, 0.88, 0.90);
+    TLegend leg(0.18, 0.18, 0.52, 0.30);
     leg.SetTextFont(42);
     leg.SetBorderSize(0);
     leg.SetFillColor(0);

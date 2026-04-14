@@ -126,14 +126,15 @@ static double weighted_mean(const std::vector<double>& x, const std::vector<doub
   return sum_x / sum_w;
 }
 
-static std::vector<size_t> select_core_indices_around_mean(const std::vector<double>& x,
+static std::vector<size_t> select_core_indices_around_mean(const std::vector<double>& y,
+                                                           const std::vector<double>& z,
                                                            const std::vector<double>& w,
                                                            double core_fraction) {
-  if (x.empty()) {
+  if (y.empty() || z.size() != y.size() || w.size() != y.size()) {
     return {};
   }
   if (core_fraction >= 1.0) {
-    std::vector<size_t> idx(x.size());
+    std::vector<size_t> idx(y.size());
     std::iota(idx.begin(), idx.end(), 0);
     return idx;
   }
@@ -141,23 +142,63 @@ static std::vector<size_t> select_core_indices_around_mean(const std::vector<dou
     return {};
   }
 
-  double mu = weighted_mean(x, w);
-  if (!std::isfinite(mu)) {
-    return {};
-  }
-
   double sum_w = 0.0;
-  for (double wi : w) {
-    sum_w += wi;
+  double sum_y = 0.0;
+  double sum_z = 0.0;
+  for (size_t i = 0; i < y.size(); ++i) {
+    sum_w += w[i];
+    sum_y += w[i] * y[i];
+    sum_z += w[i] * z[i];
   }
   if (sum_w <= 0.0) {
     return {};
   }
+  double mu_y = sum_y / sum_w;
+  double mu_z = sum_z / sum_w;
 
-  std::vector<size_t> idx(x.size());
+  double cov_yy = 0.0;
+  double cov_zz = 0.0;
+  double cov_yz = 0.0;
+  for (size_t i = 0; i < y.size(); ++i) {
+    double dy = y[i] - mu_y;
+    double dz = z[i] - mu_z;
+    cov_yy += w[i] * dy * dy;
+    cov_zz += w[i] * dz * dz;
+    cov_yz += w[i] * dy * dz;
+  }
+  cov_yy /= sum_w;
+  cov_zz /= sum_w;
+  cov_yz /= sum_w;
+
+  double scale = 0.5 * (cov_yy + cov_zz);
+  double eps   = 1e-9 + 1e-6 * std::max(0.0, scale);
+  cov_yy += eps;
+  cov_zz += eps;
+
+  double det = cov_yy * cov_zz - cov_yz * cov_yz;
+  if (!std::isfinite(det) || std::abs(det) < 1e-18) {
+    cov_yz = 0.0;
+    det    = cov_yy * cov_zz;
+    if (!std::isfinite(det) || std::abs(det) < 1e-18) {
+      return {};
+    }
+  }
+
+  double inv_yy = cov_zz / det;
+  double inv_zz = cov_yy / det;
+  double inv_yz = -cov_yz / det;
+
+  std::vector<size_t> idx(y.size());
   std::iota(idx.begin(), idx.end(), 0);
-  std::sort(idx.begin(), idx.end(),
-            [&](size_t a, size_t b) { return std::abs(x[a] - mu) < std::abs(x[b] - mu); });
+  std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) {
+    double dya = y[a] - mu_y;
+    double dza = z[a] - mu_z;
+    double dyb = y[b] - mu_y;
+    double dzb = z[b] - mu_z;
+    double d2a = dya * dya * inv_yy + dza * dza * inv_zz + 2.0 * dya * dza * inv_yz;
+    double d2b = dyb * dyb * inv_yy + dzb * dzb * inv_zz + 2.0 * dyb * dzb * inv_yz;
+    return d2a < d2b;
+  });
 
   std::vector<size_t> keep;
   keep.reserve(idx.size());
@@ -333,13 +374,15 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
   }
 
   std::vector<double> y_focus(y0_f.size(), 0.0);
+  std::vector<double> z_focus(z0_f.size(), 0.0);
   double dx_focus = out.x_focus - cfg.x_virtual;
   for (size_t i = 0; i < y0_f.size(); ++i) {
     y_focus[i] = y0_f[i] + dy_f[i] * dx_focus;
+    z_focus[i] = z0_f[i] + dz_f[i] * dx_focus;
   }
 
   if (core_fraction < 1.0) {
-    auto keep = select_core_indices_around_mean(y_focus, w_f, core_fraction);
+    auto keep = select_core_indices_around_mean(y_focus, z_focus, w_f, core_fraction);
     apply_selection(y0_f, z0_f, dy_f, dz_f, w_f, ysrc_f, keep);
 
     if (y0_f.size() >= 3) {
@@ -390,9 +433,11 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
   }
 
   y_focus.assign(y0_f.size(), 0.0);
+  z_focus.assign(z0_f.size(), 0.0);
   dx_focus = out.x_focus - cfg.x_virtual;
   for (size_t i = 0; i < y0_f.size(); ++i) {
     y_focus[i] = y0_f[i] + dy_f[i] * dx_focus;
+    z_focus[i] = z0_f[i] + dz_f[i] * dx_focus;
   }
 
   double sigma_y_src = weighted_std(ysrc_f, w_f);
