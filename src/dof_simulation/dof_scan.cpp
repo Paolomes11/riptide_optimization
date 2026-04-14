@@ -193,6 +193,15 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
       double x_virtual = has_virtual_mm ? x_virtual_mm : (x2 + x_virtual_offset);
       steppingAction->SetVirtualPlane(x_virtual);
 
+      {
+        auto lens1      = det->GetLens75Params();
+        double x1_front = lens1.x - 0.5 * lens1.tc - 1e-3;
+        double r1_lens  = 0.5 * det->GetLens75Diameter();
+        double x2_front = det->GetLens60X() - 0.5 * det->GetLens60Thickness() - 1e-3;
+        double r2_lens  = 0.5 * det->GetLens60Diameter();
+        steppingAction->SetLensAperturePlanes(x1_front, r1_lens, x2_front, r2_lens);
+      }
+
       if (config.value("use_importance_sampling", false)) {
         G4ThreeVector axis;
         double maxTheta = 0.0;

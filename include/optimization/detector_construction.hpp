@@ -43,6 +43,7 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   double m_lens75_rotation_deg   = 90.0;   // 90 = rot_90y GDML default
   double m_lens60_rotation_deg   = 90.0;
   double m_lens75_diameter       = 50.8; // Default 2 inch
+  double m_lens60_diameter       = 50.8;
   double m_lens75_R1             = 75.0; // Default
   double m_lens75_R2             = 75.0;
   bool m_lens75_is_biconvex      = true;
@@ -90,6 +91,12 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   double GetLens60CenterOffset() const;
   double GetLens75X() const {
     return m_lens75_x;
+  }
+  double GetLens75Diameter() const {
+    return m_lens75_diameter;
+  }
+  double GetLens60Diameter() const {
+    return m_lens60_diameter;
   }
 
   // Restituisce i parametri completi per l'importance sampling

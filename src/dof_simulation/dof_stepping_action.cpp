@@ -22,6 +22,10 @@ void DofSteppingAction::UserSteppingAction(const G4Step* step) {
     return;
   }
 
+  if (track->GetCurrentStepNumber() <= 1) {
+    m_crossedLens1 = false;
+  }
+
   auto pos      = track->GetPosition();
   auto momentum = track->GetMomentum();
 
@@ -37,6 +41,44 @@ void DofSteppingAction::UserSteppingAction(const G4Step* step) {
 
   double pre_x  = step->GetPreStepPoint()->GetPosition().x() / CLHEP::mm;
   double post_x = step->GetPostStepPoint()->GetPosition().x() / CLHEP::mm;
+
+  if (m_hasLensApertures && pre_x < m_xLens1Aperture && post_x >= m_xLens1Aperture) {
+    auto pp      = step->GetPreStepPoint()->GetPosition();
+    auto qp      = step->GetPostStepPoint()->GetPosition();
+    double denom = (post_x - pre_x);
+    if (std::abs(denom) < 1e-12) {
+      track->SetTrackStatus(fStopAndKill);
+      return;
+    }
+    double t = (m_xLens1Aperture - pre_x) / denom;
+    double y = (pp.y() + t * (qp.y() - pp.y())) / CLHEP::mm;
+    double z = (pp.z() + t * (qp.z() - pp.z())) / CLHEP::mm;
+    double r = std::hypot(y, z);
+    if (r > m_rLens1Aperture) {
+      track->SetTrackStatus(fStopAndKill);
+      return;
+    }
+    m_crossedLens1 = true;
+  }
+
+  if (m_hasLensApertures && m_crossedLens1 && pre_x < m_xLens2Aperture
+      && post_x >= m_xLens2Aperture) {
+    auto pp      = step->GetPreStepPoint()->GetPosition();
+    auto qp      = step->GetPostStepPoint()->GetPosition();
+    double denom = (post_x - pre_x);
+    if (std::abs(denom) < 1e-12) {
+      track->SetTrackStatus(fStopAndKill);
+      return;
+    }
+    double t = (m_xLens2Aperture - pre_x) / denom;
+    double y = (pp.y() + t * (qp.y() - pp.y())) / CLHEP::mm;
+    double z = (pp.z() + t * (qp.z() - pp.z())) / CLHEP::mm;
+    double r = std::hypot(y, z);
+    if (r > m_rLens2Aperture) {
+      track->SetTrackStatus(fStopAndKill);
+      return;
+    }
+  }
 
   if (pre_x >= m_xVirtual || post_x < m_xVirtual) {
     return;

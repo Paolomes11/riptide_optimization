@@ -35,6 +35,7 @@ struct CliConfig {
   std::optional<double> scan_max;
   std::optional<double> scan_step;
   std::optional<double> k_threshold;
+  double core_fraction = 1.0;
 };
 
 static CliConfig parse_args(int argc, char** argv) {
@@ -65,10 +66,13 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.scan_step = std::stod(next());
     else if (arg == "--k")
       cfg.k_threshold = std::stod(next());
+    else if (arg == "--core-fraction")
+      cfg.core_fraction = std::stod(next());
     else if (arg == "--help" || arg == "-h") {
       std::cout << "Uso:\n"
                 << "  dof_plot --input focal.root --x1 50.0 --x2 120.0 [--output dir/]\n"
-                << "           [--scan-min 100] [--scan-max 350] [--scan-step 0.5] [--k 1.414]\n";
+                << "           [--scan-min 100] [--scan-max 350] [--scan-step 0.5] [--k 1.414]\n"
+                << "           [--core-fraction 1.0]\n";
       std::exit(0);
     } else {
       std::cerr << "Opzione sconosciuta: " << arg << "\n";
@@ -108,6 +112,87 @@ static double weighted_std(const std::vector<double>& x, const std::vector<doubl
   }
   var /= sum_w;
   return std::sqrt(std::max(0.0, var));
+}
+
+static double weighted_mean(const std::vector<double>& x, const std::vector<double>& w) {
+  double sum_w = 0.0;
+  double sum_x = 0.0;
+  for (size_t i = 0; i < x.size(); ++i) {
+    sum_w += w[i];
+    sum_x += w[i] * x[i];
+  }
+  if (sum_w <= 0.0) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  return sum_x / sum_w;
+}
+
+static std::vector<size_t> select_core_indices_around_mean(const std::vector<double>& x,
+                                                           const std::vector<double>& w,
+                                                           double core_fraction) {
+  if (x.empty()) {
+    return {};
+  }
+  if (core_fraction >= 1.0) {
+    std::vector<size_t> idx(x.size());
+    std::iota(idx.begin(), idx.end(), 0);
+    return idx;
+  }
+  if (core_fraction <= 0.0) {
+    return {};
+  }
+
+  double mu = weighted_mean(x, w);
+  if (!std::isfinite(mu)) {
+    return {};
+  }
+
+  double sum_w = 0.0;
+  for (double wi : w) {
+    sum_w += wi;
+  }
+  if (sum_w <= 0.0) {
+    return {};
+  }
+
+  std::vector<size_t> idx(x.size());
+  std::iota(idx.begin(), idx.end(), 0);
+  std::sort(idx.begin(), idx.end(),
+            [&](size_t a, size_t b) { return std::abs(x[a] - mu) < std::abs(x[b] - mu); });
+
+  std::vector<size_t> keep;
+  keep.reserve(idx.size());
+  double target = core_fraction * sum_w;
+  double acc    = 0.0;
+  for (size_t k : idx) {
+    keep.push_back(k);
+    acc += w[k];
+    if (acc >= target) {
+      break;
+    }
+  }
+  std::sort(keep.begin(), keep.end());
+  return keep;
+}
+
+static void apply_selection(std::vector<double>& y0, std::vector<double>& z0,
+                            std::vector<double>& dy, std::vector<double>& dz,
+                            std::vector<double>& w, std::vector<double>& ysrc,
+                            const std::vector<size_t>& keep) {
+  auto pick = [&](std::vector<double>& v) {
+    std::vector<double> out;
+    out.reserve(keep.size());
+    for (size_t i : keep) {
+      out.push_back(v[i]);
+    }
+    v.swap(out);
+  };
+  pick(y0);
+  pick(z0);
+  pick(dy);
+  pick(dz);
+  pick(w);
+  pick(ysrc);
 }
 
 static double weighted_percentile(const std::vector<double>& x, const std::vector<double>& w,
@@ -205,6 +290,10 @@ int main(int argc, char** argv) {
   CliConfig cli = parse_args(argc, argv);
   if (!std::isfinite(cli.x1) || !std::isfinite(cli.x2)) {
     std::cerr << "Errore: --x1 e --x2 sono obbligatori\n";
+    return 1;
+  }
+  if (!(cli.core_fraction > 0.0 && cli.core_fraction <= 1.0)) {
+    std::cerr << "Errore: --core-fraction deve essere in (0, 1]\n";
     return 1;
   }
 
@@ -358,6 +447,54 @@ int main(int argc, char** argv) {
   double x_focus     = x_scan[i_min];
   double sigma_z_min = sigma_z[i_min];
 
+  std::vector<double> y_focus(y0.size(), 0.0);
+  std::vector<double> z_focus(z0.size(), 0.0);
+  double dx_focus = x_focus - best_x_virtual;
+  for (size_t i = 0; i < y0.size(); ++i) {
+    y_focus[i] = y0[i] + dy[i] * dx_focus;
+    z_focus[i] = z0[i] + dz[i] * dx_focus;
+  }
+
+  double n_rays_before = 0.0;
+  for (double wi : w) {
+    n_rays_before += wi;
+  }
+
+  if (cli.core_fraction < 1.0) {
+    auto keep = select_core_indices_around_mean(y_focus, w, cli.core_fraction);
+    apply_selection(y0, z0, dy, dz, w, ysrc, keep);
+
+    x_scan.clear();
+    for (double x = scan_min; x <= scan_max + 1e-12; x += scan_step) {
+      x_scan.push_back(x);
+    }
+
+    sigma_z.assign(x_scan.size(), 0.0);
+    z_tmp.assign(y0.size(), 0.0);
+    for (size_t ix = 0; ix < x_scan.size(); ++ix) {
+      double x_det  = x_scan[ix];
+      double dx_det = x_det - best_x_virtual;
+      for (size_t i = 0; i < z0.size(); ++i) {
+        z_tmp[i] = z0[i] + dz[i] * dx_det;
+      }
+      sigma_z[ix] = weighted_std(z_tmp, w);
+    }
+
+    i_min =
+        std::distance(sigma_z.begin(), std::min_element(sigma_z.begin(), sigma_z.end(),
+                                                        [](double a, double b) { return a < b; }));
+    x_focus     = x_scan[i_min];
+    sigma_z_min = sigma_z[i_min];
+
+    y_focus.assign(y0.size(), 0.0);
+    z_focus.assign(z0.size(), 0.0);
+    dx_focus = x_focus - best_x_virtual;
+    for (size_t i = 0; i < y0.size(); ++i) {
+      y_focus[i] = y0[i] + dy[i] * dx_focus;
+      z_focus[i] = z0[i] + dz[i] * dx_focus;
+    }
+  }
+
   double thr = k_threshold * sigma_z_min;
   int i_lo   = static_cast<int>(i_min);
   while (i_lo - 1 >= 0 && sigma_z[static_cast<size_t>(i_lo - 1)] < thr) {
@@ -372,14 +509,6 @@ int main(int argc, char** argv) {
   double x_lo = x_scan[static_cast<size_t>(i_lo)];
   double x_hi = x_scan[static_cast<size_t>(i_hi)];
   double dof  = x_hi - x_lo;
-
-  std::vector<double> y_focus(y0.size(), 0.0);
-  std::vector<double> z_focus(z0.size(), 0.0);
-  double dx_focus = x_focus - best_x_virtual;
-  for (size_t i = 0; i < y0.size(); ++i) {
-    y_focus[i] = y0[i] + dy[i] * dx_focus;
-    z_focus[i] = z0[i] + dz[i] * dx_focus;
-  }
 
   double sigma_y_src = weighted_std(ysrc, w);
   double sigma_y_det = weighted_std(y_focus, w);
@@ -400,13 +529,22 @@ int main(int argc, char** argv) {
   std::cout << "Results:\n";
   std::cout << "  x* = " << x_focus << " mm\n";
   std::cout << "  sigma_z(x*) = " << sigma_z_min << " mm\n";
-  std::cout << "  DoF(k=" << k_threshold << ") = " << dof << " mm  ("
+  std::cout << "  DoF(k=" << k_threshold << ") = " << dof << " mm  (" << x_lo << " .. " << x_hi
             << ")\n";
   std::cout << "  sigma_y_src = " << sigma_y_src << " mm\n";
   std::cout << "  sigma_y_det(x*) = " << sigma_y_det << " mm\n";
   std::cout << "  M(x*) = " << M << "\n";
   std::cout << "  stripe_width(P90-P10) = " << stripe_width << " mm\n";
   std::cout << "  within_photocathode(16mm) = " << (within_photocathode ? 1 : 0) << "\n";
+  if (cli.core_fraction < 1.0) {
+    double n_rays_after = 0.0;
+    for (double wi : w) {
+      n_rays_after += wi;
+    }
+    std::cout << "  core_fraction = " << cli.core_fraction << "\n";
+    std::cout << "  n_rays_core (weighted) = " << n_rays_after << " (from " << n_rays_before
+              << ")\n";
+  }
 
   double sigma_z_max = *std::max_element(sigma_z.begin(), sigma_z.end());
 

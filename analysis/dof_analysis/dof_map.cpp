@@ -31,6 +31,7 @@ struct CliConfig {
   std::optional<double> scan_max;
   std::optional<double> scan_step;
   std::optional<double> k_threshold;
+  std::optional<double> core_fraction;
   std::string tsv_out;
 };
 
@@ -60,12 +61,15 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.scan_step = std::stod(next());
     else if (arg == "--k")
       cfg.k_threshold = std::stod(next());
+    else if (arg == "--core-fraction")
+      cfg.core_fraction = std::stod(next());
     else if (arg == "--tsv")
       cfg.tsv_out = next();
     else if (arg == "--help" || arg == "-h") {
       std::cout << "Uso:\n"
                 << "  dof_map --input focal.root --config config/config.json [--output dir/]\n"
                 << "          [--scan-min 100] [--scan-max 350] [--scan-step 0.5] [--k 1.414]\n"
+                << "          [--core-fraction 1.0]\n"
                 << "          [--tsv output/dof_map.tsv]\n";
       std::exit(0);
     } else {
@@ -107,6 +111,87 @@ static double weighted_std(const std::vector<double>& x, const std::vector<doubl
   }
   var /= sum_w;
   return std::sqrt(std::max(0.0, var));
+}
+
+static double weighted_mean(const std::vector<double>& x, const std::vector<double>& w) {
+  double sum_w = 0.0;
+  double sum_x = 0.0;
+  for (size_t i = 0; i < x.size(); ++i) {
+    sum_w += w[i];
+    sum_x += w[i] * x[i];
+  }
+  if (sum_w <= 0.0) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  return sum_x / sum_w;
+}
+
+static std::vector<size_t> select_core_indices_around_mean(const std::vector<double>& x,
+                                                           const std::vector<double>& w,
+                                                           double core_fraction) {
+  if (x.empty()) {
+    return {};
+  }
+  if (core_fraction >= 1.0) {
+    std::vector<size_t> idx(x.size());
+    std::iota(idx.begin(), idx.end(), 0);
+    return idx;
+  }
+  if (core_fraction <= 0.0) {
+    return {};
+  }
+
+  double mu = weighted_mean(x, w);
+  if (!std::isfinite(mu)) {
+    return {};
+  }
+
+  double sum_w = 0.0;
+  for (double wi : w) {
+    sum_w += wi;
+  }
+  if (sum_w <= 0.0) {
+    return {};
+  }
+
+  std::vector<size_t> idx(x.size());
+  std::iota(idx.begin(), idx.end(), 0);
+  std::sort(idx.begin(), idx.end(),
+            [&](size_t a, size_t b) { return std::abs(x[a] - mu) < std::abs(x[b] - mu); });
+
+  std::vector<size_t> keep;
+  keep.reserve(idx.size());
+  double target = core_fraction * sum_w;
+  double acc    = 0.0;
+  for (size_t k : idx) {
+    keep.push_back(k);
+    acc += w[k];
+    if (acc >= target) {
+      break;
+    }
+  }
+  std::sort(keep.begin(), keep.end());
+  return keep;
+}
+
+static void apply_selection(std::vector<double>& y0, std::vector<double>& z0,
+                            std::vector<double>& dy, std::vector<double>& dz,
+                            std::vector<double>& w, std::vector<double>& ysrc,
+                            const std::vector<size_t>& keep) {
+  auto pick = [&](std::vector<double>& v) {
+    std::vector<double> out;
+    out.reserve(keep.size());
+    for (size_t i : keep) {
+      out.push_back(v[i]);
+    }
+    v.swap(out);
+  };
+  pick(y0);
+  pick(z0);
+  pick(dy);
+  pick(dz);
+  pick(w);
+  pick(ysrc);
 }
 
 static double weighted_percentile(const std::vector<double>& x, const std::vector<double>& w,
@@ -173,13 +258,14 @@ struct ResultRow {
   double stripe_width     = 0.0;
   int within_photocathode = 0;
   double n_rays           = 0.0;
+  double n_rays_core      = 0.0;
 };
 
 static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std::vector<double>& y0,
                                 const std::vector<double>& z0, const std::vector<double>& dy,
                                 const std::vector<double>& dz, const std::vector<double>& w,
                                 const std::vector<double>& ysrc, const std::vector<double>& x_scan,
-                                double k_threshold) {
+                                double k_threshold, double core_fraction) {
   ResultRow out;
   out.config_id = cfg.config_id;
   out.x1        = cfg.x1;
@@ -234,20 +320,95 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
   double x_hi = x_scan[static_cast<size_t>(i_hi)];
   out.dof     = x_hi - x_lo;
 
-  std::vector<double> y_focus(y0.size(), 0.0);
-  double dx_focus = out.x_focus - cfg.x_virtual;
-  for (size_t i = 0; i < y0.size(); ++i) {
-    y_focus[i] = y0[i] + dy[i] * dx_focus;
+  std::vector<double> y0_f   = y0;
+  std::vector<double> z0_f   = z0;
+  std::vector<double> dy_f   = dy;
+  std::vector<double> dz_f   = dz;
+  std::vector<double> w_f    = w;
+  std::vector<double> ysrc_f = ysrc;
+
+  double n_w_before = 0.0;
+  for (double wi : w_f) {
+    n_w_before += wi;
   }
 
-  double sigma_y_src = weighted_std(ysrc, w);
-  double sigma_y_det = weighted_std(y_focus, w);
+  std::vector<double> y_focus(y0_f.size(), 0.0);
+  double dx_focus = out.x_focus - cfg.x_virtual;
+  for (size_t i = 0; i < y0_f.size(); ++i) {
+    y_focus[i] = y0_f[i] + dy_f[i] * dx_focus;
+  }
+
+  if (core_fraction < 1.0) {
+    auto keep = select_core_indices_around_mean(y_focus, w_f, core_fraction);
+    apply_selection(y0_f, z0_f, dy_f, dz_f, w_f, ysrc_f, keep);
+
+    if (y0_f.size() >= 3) {
+      std::vector<double> tmp2(z0_f.size(), 0.0);
+      std::vector<double> sigma_z2(x_scan.size(), 0.0);
+      for (size_t ix = 0; ix < x_scan.size(); ++ix) {
+        double dx_det2 = x_scan[ix] - cfg.x_virtual;
+        for (size_t i = 0; i < z0_f.size(); ++i) {
+          tmp2[i] = z0_f[i] + dz_f[i] * dx_det2;
+        }
+        sigma_z2[ix] = weighted_std(tmp2, w_f);
+      }
+
+      size_t i_min2    = std::distance(sigma_z2.begin(),
+                                       std::min_element(sigma_z2.begin(), sigma_z2.end(),
+                                                        [](double a, double b) { return a < b; }));
+      out.x_focus_scan = x_scan[i_min2];
+      out.x_focus      = out.x_focus_scan;
+      sigma_z_min      = sigma_z2[i_min2];
+
+      if (i_min2 == 0 && x_scan.size() >= 3) {
+        double x0  = x_scan[0];
+        double x1  = x_scan[1];
+        double x2  = x_scan[2];
+        double y0q = sigma_z2[0] * sigma_z2[0];
+        double y1q = sigma_z2[1] * sigma_z2[1];
+        double y2q = sigma_z2[2] * sigma_z2[2];
+        auto xv    = quadratic_vertex_from_three_points(x0, y0q, x1, y1q, x2, y2q);
+        if (xv.has_value() && std::isfinite(*xv)) {
+          out.x_focus = *xv;
+        }
+      }
+
+      double thr2 = k_threshold * sigma_z_min;
+      int i_lo2   = static_cast<int>(i_min2);
+      while (i_lo2 - 1 >= 0 && sigma_z2[static_cast<size_t>(i_lo2 - 1)] < thr2) {
+        --i_lo2;
+      }
+      int i_hi2 = static_cast<int>(i_min2);
+      while (i_hi2 + 1 < static_cast<int>(sigma_z2.size())
+             && sigma_z2[static_cast<size_t>(i_hi2 + 1)] < thr2) {
+        ++i_hi2;
+      }
+      double x_lo2 = x_scan[static_cast<size_t>(i_lo2)];
+      double x_hi2 = x_scan[static_cast<size_t>(i_hi2)];
+      out.dof      = x_hi2 - x_lo2;
+    }
+  }
+
+  y_focus.assign(y0_f.size(), 0.0);
+  dx_focus = out.x_focus - cfg.x_virtual;
+  for (size_t i = 0; i < y0_f.size(); ++i) {
+    y_focus[i] = y0_f[i] + dy_f[i] * dx_focus;
+  }
+
+  double sigma_y_src = weighted_std(ysrc_f, w_f);
+  double sigma_y_det = weighted_std(y_focus, w_f);
   out.M              = (sigma_y_src > 0.0) ? (sigma_y_det / sigma_y_src) : 0.0;
 
-  double p10              = weighted_percentile(y_focus, w, 0.10);
-  double p90              = weighted_percentile(y_focus, w, 0.90);
+  double p10              = weighted_percentile(y_focus, w_f, 0.10);
+  double p90              = weighted_percentile(y_focus, w_f, 0.90);
   out.stripe_width        = p90 - p10;
   out.within_photocathode = (out.stripe_width <= 16.0) ? 1 : 0;
+
+  double n_w_after = 0.0;
+  for (double wi : w_f) {
+    n_w_after += wi;
+  }
+  out.n_rays_core = (core_fraction < 1.0) ? n_w_after : n_w_before;
 
   return out;
 }
@@ -271,10 +432,15 @@ int main(int argc, char** argv) {
   double x_max = config.value("x_max", 200.0);
   double dx    = config.value("dx", 1.0);
 
-  double scan_min    = cli.scan_min.value_or(config.value("dof_x_scan_min", 100.0));
-  double scan_max    = cli.scan_max.value_or(config.value("dof_x_scan_max", 350.0));
-  double scan_step   = cli.scan_step.value_or(config.value("dof_x_scan_step", 0.5));
-  double k_threshold = cli.k_threshold.value_or(config.value("dof_k_threshold", std::sqrt(2.0)));
+  double scan_min      = cli.scan_min.value_or(config.value("dof_x_scan_min", 100.0));
+  double scan_max      = cli.scan_max.value_or(config.value("dof_x_scan_max", 350.0));
+  double scan_step     = cli.scan_step.value_or(config.value("dof_x_scan_step", 0.5));
+  double k_threshold   = cli.k_threshold.value_or(config.value("dof_k_threshold", std::sqrt(2.0)));
+  double core_fraction = cli.core_fraction.value_or(config.value("dof_core_fraction", 1.0));
+  if (!(core_fraction > 0.0 && core_fraction <= 1.0)) {
+    std::cerr << "Errore: core_fraction deve essere in (0, 1]\n";
+    return 1;
+  }
   if (!(scan_step > 0.0)) {
     std::cerr << "Errore: scan_step deve essere > 0\n";
     return 1;
@@ -384,8 +550,8 @@ int main(int argc, char** argv) {
       ysrc[k] = (*ysrc_hits_f)[k];
     }
 
-    results.push_back(
-        analyze_config(it->second, n_rays, y0, z0, dy, dz, w, ysrc, x_scan, k_threshold));
+    results.push_back(analyze_config(it->second, n_rays, y0, z0, dy, dz, w, ysrc, x_scan,
+                                     k_threshold, core_fraction));
   }
 
   if (!cli.tsv_out.empty()) {
@@ -394,12 +560,13 @@ int main(int argc, char** argv) {
       std::filesystem::create_directories(tsv_path.parent_path());
     }
     std::ofstream out(tsv_path);
-    out << "x1\tx2\tx_focus\tx_focus_scan\tdof\tM\tstripe_width\twithin_photocathode\tn_"
-           "rays\tconfig_id\n";
+    out << "x1\tx2\tx_focus\tx_focus_scan\tdof\tM\tstripe_width\twithin_photocathode\tn_rays\t"
+           "n_rays_core\tcore_fraction\tconfig_id\n";
     for (const auto& r : results) {
       out << r.x1 << "\t" << r.x2 << "\t" << r.x_focus << "\t" << r.x_focus_scan << "\t" << r.dof
           << "\t" << r.M << "\t" << r.stripe_width << "\t" << r.within_photocathode << "\t"
-          << r.n_rays << "\t" << r.config_id << "\n";
+          << r.n_rays << "\t" << r.n_rays_core << "\t" << core_fraction << "\t" << r.config_id
+          << "\n";
     }
   }
 
