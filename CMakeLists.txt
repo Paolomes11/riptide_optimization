@@ -105,6 +105,10 @@ foreach(MAIN_FILE ${PROGRAM_MAIN})
     target_compile_options(${PROG_NAME} PRIVATE ${COMMON_WARNINGS})
 endforeach()
 
+if(TARGET dof_simulation_main AND TARGET optimization_main_lib)
+    target_link_libraries(dof_simulation_main PRIVATE optimization_main_lib)
+endif()
+
 
 # Crea la cartella di output e sue sottocartelle
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output)

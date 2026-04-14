@@ -18,7 +18,8 @@ def get_progress(log_file):
         with open(log_file, 'r') as f:
             content = f.read()
             done_count = content.count("Run done:")
-            is_finished = "Simulation completed" in content or "Optimization completed" in content
+            is_finished = ("Simulation completed" in content or "Optimization completed" in content
+                           or "DoF scan completed" in content)
             return done_count, is_finished
     except:
         return 0, False

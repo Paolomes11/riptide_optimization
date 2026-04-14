@@ -18,5 +18,16 @@
   "source_dx": 0.5,
   "source_y_min": 0.0,
   "source_y_max": 14.14,
-  "source_dy": 0.5
+  "source_dy": 0.5,
+  "dof_x_virtual_mm": 180.0,
+  "dof_x_virtual_offset": 30.0,
+  "dof_n_photons": 10000,
+  "dof_x_scan_min": 180.0,
+  "dof_x_scan_max": 400.0,
+  "dof_x_scan_step": 0.5,
+  "dof_k_threshold": 1.414,
+  "dof_pixel_size": 8.0,
+  "dof_source_halfy": 5.0,
+  "dof_source_halfz": 30.0,
+  "dof_source_y_centre": 5.0
 }

@@ -54,3 +54,6 @@ add_subdirectory(psf_analysis)
 
 # Sottocartella per esperimento 1 (immagini FITS)
 add_subdirectory(exp1)
+
+# Sottocartella per DoF analysis
+add_subdirectory(dof_analysis)

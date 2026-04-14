@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# run.sh — Lancia lens_simulation o optimization, locale o su SSD esterna
+# run.sh — Lancia lens_simulation, optimization o dof_simulation, locale o su SSD esterna
 #          Supporta la parallelizzazione a processi con chunking automatico
 #
 # Uso:
-#   ./run.sh [lens|opt] [local|ssd] [--jobs N] [opzioni extra passate al binario]
+#   ./run.sh [lens|opt|dof] [local|ssd] [--jobs N] [opzioni extra passate al binario]
 #
 # Esempi:
 #   ./run.sh lens local
@@ -22,9 +22,11 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # configurazione di default
 BUILD_DIR="$PROJECT_ROOT/build"
 GEOMETRY="$PROJECT_ROOT/geometry/main.gdml"
+GEOMETRY_DOF="$PROJECT_ROOT/geometry/dof_geometry.gdml"
 SSD_MOUNT="/mnt/external_ssd"
 BINARY_LENS="$BUILD_DIR/Release/lens_simulation_main"
 BINARY_OPT="$BUILD_DIR/Release/optimization_main"
+BINARY_DOF="$BUILD_DIR/Release/dof_simulation_main"
 N_JOBS=1
 CONFIG_FILE="$PROJECT_ROOT/config/config.json"
 LENS75_ID=""
@@ -32,7 +34,7 @@ LENS60_ID=""
 ALL_LENSES=0
 
 # parsing argomenti posizionali
-MODE="${1:-lens}"    # lens | opt
+MODE="${1:-lens}"    # lens | opt | dof
 TARGET="${2:-local}" # local | ssd
 shift 2 || true
 
@@ -47,7 +49,7 @@ while [[ $# -gt 0 ]]; do
     --all-lenses)
       ALL_LENSES=1; EXTRA_ARGS+=("--all-lenses"); shift ;;
     --config)
-      CONFIG_FILE="$2"; EXTRA_ARGS+=("--config" "$2"); shift 2 ;;
+      CONFIG_FILE="$2"; shift 2 ;;
     --lens75-id)
       LENS75_ID="$2"; EXTRA_ARGS+=("--lens75-id" "$2"); shift 2 ;;
     --lens60-id)
@@ -67,6 +69,7 @@ fi
 # verifica build
 BINARY="$BINARY_LENS"
 [[ "$MODE" == "opt" ]] && BINARY="$BINARY_OPT"
+[[ "$MODE" == "dof" ]] && BINARY="$BINARY_DOF"
 if [[ ! -f "$BINARY" ]]; then
   echo "[ERROR] Binario non trovato: $BINARY — esegui cmake + make prima." >&2
   exit 1
@@ -90,6 +93,7 @@ if [[ "$N_JOBS" -eq 1 ]]; then
   case "$MODE" in
     lens) "$BINARY" -g "$GEOMETRY" -b -l --config "$CONFIG_FILE" $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
     opt)  "$BINARY" -g "$GEOMETRY" -b -o --config "$CONFIG_FILE" $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
+    dof)  "$BINARY" -g "$GEOMETRY_DOF" -b -d --config "$CONFIG_FILE" $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
   esac
   echo "[DONE]  Simulazione completata."
   exit 0
@@ -176,7 +180,7 @@ def load_tsv(filename, has_rotation=False):
 load_tsv('thorlabs_biconvex.tsv', has_rotation=False)
 load_tsv('thorlabs_planoconvex.tsv', has_rotation=True)
 
-if mode == 'opt' and all_lenses:
+if mode in ('opt', 'dof') and all_lenses:
     n_models = len(thorlabs_data) * len(thorlabs_data)
 
 if mode == 'lens':
@@ -266,6 +270,9 @@ for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
   if [[ "$MODE" == "opt" ]]; then
     SUBDIR="optimization"
     EXT="events"
+  elif [[ "$MODE" == "dof" ]]; then
+    SUBDIR="dof_simulation"
+    EXT="focal"
   else
     SUBDIR="lens_simulation"
     EXT="lens"
@@ -291,6 +298,8 @@ for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
   if [[ "$MODE" == "opt" ]]; then
     # In optimization mode, we use -o
     "$BINARY" -g "$GEOMETRY" -b -o --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+  elif [[ "$MODE" == "dof" ]]; then
+    "$BINARY" -g "$GEOMETRY_DOF" -b -d --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
   else
     # In lens simulation mode, we use -l
     "$BINARY" -g "$GEOMETRY" -b -l --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
@@ -319,7 +328,10 @@ for i in "${!PIDS[@]}"; do
 done
 
 # Ferma il monitor
-[[ -n "$MONITOR_PID" ]] && wait "$MONITOR_PID" 2>/dev/null || true
+if [[ -n "$MONITOR_PID" ]]; then
+  kill "$MONITOR_PID" 2>/dev/null || true
+  wait "$MONITOR_PID" 2>/dev/null || true
+fi
 
 [[ $FAILED -eq 1 ]] && { echo "[ERROR] Uno o più chunk sono falliti. Merge annullato."; exit 1; }
 
@@ -327,6 +339,9 @@ done
 if [[ "$MODE" == "opt" ]]; then
   OUT_NAME="events"
   OUT_DIR="optimization"
+elif [[ "$MODE" == "dof" ]]; then
+  OUT_NAME="focal"
+  OUT_DIR="dof_simulation"
 else
   OUT_NAME="lens"
   OUT_DIR="lens_simulation"

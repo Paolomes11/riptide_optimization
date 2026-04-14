@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE gdml [
+  <!ENTITY define SYSTEM "./define.xml">
+  <!ENTITY materials SYSTEM "./materials.xml">
+  <!ENTITY solids SYSTEM "./solids.xml">
+]>
+<gdml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:noNamespaceSchemaLocation="http://cern.ch/service-spi/app/releases/GDML/schema/gdml.xsd">
+  <define>
+    &define;
+  </define>
+
+  <materials>
+    &materials;
+  </materials>
+
+  <solids>
+    &solids;
+  </solids>
+
+  <structure>
+    <volume name="lens75_x_volume">
+      <materialref ref="uvfs" />
+      <solidref ref="lens75_x_ellipsoid" />
+    </volume>
+
+    <volume name="lens60_x_volume">
+      <materialref ref="uvfs" />
+      <solidref ref="lens60_x_ellipsoid" />
+    </volume>
+
+    <volume name="photocathode_x_volume">
+      <materialref ref="gaasp" />
+      <solidref ref="photocathode_square" />
+      <auxiliary auxtype="sd_name" auxvalue="sensitive_photocathode_x" />
+    </volume>
+
+    <volume name="world">
+      <materialref ref="air" />
+      <solidref ref="world" />
+
+      <physvol name="lens75_x_phys">
+        <volumeref ref="lens75_x_volume" />
+        <positionref ref="lens75_x_pos" />
+        <rotationref ref="rot_90y" />
+      </physvol>
+
+      <physvol name="lens60_x_phys">
+        <volumeref ref="lens60_x_volume" />
+        <positionref ref="lens60_x_pos" />
+        <rotationref ref="rot_90y" />
+      </physvol>
+    </volume>
+  </structure>
+
+  <setup name="Default" version="1.0">
+    <world ref="world" />
+  </setup>
+</gdml>
