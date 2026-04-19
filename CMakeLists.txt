@@ -109,6 +109,10 @@ if(TARGET dof_simulation_main AND TARGET optimization_main_lib)
     target_link_libraries(dof_simulation_main PRIVATE optimization_main_lib)
 endif()
 
+if(TARGET psf_dof_scan_main AND TARGET optimization_main_lib)
+    target_link_libraries(psf_dof_scan_main PRIVATE optimization_main_lib)
+endif()
+
 
 # Crea la cartella di output e sue sottocartelle
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output)

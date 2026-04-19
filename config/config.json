@@ -29,5 +29,9 @@
   "dof_pixel_size": 8.0,
   "dof_source_halfy": 5.0,
   "dof_source_halfz": 30.0,
-  "dof_source_y_centre": 5.0
+  "dof_source_y_centre": 5.0,
+  "psf_dof_x_virtual_mm": 180.0,
+  "psf_dof_save_hits": false,
+  "psf_dof_n_photons": 1000,
+  "m_target": 0.1333
 }

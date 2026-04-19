@@ -32,6 +32,7 @@ struct CliConfig {
   std::optional<double> scan_step;
   std::optional<double> k_threshold;
   std::optional<double> core_fraction;
+  std::optional<double> m_target;
   std::string tsv_out;
 };
 
@@ -63,13 +64,15 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.k_threshold = std::stod(next());
     else if (arg == "--core-fraction")
       cfg.core_fraction = std::stod(next());
+    else if (arg == "--m-target")
+      cfg.m_target = std::stod(next());
     else if (arg == "--tsv")
       cfg.tsv_out = next();
     else if (arg == "--help" || arg == "-h") {
       std::cout << "Uso:\n"
                 << "  dof_map --input focal.root --config config/config.json [--output dir/]\n"
                 << "          [--scan-min 100] [--scan-max 350] [--scan-step 0.5] [--k 1.414]\n"
-                << "          [--core-fraction 1.0]\n"
+                << "          [--core-fraction 1.0] [--m-target 0.1333]\n"
                 << "          [--tsv output/dof_map.tsv]\n";
       std::exit(0);
     } else {
@@ -296,6 +299,7 @@ struct ResultRow {
   double x_focus_scan     = 0.0;
   double dof              = 0.0;
   double M                = 0.0;
+  double M_abs_err        = 0.0;
   double stripe_width     = 0.0;
   int within_photocathode = 0;
   double n_rays           = 0.0;
@@ -306,7 +310,7 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
                                 const std::vector<double>& z0, const std::vector<double>& dy,
                                 const std::vector<double>& dz, const std::vector<double>& w,
                                 const std::vector<double>& ysrc, const std::vector<double>& x_scan,
-                                double k_threshold, double core_fraction) {
+                                double k_threshold, double core_fraction, double m_target) {
   ResultRow out;
   out.config_id = cfg.config_id;
   out.x1        = cfg.x1;
@@ -443,6 +447,7 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
   double sigma_y_src = weighted_std(ysrc_f, w_f);
   double sigma_y_det = weighted_std(y_focus, w_f);
   out.M              = (sigma_y_src > 0.0) ? (sigma_y_det / sigma_y_src) : 0.0;
+  out.M_abs_err      = std::abs(out.M - m_target);
 
   double p10              = weighted_percentile(y_focus, w_f, 0.10);
   double p90              = weighted_percentile(y_focus, w_f, 0.90);
@@ -482,6 +487,7 @@ int main(int argc, char** argv) {
   double scan_step     = cli.scan_step.value_or(config.value("dof_x_scan_step", 0.5));
   double k_threshold   = cli.k_threshold.value_or(config.value("dof_k_threshold", std::sqrt(2.0)));
   double core_fraction = cli.core_fraction.value_or(config.value("dof_core_fraction", 1.0));
+  double m_target      = cli.m_target.value_or(config.value("m_target", 1.0 / 7.5));
   if (!(core_fraction > 0.0 && core_fraction <= 1.0)) {
     std::cerr << "Errore: core_fraction deve essere in (0, 1]\n";
     return 1;
@@ -596,7 +602,7 @@ int main(int argc, char** argv) {
     }
 
     results.push_back(analyze_config(it->second, n_rays, y0, z0, dy, dz, w, ysrc, x_scan,
-                                     k_threshold, core_fraction));
+                                     k_threshold, core_fraction, m_target));
   }
 
   if (!cli.tsv_out.empty()) {
@@ -605,13 +611,13 @@ int main(int argc, char** argv) {
       std::filesystem::create_directories(tsv_path.parent_path());
     }
     std::ofstream out(tsv_path);
-    out << "x1\tx2\tx_focus\tx_focus_scan\tdof\tM\tstripe_width\twithin_photocathode\tn_rays\t"
-           "n_rays_core\tcore_fraction\tconfig_id\n";
+    out << "x1\tx2\tx_focus\tx_focus_scan\tdof\tM\tm_target\tM_abs_err\tstripe_width\t"
+           "within_photocathode\tn_rays\tn_rays_core\tcore_fraction\tconfig_id\n";
     for (const auto& r : results) {
       out << r.x1 << "\t" << r.x2 << "\t" << r.x_focus << "\t" << r.x_focus_scan << "\t" << r.dof
-          << "\t" << r.M << "\t" << r.stripe_width << "\t" << r.within_photocathode << "\t"
-          << r.n_rays << "\t" << r.n_rays_core << "\t" << core_fraction << "\t" << r.config_id
-          << "\n";
+          << "\t" << r.M << "\t" << m_target << "\t" << r.M_abs_err << "\t" << r.stripe_width
+          << "\t" << r.within_photocathode << "\t" << r.n_rays << "\t" << r.n_rays_core << "\t"
+          << core_fraction << "\t" << r.config_id << "\n";
     }
   }
 
@@ -635,6 +641,9 @@ int main(int argc, char** argv) {
              x1_max_data + dx / 2.0, n_bins_x2, x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
   TH2D h_M("h_M", ";x1 [mm];x2 [mm];M", n_bins_x1, x1_min_data - dx / 2.0, x1_max_data + dx / 2.0,
            n_bins_x2, x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
+  TH2D h_M_abs_err("h_M_abs_err", ";x1 [mm];x2 [mm];|M - M_{target}|", n_bins_x1,
+                   x1_min_data - dx / 2.0, x1_max_data + dx / 2.0, n_bins_x2,
+                   x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
   TH2D h_stripe("h_stripe", ";x1 [mm];x2 [mm];stripe width [mm]", n_bins_x1, x1_min_data - dx / 2.0,
                 x1_max_data + dx / 2.0, n_bins_x2, x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
   TH2D h_margin("h_margin", ";x1 [mm];x2 [mm];16 - stripe width [mm]", n_bins_x1,
@@ -653,6 +662,7 @@ int main(int argc, char** argv) {
   const ResultRow* best_focus_near = nullptr;
   const ResultRow* best_dof_max    = nullptr;
   const ResultRow* best_M_neutral  = nullptr;
+  const ResultRow* best_M_target   = nullptr;
 
   double focus_min  = std::numeric_limits<double>::infinity();
   double focus_max  = -std::numeric_limits<double>::infinity();
@@ -660,6 +670,8 @@ int main(int argc, char** argv) {
   double dof_max    = -std::numeric_limits<double>::infinity();
   double M_min      = std::numeric_limits<double>::infinity();
   double M_max      = -std::numeric_limits<double>::infinity();
+  double M_err_min  = std::numeric_limits<double>::infinity();
+  double M_err_max  = -std::numeric_limits<double>::infinity();
   double stripe_min = std::numeric_limits<double>::infinity();
   double stripe_max = -std::numeric_limits<double>::infinity();
   double margin_min = std::numeric_limits<double>::infinity();
@@ -674,6 +686,7 @@ int main(int argc, char** argv) {
     h_focus.SetBinContent(bin_x, bin_y, r.x_focus);
     h_dof.SetBinContent(bin_x, bin_y, r.dof);
     h_M.SetBinContent(bin_x, bin_y, r.M);
+    h_M_abs_err.SetBinContent(bin_x, bin_y, r.M_abs_err);
     h_stripe.SetBinContent(bin_x, bin_y, r.stripe_width);
     double margin = 16.0 - r.stripe_width;
     h_margin.SetBinContent(bin_x, bin_y, margin);
@@ -684,6 +697,8 @@ int main(int argc, char** argv) {
     dof_max    = std::max(dof_max, r.dof);
     M_min      = std::min(M_min, r.M);
     M_max      = std::max(M_max, r.M);
+    M_err_min  = std::min(M_err_min, r.M_abs_err);
+    M_err_max  = std::max(M_err_max, r.M_abs_err);
     stripe_min = std::min(stripe_min, r.stripe_width);
     stripe_max = std::max(stripe_max, r.stripe_width);
     margin_min = std::min(margin_min, margin);
@@ -700,6 +715,9 @@ int main(int argc, char** argv) {
     if (!best_M_neutral || std::abs(r.M - 1.0) < std::abs(best_M_neutral->M - 1.0)) {
       best_M_neutral = &r;
     }
+    if (!best_M_target || r.M_abs_err < best_M_target->M_abs_err) {
+      best_M_target = &r;
+    }
   }
 
   if (std::isfinite(focus_min) && std::isfinite(focus_max)) {
@@ -713,6 +731,10 @@ int main(int argc, char** argv) {
   if (std::isfinite(M_min) && std::isfinite(M_max)) {
     h_M.SetMinimum(M_min);
     h_M.SetMaximum(M_max);
+  }
+  if (std::isfinite(M_err_min) && std::isfinite(M_err_max)) {
+    h_M_abs_err.SetMinimum(M_err_min);
+    h_M_abs_err.SetMaximum(M_err_max);
   }
   if (std::isfinite(stripe_min) && std::isfinite(stripe_max)) {
     h_stripe.SetMinimum(stripe_min);
@@ -772,6 +794,7 @@ int main(int argc, char** argv) {
   save_map(h_dof, "dof_dof_map", kBird, best_dof_max);
   save_map(h_M, "dof_M_map", kViridis, best_M_neutral);
   save_map(h_stripe, "dof_stripe_map", kViridis, nullptr);
+  save_map(h_M_abs_err, "dof_M_error_map", kViridis, best_M_target);
 
   {
     const int nRGBs     = 3;

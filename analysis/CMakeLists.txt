@@ -57,3 +57,6 @@ add_subdirectory(exp1)
 
 # Sottocartella per DoF analysis
 add_subdirectory(dof_analysis)
+
+# Sottocartella per Resolution analysis
+add_subdirectory(resolution_analysis)

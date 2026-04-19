@@ -27,6 +27,7 @@ SSD_MOUNT="/mnt/external_ssd"
 BINARY_LENS="$BUILD_DIR/Release/lens_simulation_main"
 BINARY_OPT="$BUILD_DIR/Release/optimization_main"
 BINARY_DOF="$BUILD_DIR/Release/dof_simulation_main"
+BINARY_PSF_DOF="$BUILD_DIR/Release/psf_dof_scan_main"
 N_JOBS=1
 CONFIG_FILE="$PROJECT_ROOT/config/config.json"
 LENS75_ID=""
@@ -34,7 +35,7 @@ LENS60_ID=""
 ALL_LENSES=0
 
 # parsing argomenti posizionali
-MODE="${1:-lens}"    # lens | opt | dof
+MODE="${1:-lens}"    # lens | opt | dof | psf-dof
 TARGET="${2:-local}" # local | ssd
 shift 2 || true
 
@@ -60,7 +61,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # verifica opzioni
-if [[ "$MODE" == "lens" && "$ALL_LENSES" -eq 1 ]]; then
+if [[ ("$MODE" == "lens" || "$MODE" == "psf-dof") && "$ALL_LENSES" -eq 1 ]]; then
   echo "[ERROR] L'opzione --all-lenses non è supportata per lens_simulation." >&2
   echo "        Usala solo con 'opt' per l'ottimizzazione di tutte le combinazioni." >&2
   exit 1
@@ -70,6 +71,7 @@ fi
 BINARY="$BINARY_LENS"
 [[ "$MODE" == "opt" ]] && BINARY="$BINARY_OPT"
 [[ "$MODE" == "dof" ]] && BINARY="$BINARY_DOF"
+[[ "$MODE" == "psf-dof" ]] && BINARY="$BINARY_PSF_DOF"
 if [[ ! -f "$BINARY" ]]; then
   echo "[ERROR] Binario non trovato: $BINARY — esegui cmake + make prima." >&2
   exit 1
@@ -94,6 +96,7 @@ if [[ "$N_JOBS" -eq 1 ]]; then
     lens) "$BINARY" -g "$GEOMETRY" -b -l --config "$CONFIG_FILE" $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
     opt)  "$BINARY" -g "$GEOMETRY" -b -o --config "$CONFIG_FILE" $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
     dof)  "$BINARY" -g "$GEOMETRY_DOF" -b -d --config "$CONFIG_FILE" $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
+    psf-dof) "$BINARY" -g "$GEOMETRY_DOF" -b -p --config "$CONFIG_FILE" $SSD_ARGS "${EXTRA_ARGS[@]}" ;;
   esac
   echo "[DONE]  Simulazione completata."
   exit 0
@@ -183,7 +186,7 @@ load_tsv('thorlabs_planoconvex.tsv', has_rotation=True)
 if mode in ('opt', 'dof') and all_lenses:
     n_models = len(thorlabs_data) * len(thorlabs_data)
 
-if mode == 'lens':
+if mode in ('lens', 'psf-dof'):
     # Parametri sorgente GPS (mappa 3D PSF)
     s_x_min = c.get('source_x_min', -30.0)
     s_x_max = c.get('source_x_max', 30.0)
@@ -204,7 +207,7 @@ pairs = []
 # Default GDML lens parameters (valori di backup se non trovati nel TSV)
 h1 = 12.5
 h2 = 16.3
-margin = 3.0 if mode == 'lens' else 1.0
+margin = 3.0 if mode in ('lens', 'psf-dof') else 1.0
 
 # Carica spessori reali se disponibili
 if lens75_id in thorlabs_data:
@@ -273,6 +276,9 @@ for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
   elif [[ "$MODE" == "dof" ]]; then
     SUBDIR="dof_simulation"
     EXT="focal"
+  elif [[ "$MODE" == "psf-dof" ]]; then
+    SUBDIR="psf_dof_simulation"
+    EXT="psf_dof"
   else
     SUBDIR="lens_simulation"
     EXT="lens"
@@ -300,6 +306,8 @@ for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
     "$BINARY" -g "$GEOMETRY" -b -o --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
   elif [[ "$MODE" == "dof" ]]; then
     "$BINARY" -g "$GEOMETRY_DOF" -b -d --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+  elif [[ "$MODE" == "psf-dof" ]]; then
+    "$BINARY" -g "$GEOMETRY_DOF" -b -p --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
   else
     # In lens simulation mode, we use -l
     "$BINARY" -g "$GEOMETRY" -b -l --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
@@ -342,6 +350,9 @@ if [[ "$MODE" == "opt" ]]; then
 elif [[ "$MODE" == "dof" ]]; then
   OUT_NAME="focal"
   OUT_DIR="dof_simulation"
+elif [[ "$MODE" == "psf-dof" ]]; then
+  OUT_NAME="psf_dof"
+  OUT_DIR="psf_dof_simulation"
 else
   OUT_NAME="lens"
   OUT_DIR="lens_simulation"
