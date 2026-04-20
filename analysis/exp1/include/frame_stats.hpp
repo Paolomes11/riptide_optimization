@@ -33,49 +33,14 @@
  */
 
 #include "fit_reader.hpp"
+#include "stacking.hpp"
 
-#include <cstdint>
 #include <vector>
 
 namespace exp1 {
 
-// Immagine stacked
-
-struct StackedImage {
-  int width   = 0;
-  int height  = 0;
-  int nframes = 0; // numero di frame nello stack
-
-  // Layout row-major: indice i = y * width + x
-  std::vector<double> mean;  // media clippata [ADU, 0..65535]
-  std::vector<double> sigma; // deviazione standard clippata [ADU]
-  std::vector<int> count;    // frame contribuenti dopo sigma-clipping
-
-  // Accesso sicuro
-  double pixel_mean(int x, int y) const {
-    if (x < 0 || x >= width || y < 0 || y >= height)
-      return 0.0;
-    return mean[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)];
-  }
-  double pixel_sigma(int x, int y) const {
-    if (x < 0 || x >= width || y < 0 || y >= height)
-      return 0.0;
-    return sigma[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)];
-  }
-  size_t npixels() const {
-    return static_cast<size_t>(width) * static_cast<size_t>(height);
-  }
-};
-
-// Parametri stacking
-
-struct StackConfig {
-  double n_sigma = 3.0; // soglia sigma-clipping
-  int n_iter     = 3;   // numero iterazioni sigma-clipping
-  int min_frames = 3;   // frame minimi per pixel valido (altrimenti sigma = 0)
-};
-
-// API pubblica
+using StackedImage = riptide::stack::StackedImage;
+using StackConfig  = riptide::stack::StackConfig;
 
 /**
  * Esegue lo stacking statistico di una sequenza di frame.
@@ -93,18 +58,18 @@ struct StackConfig {
  * @return        StackedImage con mean, sigma, count per pixel
  * @throws        std::invalid_argument se frames è vuoto o dimensioni incoerenti
  */
-StackedImage sigma_clip_stack(const std::vector<FitsFrame>& frames, const StackConfig& cfg = {});
+using riptide::stack::sigma_clip_stack;
 
 /**
  * Media semplice (senza sigma-clipping) — usata per confronto/debug.
  */
-StackedImage mean_stack(const std::vector<FitsFrame>& frames);
+using riptide::stack::mean_stack;
 
 /**
  * Mediana per-pixel — robusta agli outlier, ma più lenta.
  * Utile come sanity check rispetto al sigma-clipping.
  */
-StackedImage median_stack(const std::vector<FitsFrame>& frames);
+using riptide::stack::median_stack;
 
 } // namespace exp1
 

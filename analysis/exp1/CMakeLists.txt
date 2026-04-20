@@ -6,8 +6,6 @@ include(${ROOT_USE_FILE})
 
 # Libreria statica exp1_lib
 add_library(exp1_lib STATIC
-    src/fit_reader.cpp
-    src/frame_stats.cpp
     src/image_analysis.cpp
 )
 
@@ -17,7 +15,7 @@ target_include_directories(exp1_lib
 )
 
 target_link_libraries(exp1_lib
-    PUBLIC ${ROOT_LIBRARIES}
+    PUBLIC exp_common ${ROOT_LIBRARIES}
 )
 
 target_compile_features(exp1_lib PUBLIC cxx_std_17)

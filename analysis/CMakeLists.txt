@@ -49,8 +49,14 @@ target_include_directories(beam_scan_plot PRIVATE ${ROOT_INCLUDE_DIRS})
 target_include_directories(m_c_creator PRIVATE ${ROOT_INCLUDE_DIRS})
 target_include_directories(psf_extractor PRIVATE ${ROOT_INCLUDE_DIRS})
 
+# exp_common deve essere compilato prima di exp1 ed exp2
+add_subdirectory(exp_common)
+
 # Sottocartella per analisi PSF
 add_subdirectory(psf_analysis)
+
+# Sottocartella per esperimento 2 (tracce laser)
+add_subdirectory(exp2)
 
 # Sottocartella per esperimento 1 (immagini FITS)
 add_subdirectory(exp1)

@@ -33,55 +33,16 @@
  *   - Non supporta BITPIX = 8 o 32
  */
 
-#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
 
+#include "fits_io.hpp"
+
 namespace exp1 {
 
-// Struttura header FITS
-
-struct FitsHeader {
-  int naxis1    = 0;      // width  (numero di colonne, asse NAXIS1)
-  int naxis2    = 0;      // height (numero di righe,   asse NAXIS2)
-  int bitpix    = 0;      // bit per pixel (16 per uint16)
-  double bscale = 1.0;    // scala applicata ai dati raw
-  double bzero  = 0.0;    // offset applicato ai dati raw
-  std::string instrument; // INSTRUME keyword (opzionale)
-  std::string object;     // OBJECT keyword (opzionale)
-  std::string date_obs;   // DATE-OBS keyword (opzionale)
-  double exptime = 0.0;   // EXPTIME keyword [s] (opzionale)
-};
-
-// Frame: header + dati pixel
-
-struct FitsFrame {
-  FitsHeader header;
-
-  // Dati pixel in virgola mobile (float per risparmiare memoria), layout row-major:
-  //   pixel(x, y) = data[y * header.naxis1 + x]
-  // Range fisico: [0.0, 65535.0] per sensori a 16 bit senza BSCALE/BZERO.
-  std::vector<float> data;
-
-  // Accesso sicuro con controllo bounds
-  double pixel(int x, int y) const {
-    if (x < 0 || x >= header.naxis1 || y < 0 || y >= header.naxis2)
-      return 0.0;
-    return static_cast<double>(
-        data[static_cast<size_t>(y) * static_cast<size_t>(header.naxis1) + static_cast<size_t>(x)]);
-  }
-
-  int width() const {
-    return header.naxis1;
-  }
-  int height() const {
-    return header.naxis2;
-  }
-  size_t npixels() const {
-    return static_cast<size_t>(header.naxis1) * static_cast<size_t>(header.naxis2);
-  }
-};
+using FitsHeader = riptide::fits::FitsHeader;
+using FitsFrame  = riptide::fits::FitsFrame;
 
 // API pubblica
 
@@ -92,7 +53,7 @@ struct FitsFrame {
  * @return      FitsFrame con header e dati pixel
  * @throws      std::runtime_error se il file non è leggibile o il formato non è supportato
  */
-FitsFrame read_fits(const std::filesystem::path& path);
+using riptide::fits::read_fits;
 
 /**
  * Legge tutti i file .fit / .fits in una directory (ordine lessicografico).
@@ -102,12 +63,12 @@ FitsFrame read_fits(const std::filesystem::path& path);
  * @return         Vettore di FitsFrame
  * @throws         std::runtime_error se la cartella non esiste o non contiene file FITS
  */
-std::vector<FitsFrame> read_fits_stack(const std::filesystem::path& dir, size_t max_frames = 0);
+using riptide::fits::read_fits_stack;
 
 /**
  * Restituisce tutti i path .fit/.fits in una directory, ordinati.
  */
-std::vector<std::filesystem::path> list_fits_files(const std::filesystem::path& dir);
+using riptide::fits::list_fits_files;
 
 } // namespace exp1
 
