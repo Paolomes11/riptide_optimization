@@ -628,19 +628,27 @@ void produce_summary(const std::vector<ConfigResult>& results, const OutputConfi
        << "  x2=" << fmtd(r.optics.x2, 1) << " mm"
        << "  x_det=" << fmtd(r.optics.x_det, 1) << " mm";
 
-    std::ostringstream l2;
     const auto ss = sigma_scaled(r);
     const double scale =
         (ref_width > 0 && r.signal_stack.width > 0)
             ? (static_cast<double>(ref_width) / static_cast<double>(r.signal_stack.width))
             : 1.0;
+
+    std::ostringstream l2;
     l2 << "            "
        << "#sigma_mean=" << fmtd(r.trace.sigma_mean, 2) << " ± " << fmtd(r.trace.sigma_mean_err, 2)
-       << " px (x" << fmtd(scale, 2) << " -> " << fmtd(ss.first, 2) << " ± " << fmtd(ss.second, 2)
-       << " px)"
-       << "   FWHM=" << fmtd(r.trace.fwhm_mean, 2) << " px"
-       << "   #chi^{2}/ndof(centroide)=" << fmtd(r.centroid_fit.chi2_ndof, 2)
-       << "   N=" << r.trace.n_valid_slices
+       << " px   FWHM=" << fmtd(r.trace.fwhm_mean, 2) << " px";
+
+    std::ostringstream l3;
+    l3 << "            "
+       << "#sigma_ref=" << fmtd(ss.first, 2) << " ± " << fmtd(ss.second, 2) << " px"
+       << "   xscale=" << fmtd(scale, 2) << "   N=" << r.trace.n_valid_slices;
+
+    std::ostringstream l4;
+    l4 << "            "
+       << "#chi^{2}/ndof(centroide)=" << fmtd(r.centroid_fit.chi2_ndof, 2) << "   x_det_opt="
+       << ((r.optics.x_det_optimal > 0.0) ? fmtd(r.optics.x_det_optimal, 1) : std::string("NaN"))
+       << " mm"
        << "   #Deltax_det=" << (std::isfinite(r.dof_delta_mm) ? fmtd(r.dof_delta_mm, 2) : "NaN")
        << " mm";
 
@@ -648,6 +656,10 @@ void produce_summary(const std::vector<ConfigResult>& results, const OutputConfi
     t1->SetTextColor(static_cast<Color_t>(col));
     auto* t2 = box.AddText(l2.str().c_str());
     t2->SetTextColor(static_cast<Color_t>(col));
+    auto* t3 = box.AddText(l3.str().c_str());
+    t3->SetTextColor(static_cast<Color_t>(col));
+    auto* t4 = box.AddText(l4.str().c_str());
+    t4->SetTextColor(static_cast<Color_t>(col));
     box.AddText(" ");
   }
 

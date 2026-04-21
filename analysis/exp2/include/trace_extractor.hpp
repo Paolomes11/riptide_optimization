@@ -13,6 +13,7 @@ namespace riptide::exp2 {
 struct SliceProfile {
   double t          = 0.0;
   double amplitude  = 0.0;
+  double snr        = 0.0;
   double center     = 0.0;
   double center_err = 0.0;
   double sigma      = 0.0;
@@ -20,6 +21,7 @@ struct SliceProfile {
   double chi2_ndof  = 0.0;
   bool valid        = false;
   bool near_edge    = false;
+  bool in_trace     = true;
 };
 
 /// Risultato dell'estrazione della traccia da un'immagine stacked.
@@ -38,13 +40,20 @@ using CentroidFitResult = riptide::LineFitResult;
 
 /// Configurazione dell'estrattore.
 struct TraceConfig {
-  int slice_width         = 5;
-  int slice_step          = 3;
-  double min_snr          = 5.0;
-  int gaussian_range      = 20;
-  double sigma_max        = 30.0;
-  double center_err_floor = 0.2;
-  double center_err_scale = 1.0;
+  int slice_width           = 5;
+  int slice_step            = 3;
+  double min_snr            = 5.0;
+  int gaussian_range        = 20;
+  double sigma_max          = 30.0;
+  double center_err_floor   = 0.2;
+  double center_err_scale   = 1.0;
+  double sigma_err_floor    = 0.2;
+  double sigma_err_scale    = 1.0;
+  bool enable_trace_trim    = true;
+  double trace_trim_frac    = 0.25;
+  double trace_trim_min_snr = 3.0;
+  int trace_trim_pad_slices = 10;
+  int trace_trim_min_slices = 50;
 };
 
 /**

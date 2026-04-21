@@ -25,11 +25,18 @@ struct CliOptions {
   double clip_sigma  = 3.0;
   int clip_iter      = 3;
 
-  int slice_width         = 5;
-  int slice_step          = 3;
-  double snr_min          = 5.0;
-  double center_err_floor = 0.2;
-  double center_err_scale = 1.0;
+  int slice_width           = 5;
+  int slice_step            = 3;
+  double snr_min            = 5.0;
+  double center_err_floor   = 0.2;
+  double center_err_scale   = 1.0;
+  double sigma_err_floor    = 0.2;
+  double sigma_err_scale    = 1.0;
+  bool enable_trace_trim    = true;
+  double trace_trim_frac    = 0.25;
+  double trace_trim_min_snr = 3.0;
+  int trace_trim_pad_slices = 10;
+  int trace_trim_min_slices = 50;
 
   double x1_good       = 0.0;
   double x2_good       = 0.0;
@@ -57,6 +64,9 @@ static void print_usage(const char* prog) {
             << "          [--sigma N] [--iter N]\n"
             << "          [--slice-width N] [--slice-step N] [--snr-min F]\n"
             << "          [--center-err-floor F] [--center-err-scale F]\n"
+            << "          [--sigma-err-floor F]  [--sigma-err-scale F]\n"
+            << "          [--no-trim] [--trim-frac F] [--trim-min-snr F]\n"
+            << "          [--trim-pad-slices N] [--trim-min-slices N]\n"
             << "          [--x1-good F] [--x2-good F] [--xdet-good F]\n"
             << "          [--x1-bad F]  [--x2-bad F]  [--xdet-bad F]\n"
             << "          [--xdet-good-opt F] [--xdet-bad-opt F]\n"
@@ -120,6 +130,20 @@ static CliOptions parse_args(int argc, char** argv) {
       opt.center_err_floor = next_dbl();
     else if (arg == "--center-err-scale")
       opt.center_err_scale = next_dbl();
+    else if (arg == "--sigma-err-floor")
+      opt.sigma_err_floor = next_dbl();
+    else if (arg == "--sigma-err-scale")
+      opt.sigma_err_scale = next_dbl();
+    else if (arg == "--no-trim")
+      opt.enable_trace_trim = false;
+    else if (arg == "--trim-frac")
+      opt.trace_trim_frac = next_dbl();
+    else if (arg == "--trim-min-snr")
+      opt.trace_trim_min_snr = next_dbl();
+    else if (arg == "--trim-pad-slices")
+      opt.trace_trim_pad_slices = next_int();
+    else if (arg == "--trim-min-slices")
+      opt.trace_trim_min_slices = next_int();
     else if (arg == "--x1-good")
       opt.x1_good = next_dbl();
     else if (arg == "--x2-good")
@@ -192,11 +216,18 @@ int main(int argc, char** argv) {
     stack_cfg.n_iter     = opt.clip_iter;
 
     riptide::exp2::TraceConfig trace_cfg;
-    trace_cfg.slice_width      = opt.slice_width;
-    trace_cfg.slice_step       = opt.slice_step;
-    trace_cfg.min_snr          = opt.snr_min;
-    trace_cfg.center_err_floor = opt.center_err_floor;
-    trace_cfg.center_err_scale = opt.center_err_scale;
+    trace_cfg.slice_width           = opt.slice_width;
+    trace_cfg.slice_step            = opt.slice_step;
+    trace_cfg.min_snr               = opt.snr_min;
+    trace_cfg.center_err_floor      = opt.center_err_floor;
+    trace_cfg.center_err_scale      = opt.center_err_scale;
+    trace_cfg.sigma_err_floor       = opt.sigma_err_floor;
+    trace_cfg.sigma_err_scale       = opt.sigma_err_scale;
+    trace_cfg.enable_trace_trim     = opt.enable_trace_trim;
+    trace_cfg.trace_trim_frac       = opt.trace_trim_frac;
+    trace_cfg.trace_trim_min_snr    = opt.trace_trim_min_snr;
+    trace_cfg.trace_trim_pad_slices = opt.trace_trim_pad_slices;
+    trace_cfg.trace_trim_min_slices = opt.trace_trim_min_slices;
 
     riptide::exp2::OutputConfig out_cfg;
     out_cfg.output_dir       = opt.output;
@@ -223,6 +254,17 @@ int main(int argc, char** argv) {
     opt_bad.x2            = opt.x2_bad;
     opt_bad.x_det         = opt.xdet_bad;
     opt_bad.x_det_optimal = opt.xdet_bad_opt;
+
+    if (opt_good.x_det == 0.0 && opt_good.x_det_optimal > 0.0) {
+      std::cerr << "[WARNING] xdet_good non fornito: assumo xdet_good = xdet_good_opt ("
+                << opt_good.x_det_optimal << " mm)\n";
+      opt_good.x_det = opt_good.x_det_optimal;
+    }
+    if (opt_bad.x_det == 0.0 && opt_bad.x_det_optimal > 0.0) {
+      std::cerr << "[WARNING] xdet_bad non fornito: assumo xdet_bad = xdet_bad_opt ("
+                << opt_bad.x_det_optimal << " mm)\n";
+      opt_bad.x_det = opt_bad.x_det_optimal;
+    }
 
     riptide::exp2::OpticsParams opt_good_nf = opt_good;
     opt_good_nf.x_det                       = 0.0;

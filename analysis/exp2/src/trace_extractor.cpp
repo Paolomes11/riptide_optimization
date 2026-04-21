@@ -247,14 +247,15 @@ struct GaussFit {
   double sigma_err    = std::numeric_limits<double>::infinity();
   double chi2_ndof    = std::numeric_limits<double>::infinity();
   double rms_residual = std::numeric_limits<double>::infinity();
+  double noise        = std::numeric_limits<double>::infinity();
   bool converged      = false;
 };
 
 static bool solve_4x4(std::array<std::array<double, 5>, 4>& a) {
-  for (int i = 0; i < 4; ++i) {
-    int piv     = i;
+  for (size_t i = 0; i < 4; ++i) {
+    size_t piv  = i;
     double maxv = std::abs(a[i][i]);
-    for (int r = i + 1; r < 4; ++r) {
+    for (size_t r = i + 1; r < 4; ++r) {
       const double v = std::abs(a[r][i]);
       if (v > maxv) {
         maxv = v;
@@ -267,14 +268,14 @@ static bool solve_4x4(std::array<std::array<double, 5>, 4>& a) {
       std::swap(a[piv], a[i]);
 
     const double div = a[i][i];
-    for (int c = i; c < 5; ++c)
+    for (size_t c = i; c < 5; ++c)
       a[i][c] /= div;
 
-    for (int r = 0; r < 4; ++r) {
+    for (size_t r = 0; r < 4; ++r) {
       if (r == i)
         continue;
       const double f = a[r][i];
-      for (int c = i; c < 5; ++c)
+      for (size_t c = i; c < 5; ++c)
         a[r][c] -= f * a[i][c];
     }
   }
@@ -284,17 +285,17 @@ static bool solve_4x4(std::array<std::array<double, 5>, 4>& a) {
 static bool invert_4x4(const std::array<std::array<double, 4>, 4>& m,
                        std::array<std::array<double, 4>, 4>& inv) {
   std::array<std::array<double, 8>, 4> a{};
-  for (int r = 0; r < 4; ++r) {
-    for (int c = 0; c < 4; ++c)
+  for (size_t r = 0; r < 4; ++r) {
+    for (size_t c = 0; c < 4; ++c)
       a[r][c] = m[r][c];
-    for (int c = 0; c < 4; ++c)
+    for (size_t c = 0; c < 4; ++c)
       a[r][4 + c] = (r == c) ? 1.0 : 0.0;
   }
 
-  for (int i = 0; i < 4; ++i) {
-    int piv     = i;
+  for (size_t i = 0; i < 4; ++i) {
+    size_t piv  = i;
     double maxv = std::abs(a[i][i]);
-    for (int r = i + 1; r < 4; ++r) {
+    for (size_t r = i + 1; r < 4; ++r) {
       const double v = std::abs(a[r][i]);
       if (v > maxv) {
         maxv = v;
@@ -307,20 +308,20 @@ static bool invert_4x4(const std::array<std::array<double, 4>, 4>& m,
       std::swap(a[piv], a[i]);
 
     const double div = a[i][i];
-    for (int c = i; c < 8; ++c)
+    for (size_t c = i; c < 8; ++c)
       a[i][c] /= div;
 
-    for (int r = 0; r < 4; ++r) {
+    for (size_t r = 0; r < 4; ++r) {
       if (r == i)
         continue;
       const double f = a[r][i];
-      for (int c = i; c < 8; ++c)
+      for (size_t c = i; c < 8; ++c)
         a[r][c] -= f * a[i][c];
     }
   }
 
-  for (int r = 0; r < 4; ++r)
-    for (int c = 0; c < 4; ++c)
+  for (size_t r = 0; r < 4; ++r)
+    for (size_t c = 0; c < 4; ++c)
       inv[r][c] = a[r][4 + c];
   return true;
 }
@@ -504,10 +505,12 @@ static GaussFit fit_gaussian_1d(const std::vector<double>& x, const std::vector<
   for (int i = 0; i < n; ++i)
     if (std::abs(x[static_cast<size_t>(i)]) >= tail_thr)
       y_tail.push_back(y[static_cast<size_t>(i)] - out.B);
-  const double tail_mean =
-      (y_tail.empty()) ? 0.0 : std::accumulate(y_tail.begin(), y_tail.end(), 0.0) / y_tail.size();
-  const double noise = std::max(1e-9, stdev_of(y_tail, tail_mean));
-  double chi2n       = 0.0;
+  const double tail_mean = (y_tail.empty()) ? 0.0
+                                            : (std::accumulate(y_tail.begin(), y_tail.end(), 0.0)
+                                               / static_cast<double>(y_tail.size()));
+  const double noise     = std::max(1e-9, stdev_of(y_tail, tail_mean));
+  out.noise              = noise;
+  double chi2n           = 0.0;
   for (double r : residuals)
     chi2n += (r * r) / (noise * noise);
   out.chi2_ndof = (ndof > 0) ? (chi2n / static_cast<double>(ndof)) : chi2n;
@@ -760,19 +763,74 @@ TraceResult extract_trace_profile(const std::vector<double>& img, int width, int
         ce = cfg.center_err_floor;
       sp.center_err = std::max(cfg.center_err_floor, ce);
     }
-    sp.sigma     = fit.sigma;
-    sp.sigma_err = fit.sigma_err;
+    sp.sigma = fit.sigma;
+    {
+      double se = fit.sigma_err;
+      if (!std::isfinite(se))
+        se = std::numeric_limits<double>::infinity();
+      se = se * cfg.sigma_err_scale;
+      if (!std::isfinite(se) || se <= 0.0)
+        se = cfg.sigma_err_floor;
+      sp.sigma_err = std::max(cfg.sigma_err_floor, se);
+    }
     sp.chi2_ndof = fit.chi2_ndof;
 
-    const double snr = (fit.rms_residual > 0.0 && std::isfinite(fit.rms_residual))
-                         ? (fit.A / fit.rms_residual)
-                         : 0.0;
-
+    const double snr = (fit.noise > 0.0 && std::isfinite(fit.noise)) ? (fit.A / fit.noise) : 0.0;
+    sp.snr           = snr;
     sp.valid = std::isfinite(sp.sigma) && std::isfinite(sp.sigma_err) && (sp.sigma_err > 0.0)
             && (sp.chi2_ndof < 5.0) && (sp.sigma > 0.5) && (sp.sigma < cfg.sigma_max)
             && (snr > cfg.min_snr);
 
     out.profile.push_back(sp);
+  }
+
+  if (cfg.enable_trace_trim && !out.profile.empty()) {
+    double snr_max = 0.0;
+    for (const auto& sp : out.profile)
+      if (std::isfinite(sp.snr))
+        snr_max = std::max(snr_max, sp.snr);
+
+    const double snr_thr = std::max(cfg.trace_trim_min_snr, cfg.trace_trim_frac * snr_max);
+
+    int best_start = -1;
+    int best_len   = 0;
+    int cur_start  = -1;
+    int cur_len    = 0;
+
+    for (int i = 0; i < static_cast<int>(out.profile.size()); ++i) {
+      const auto& sp  = out.profile[static_cast<size_t>(i)];
+      const bool keep = std::isfinite(sp.snr) && (sp.snr >= snr_thr) && std::isfinite(sp.sigma)
+                     && (sp.sigma > 0.5) && (sp.sigma < cfg.sigma_max);
+
+      if (keep) {
+        if (cur_start < 0) {
+          cur_start = i;
+          cur_len   = 1;
+        } else {
+          ++cur_len;
+        }
+        if (cur_len > best_len) {
+          best_len   = cur_len;
+          best_start = cur_start;
+        }
+      } else {
+        cur_start = -1;
+        cur_len   = 0;
+      }
+    }
+
+    if (best_len >= cfg.trace_trim_min_slices && best_start >= 0) {
+      const int pad = std::max(0, cfg.trace_trim_pad_slices);
+      int start     = std::max(0, best_start - pad);
+      int end = std::min(static_cast<int>(out.profile.size()) - 1, best_start + best_len - 1 + pad);
+
+      for (int i = 0; i < static_cast<int>(out.profile.size()); ++i) {
+        if (i < start || i > end) {
+          out.profile[static_cast<size_t>(i)].in_trace = false;
+          out.profile[static_cast<size_t>(i)].valid    = false;
+        }
+      }
+    }
   }
 
   double wsum = 0.0;
