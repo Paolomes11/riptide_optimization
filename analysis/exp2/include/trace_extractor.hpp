@@ -33,6 +33,14 @@ struct TraceResult {
   double sigma_mean_err = 0.0;
   double fwhm_mean      = 0.0;
   int n_valid_slices    = 0;
+
+  // Metriche 2D dall'immagine (invarianti per rotazione, non dipendono dal trimming).
+  // sigma_minor = semiasse minore della distribuzione di intensità ≈ larghezza trasversale PSF.
+  double sigma_minor    = 0.0;
+  double sigma_major    = 0.0;
+  double aspect_ratio   = 0.0;
+  // false se il blob è troppo circolare per estrarre una traccia lineare.
+  bool trace_detected   = true;
 };
 
 /// Risultato del fit ODR lineare sulla posizione del centroide.
@@ -50,10 +58,14 @@ struct TraceConfig {
   double sigma_err_floor    = 0.2;
   double sigma_err_scale    = 1.0;
   bool enable_trace_trim    = true;
-  double trace_trim_frac    = 0.25;
-  double trace_trim_min_snr = 3.0;
   int trace_trim_pad_slices = 10;
   int trace_trim_min_slices = 50;
+  // Soglia minima di aspect_ratio (sigma_major/sigma_minor) per ritenere il blob
+  // sufficientemente elongato da estrarre una traccia lineare.
+  double min_aspect_ratio        = 1.3;
+  // Criterio di trimming basato sulla qualità del centroide (P3):
+  // le slice con center_err > questo valore vengono escluse dalla regione valida.
+  double trace_trim_max_center_err = 5.0;
 };
 
 /**

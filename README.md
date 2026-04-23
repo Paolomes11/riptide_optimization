@@ -54,6 +54,8 @@ Le simulazioni `optimization` e `lens_simulation` accettano ID da entrambi i cat
 13. [File di configurazione](#file-di-configurazione)
 14. [Formato dei file ROOT](#formato-dei-file-root)
 15. [Workflow completo](#workflow-completo)
+16. [Tool: exp2\_main — Analisi immagini FITS laser](#tool-exp2_main--analisi-immagini-fits-laser)
+17. [Riferimenti metodologici](#riferimenti-metodologici)
 
 ---
 
@@ -900,4 +902,116 @@ cmake --build build/ --config Release
 
 # ── 11. Visualizzazione interattiva geometria ────────────────────────────────
 ./build/Release/lens_simulation_main -g geometry/main.gdml -v
+```
+
+---
+
+## Tool: exp2\_main — Analisi immagini FITS laser
+
+**Eseguibile**: `build/analysis/exp2/Release/exp2_main`
+
+**Scopo**: Confronto quantitativo di quattro configurazioni ottiche (good/bad × focus/nofocus) su stack di immagini FITS 16-bit acquisite con un laser. Per ogni configurazione estrae il profilo trasversale della traccia laser, misura la larghezza PSF e la linearità del centroide.
+
+### Pipeline
+
+```
+FITS frames (signal + background)
+  → sigma-clipping stack (SigmaClip / Mean / Median)
+    → differenza signal − background
+      → stima angolo traccia (PCA + momento di inerzia)
+        → raffinamento angolo iterativo (fino a 2 iterazioni ODR)
+          → estrazione profilo a slice (centroide pesato ISO 11146)
+            → fit ODR lineare sul centroide
+              → sigma_minor / sigma_mean / chi²/ndof
+```
+
+### Metriche principali
+
+| Metrica | Descrizione |
+|---|---|
+| `sigma_minor` | Semiasse minore della distribuzione 2D (invariante per rotazione; confrontabile tra blob e streak) |
+| `sigma_mean` | Media pesata inversa-varianza delle larghezze Gaussiane delle slice (valida solo per tracce lineari) |
+| `aspect_ratio` | `sigma_major / sigma_minor`; se < `min_aspect_ratio` (default 2.0), il blob è troppo circolare e la traccia non viene estratta |
+| `chi²/ndof` | Qualità del fit ODR lineare sul centroide (≈1 per traccia lineare ideale) |
+
+### Algoritmi di estrazione traccia
+
+#### Centroide pesato (Priorità 1 — metodo principale)
+
+Il centroide di ogni slice trasversale viene calcolato con il **primo momento pesato per intensità** (standard ISO 11146 per beam profiler):
+
+```
+w(s)       = max(0, I(s) − B)         B = mediana dei bordi della slice
+centroid   = Σ(s · w(s)) / Σw
+σ_centroid = σ_dist / √N_eff          σ_dist = √(secondo momento)
+N_eff      = (Σw)² / Σ(w²)            pixel count effettivo
+```
+
+Questo metodo non richiede convergenza, tollera profili troncati ai bordi del FOV e profili non-Gaussiani. Il **fit Gaussiano 1D** (Levenberg-Marquardt) viene mantenuto solo per la misura della larghezza PSF `sigma`, con fallback al secondo momento in caso di non convergenza.
+
+#### Raffinamento iterativo dell'angolo (Priorità 2)
+
+L'angolo iniziale (PCA + momento di inerzia) viene raffinato con un loop di massimo 2 iterazioni:
+
+```
+δ (YvsZ axis) = atan(a_ODR)      con  center = a·t + b
+δ (ZvsY axis) = atan(1 / a_ODR)  con  t = a·center + b
+angle_new = angle_old + δ   (interrotto se |δ| < 0.05° o |δ| > 10°)
+```
+
+La deriva lineare del centroide nel fit ODR è geometricamente equivalente all'errore angolare residuo; il pendio `a` fornisce quindi una stima diretta della correzione necessaria.
+
+#### Trimming basato su `center_err` (Priorità 3)
+
+Il segmento valido della traccia viene identificato come il più lungo blocco contiguo di slice con `center_err ≤ trace_trim_max_center_err` (default 5.0 px), invece che con la soglia SNR precedente. Questo preserva slice a basso SNR (PSF larga, bordi FOV) fintanto che la posizione del centroide è stimabile con precisione sufficiente.
+
+### Utilizzo
+
+```bash
+./build/analysis/exp2/Release/exp2_main \
+  --data-dir /mnt/external_ssd/riptide/exp2/ \
+  --no-root \
+  --snr-min 1.0 \
+  --slice-width 15 --slice-step 1 \
+  --center-err-floor 0.5 --center-err-scale 2.0 \
+  --sigma-err-floor 0.5 --sigma-err-scale 1.0 \
+  --trim-frac 0.10 --trim-min-snr 3.0 \
+  --trim-pad-slices 25 --trim-max-center-err 5.0 \
+  --min-aspect-ratio 2.0 \
+  --x1-good 110 --x2-good 130 \
+  --x1-bad 60  --x2-bad 125 \
+  --xdet-good-opt 165 --xdet-bad-opt 150
+```
+
+| Parametro | Default | Descrizione |
+|---|---|---|
+| `--min-aspect-ratio` | 2.0 | Soglia aspect_ratio per rilevare tracce analizzabili |
+| `--trim-max-center-err` | 5.0 px | Soglia max `center_err` per il trimming |
+| `--center-err-scale` | 1.0 | Fattore moltiplicativo per l'incertezza del centroide |
+| `--sigma-err-floor` | 0.2 px | Incertezza minima per `sigma` |
+| `--trim-pad-slices` | 10 | Slice di padding intorno alla regione valida |
+
+---
+
+## Riferimenti metodologici
+
+### Estrazione traccia e centroide
+
+- **ISO 11146-1:2005** — *Lasers and laser-related equipment: Test methods for laser beam widths, divergence angles and beam propagation ratios*. Definisce il metodo dei momenti del secondo ordine per la misura della larghezza del fascio (usato per `sigma_minor`, `sigma_dist`).
+
+- **Zhang, C. & Couloigner, I. (2007)**. *Accurate Centerline Detection and Line Width Estimation of Thick Lines Using the Radon Transform*. IEEE Transactions on Image Processing, 16(2), 310–316. DOI: [10.1109/TIP.2006.887731](https://doi.org/10.1109/TIP.2006.887731). Riferimento per la robustezza della trasformata di Radon pesata nella localizzazione di linee diffuse; base per il metodo del centroide pesato applicato alle slice.
+
+- **Vyas, A. et al. (2009)**. *Centroid Detection by Gaussian Pattern Matching in Adaptive Optics*. arXiv:0910.3386. Confronto tra fit Gaussiano e centroide pesato per la stima della posizione: il centroide pesato è più robusto a basso SNR e profili troncati.
+
+- **Thomas, S. et al. (2006)**. *Comparison of centroid computation algorithms in a Shack–Hartmann sensor*. Monthly Notices of the Royal Astronomical Society, 371(1), 323–336. DOI: [10.1111/j.1365-2966.2006.10661.x](https://doi.org/10.1111/j.1365-2966.2006.10661.x). Dimostra che il centroide pesato per intensità (WCoG) ha bias sistematico ridotto rispetto al fit Gaussiano quando il profilo è non ideale.
+
+### Rilevazione di streak in immagini astronomiche
+
+- **Nir, G. et al.** *pyradon: Python tools for streak detection in astronomical images using the Fast Radon Transform*. GitHub: [guynir42/pyradon](https://github.com/guynir42/pyradon). Implementazione di riferimento per la trasformata di Radon veloce applicata a immagini con streak diffuse.
+
+- **Yanagisawa, T. et al. (2015)**. *Streak Detection and Analysis Pipeline for Space-debris Optical Images*. ResearchGate. Base per la pipeline di estrazione di features (centroide, larghezza, flusso) da immagini ottiche con streak lineari a basso SNR.
+
+### Fit robusto (RANSAC / ODR)
+
+- **Fischler, M.A. & Bolles, R.C. (1981)**. *Random Sample Consensus: A Paradigm for Model Fitting with Applications to Image Analysis and Automated Cartography*. Communications of the ACM, 24(6), 381–395. Riferimento classico per RANSAC applicato al fit di modelli in presenza di outlier (base concettuale per il loop ODR con rejection in `fit_centroid_line`).
 ```

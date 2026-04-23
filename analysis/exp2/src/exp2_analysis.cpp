@@ -8,6 +8,7 @@
 #include <TBox.h>
 #include <TCanvas.h>
 #include <TColor.h>
+#include <TEllipse.h>
 #include <TFile.h>
 #include <TGraph.h>
 #include <TGraphErrors.h>
@@ -160,6 +161,19 @@ static void set_pad_margins(TPad* pad) {
   pad->SetBottomMargin(0.14f);
 }
 
+static void set_diverging_palette() {
+  static bool done = false;
+  if (done)
+    return;
+  done             = true;
+  Double_t stops[] = {0.0, 0.5, 1.0};
+  Double_t r[]     = {0.15, 1.0, 0.75};
+  Double_t g[]     = {0.30, 1.0, 0.15};
+  Double_t b[]     = {0.75, 1.0, 0.15};
+  TColor::CreateGradientColorTable(3, stops, r, g, b, 255);
+  gStyle->SetNumberContours(255);
+}
+
 static void draw_trace_line(int width, int height, double angle_deg) {
   const double cx    = 0.5 * static_cast<double>(width - 1);
   const double cy    = 0.5 * static_cast<double>(height - 1);
@@ -218,6 +232,107 @@ static double compute_pull(const riptide::exp2::SliceProfile& sp,
   return resid / sigma_d;
 }
 
+static void produce_blob_image(const riptide::exp2::ConfigResult& result,
+                               const riptide::exp2::OutputConfig& cfg) {
+  const std::string lbl = riptide::exp2::config_label_str(result.label);
+  const int w           = result.signal_stack.width;
+  const int h           = result.signal_stack.height;
+  if (w <= 0 || h <= 0)
+    return;
+
+  // Centro di massa del blob (solo valori positivi)
+  double wsum = 0.0, cx = 0.0, cy = 0.0;
+  for (int iy = 0; iy < h; ++iy) {
+    for (int ix = 0; ix < w; ++ix) {
+      const double v =
+          std::max(0.0, result.diff[static_cast<size_t>(iy) * static_cast<size_t>(w)
+                                    + static_cast<size_t>(ix)]);
+      wsum += v;
+      cx += ix * v;
+      cy += iy * v;
+    }
+  }
+  if (!(wsum > 0.0))
+    return;
+  cx /= wsum;
+  cy /= wsum;
+
+  // Regione di crop: ±4*sigma_major (minimo 40 px)
+  const double margin = std::max(40.0, 4.0 * result.trace.sigma_major);
+  const int x0        = std::max(0, static_cast<int>(cx - margin));
+  const int x1        = std::min(w - 1, static_cast<int>(cx + margin));
+  const int y0        = std::max(0, static_cast<int>(cy - margin));
+  const int y1        = std::min(h - 1, static_cast<int>(cy + margin));
+  if (x1 <= x0 || y1 <= y0)
+    return;
+
+  gStyle->SetPalette(kViridis);
+  TCanvas c(("c_blob_" + lbl).c_str(), ("Blob " + lbl).c_str(), 900, 800);
+  set_pad_margins(static_cast<TPad*>(&c));
+
+  auto* hc = new TH2D(("h_blob_" + lbl).c_str(), "",
+                      x1 - x0 + 1, static_cast<double>(x0), static_cast<double>(x1 + 1),
+                      y1 - y0 + 1, static_cast<double>(y0), static_cast<double>(y1 + 1));
+  for (int iy = y0; iy <= y1; ++iy) {
+    for (int ix = x0; ix <= x1; ++ix) {
+      hc->SetBinContent(ix - x0 + 1, iy - y0 + 1,
+                        result.diff[static_cast<size_t>(iy) * static_cast<size_t>(w)
+                                    + static_cast<size_t>(ix)]);
+    }
+  }
+  hc->GetXaxis()->SetTitle("x [px]");
+  hc->GetYaxis()->SetTitle("y [px]");
+  hc->GetXaxis()->CenterTitle(true);
+  hc->GetYaxis()->CenterTitle(true);
+
+  const double vmax = get_th2d_percentile(hc, cfg.z_max_percentile);
+  hc->SetMinimum(0.0);
+  if (vmax > 0.0)
+    hc->SetMaximum(vmax);
+  hc->Draw("COLZ");
+
+  // Ellisse 2σ (semiassi sigma_major, sigma_minor)
+  if (result.trace.sigma_minor > 0.0 && result.trace.sigma_major > 0.0) {
+    TEllipse ell(cx, cy,
+                 2.0 * result.trace.sigma_major, 2.0 * result.trace.sigma_minor,
+                 0.0, 360.0,
+                 result.trace.angle_deg);
+    ell.SetLineColor(kRed);
+    ell.SetLineWidth(2);
+    ell.SetFillStyle(0);
+    ell.Draw("SAME");
+  }
+
+  // Linea della traccia attraverso il centroide
+  {
+    const double theta = result.trace.angle_deg * (M_PI / 180.0);
+    const double ux    = std::cos(theta);
+    const double uy    = std::sin(theta);
+    const double L     = 0.8 * std::min(x1 - x0, y1 - y0);
+    const double dx    = 0.5 * L * ux;
+    const double dy    = 0.5 * L * uy;
+    TLine tline(cx - dx, cy - dy, cx + dx, cy + dy);
+    tline.SetLineColor(kOrange + 1);
+    tline.SetLineWidth(2);
+    tline.SetLineStyle(2);
+    tline.Draw("SAME");
+  }
+
+  TLatex lbl_txt;
+  lbl_txt.SetNDC();
+  lbl_txt.SetTextFont(42);
+  lbl_txt.SetTextSize(0.036f);
+  lbl_txt.SetTextAlign(11);
+  lbl_txt.DrawLatex(0.18, 0.93,
+                    ("#sigma_{minor}=" + fmtd(result.trace.sigma_minor, 1)
+                     + "  #sigma_{major}=" + fmtd(result.trace.sigma_major, 1)
+                     + " px  #theta=" + fmtd(result.trace.angle_deg, 1) + "#circ")
+                        .c_str());
+
+  if (cfg.save_png)
+    c.Print((cfg.output_dir / ("blob_" + lbl + ".png")).string().c_str());
+}
+
 } // namespace
 
 namespace riptide::exp2 {
@@ -259,14 +374,54 @@ ConfigResult analyze_config(const std::filesystem::path& signal_dir,
   for (size_t i = 0; i < n; ++i)
     diff[i] = signal_stack.mean[i] - bg_stack.mean[i];
 
-  double angle_err   = 0.0;
-  const double angle = estimate_trace_angle(diff, width, height, trace_cfg, &angle_err);
+  double angle_err    = 0.0;
+  double current_angle = estimate_trace_angle(diff, width, height, trace_cfg, &angle_err);
 
-  TraceResult trace   = extract_trace_profile(diff, width, height, angle, trace_cfg);
-  trace.angle_deg     = angle;
+  TraceResult trace   = extract_trace_profile(diff, width, height, current_angle, trace_cfg);
+  trace.angle_deg     = current_angle;
   trace.angle_err_deg = angle_err;
 
-  CentroidFitResult centroid_fit = fit_centroid_line(trace);
+  CentroidFitResult centroid_fit{};
+  if (trace.trace_detected) {
+    centroid_fit = fit_centroid_line(trace);
+
+    // P2: raffinamento iterativo dell'angolo (fino a 2 passaggi).
+    // Il pendio ODR rivela l'errore angolare residuo: delta ≈ atan(slope).
+    // Ref: tecnica standard nei beam profiler (ISO 11146) e tracker di tracce.
+    for (int refine = 0; refine < 2; ++refine) {
+      if (!centroid_fit.converged || centroid_fit.n_points_used < 20)
+        break;
+
+      double delta_deg = 0.0;
+      if (centroid_fit.axis == riptide::FitAxis::YvsZ) {
+        // center = a·t + b  →  a = tan(δ)  →  δ = atan(a)
+        delta_deg = (180.0 / M_PI) * std::atan(centroid_fit.a);
+      } else {
+        // t = a·center + b  →  1/a = tan(δ)  →  δ = atan(1/a)
+        if (std::abs(centroid_fit.a) > 1e-6)
+          delta_deg = (180.0 / M_PI) * std::atan(1.0 / centroid_fit.a);
+      }
+
+      // Ignora correzioni trascurabili (<0.05°) o anomale (>10°).
+      if (std::abs(delta_deg) < 0.05 || std::abs(delta_deg) > 10.0)
+        break;
+
+      current_angle += delta_deg;
+      while (current_angle > 90.0)
+        current_angle -= 180.0;
+      while (current_angle <= -90.0)
+        current_angle += 180.0;
+
+      TraceResult refined = extract_trace_profile(diff, width, height, current_angle, trace_cfg);
+      refined.angle_deg     = current_angle;
+      refined.angle_err_deg = angle_err;
+      if (!refined.trace_detected)
+        break;
+
+      trace        = std::move(refined);
+      centroid_fit = fit_centroid_line(trace);
+    }
+  }
 
   const double dof_delta = (optics.x_det_optimal > 0.0) ? (optics.x_det - optics.x_det_optimal)
                                                         : std::numeric_limits<double>::quiet_NaN();
@@ -311,12 +466,11 @@ void produce_config_output(const ConfigResult& result, const OutputConfig& cfg) 
       h->Write();
     }
 
-    const double vmin = get_th2d_percentile(h, cfg.z_min_percentile);
     const double vmax = get_th2d_percentile(h, cfg.z_max_percentile);
 
     TH2D* h_disp = rebin_for_display(h);
-    if (vmax > vmin) {
-      h_disp->SetMinimum(vmin);
+    if (vmax > 0.0) {
+      h_disp->SetMinimum(0.0);
       h_disp->SetMaximum(vmax);
     }
 
@@ -332,7 +486,7 @@ void produce_config_output(const ConfigResult& result, const OutputConfig& cfg) 
   }
 
   {
-    gStyle->SetPalette(kCool);
+    set_diverging_palette();
     TCanvas c(("c_diff_" + lbl).c_str(), ("Diff " + lbl).c_str(), 900, 800);
     set_pad_margins(static_cast<TPad*>(&c));
 
@@ -346,12 +500,12 @@ void produce_config_output(const ConfigResult& result, const OutputConfig& cfg) 
     const double p5         = vector_percentile(tmp, 0.05, false);
     const double p95        = vector_percentile(tmp, 0.95, false);
     const double v          = std::max(std::abs(p5), std::abs(p95));
-    if (v > 0.0 && std::isfinite(v)) {
-      h->SetMinimum(-v);
-      h->SetMaximum(v);
-    }
 
     TH2D* h_disp = rebin_for_display(h);
+    if (v > 0.0 && std::isfinite(v)) {
+      h_disp->SetMinimum(-v);
+      h_disp->SetMaximum(v);
+    }
     h_disp->Draw("COLZ");
     draw_trace_line(width, height, result.trace.angle_deg);
 
@@ -371,58 +525,69 @@ void produce_config_output(const ConfigResult& result, const OutputConfig& cfg) 
     std::vector<double> s;
     std::vector<double> se;
     for (const auto& sp : result.trace.profile) {
-      if (sp.valid && std::isfinite(sp.sigma) && std::isfinite(sp.sigma_err)) {
+      if (sp.valid && std::isfinite(sp.sigma)) {
         t.push_back(sp.t);
         s.push_back(sp.sigma);
-        se.push_back(sp.sigma_err);
+        se.push_back(std::isfinite(sp.sigma_err) ? sp.sigma_err : 0.0);
       }
     }
 
-    auto* g = new TGraphErrors(static_cast<int>(t.size()));
-    for (int i = 0; i < static_cast<int>(t.size()); ++i) {
-      g->SetPoint(i, t[static_cast<size_t>(i)], s[static_cast<size_t>(i)]);
-      g->SetPointError(i, 0.0, se[static_cast<size_t>(i)]);
+    TGraphErrors* g = nullptr;
+    if (t.empty()) {
+      TLatex nodata;
+      nodata.SetNDC();
+      nodata.SetTextFont(42);
+      nodata.SetTextSize(0.050f);
+      nodata.SetTextAlign(22);
+      nodata.DrawLatex(0.5, 0.5, "Nessuna slice valida");
+    } else {
+      g = new TGraphErrors(static_cast<int>(t.size()));
+      for (int i = 0; i < static_cast<int>(t.size()); ++i) {
+        g->SetPoint(i, t[static_cast<size_t>(i)], s[static_cast<size_t>(i)]);
+        g->SetPointError(i, 0.0, se[static_cast<size_t>(i)]);
+      }
+      g->SetMarkerStyle(20);
+      g->SetMarkerSize(0.9f);
+      g->SetLineWidth(2);
+      g->GetXaxis()->SetTitle("t [px]");
+      g->GetYaxis()->SetTitle("#sigma(t) [px]");
+      g->Draw("AP");
+
+      const double tmin = *std::min_element(t.begin(), t.end());
+      const double tmax = *std::max_element(t.begin(), t.end());
+
+      TLine mean_line(tmin, result.trace.sigma_mean, tmax, result.trace.sigma_mean);
+      mean_line.SetLineColor(kRed + 1);
+      mean_line.SetLineStyle(2);
+      mean_line.SetLineWidth(2);
+      mean_line.Draw("SAME");
+
+      TBox box(tmin, result.trace.sigma_mean - result.trace.sigma_mean_err, tmax,
+               result.trace.sigma_mean + result.trace.sigma_mean_err);
+      box.SetFillColorAlpha(kRed + 1, 0.15f);
+      box.SetLineColor(kRed + 1);
+      box.SetLineWidth(1);
+      box.Draw("SAME");
+
+      TLatex txt;
+      txt.SetNDC();
+      txt.SetTextFont(42);
+      txt.SetTextSize(0.040f);
+      txt.SetTextAlign(13);
+      txt.DrawLatex(0.18, 0.93,
+                    ("#sigma_{mean} = " + fmtd(result.trace.sigma_mean, 2) + " #pm "
+                     + fmtd(result.trace.sigma_mean_err, 2)
+                     + " px    FWHM = " + fmtd(result.trace.fwhm_mean, 2)
+                     + " px    N = " + std::to_string(result.trace.n_valid_slices) + " slice")
+                        .c_str());
     }
-    g->SetMarkerStyle(20);
-    g->SetMarkerSize(0.9f);
-    g->SetLineWidth(2);
-    g->GetXaxis()->SetTitle("t [px]");
-    g->GetYaxis()->SetTitle("#sigma(t) [px]");
-    g->Draw("AP");
-
-    const double tmin = t.empty() ? 0.0 : *std::min_element(t.begin(), t.end());
-    const double tmax = t.empty() ? 1.0 : *std::max_element(t.begin(), t.end());
-
-    TLine mean_line(tmin, result.trace.sigma_mean, tmax, result.trace.sigma_mean);
-    mean_line.SetLineColor(kRed + 1);
-    mean_line.SetLineStyle(2);
-    mean_line.SetLineWidth(2);
-    mean_line.Draw("SAME");
-
-    TBox box(tmin, result.trace.sigma_mean - result.trace.sigma_mean_err, tmax,
-             result.trace.sigma_mean + result.trace.sigma_mean_err);
-    box.SetFillColorAlpha(kRed + 1, 0.15f);
-    box.SetLineColor(kRed + 1);
-    box.SetLineWidth(1);
-    box.Draw("SAME");
-
-    TLatex txt;
-    txt.SetNDC();
-    txt.SetTextFont(42);
-    txt.SetTextSize(0.040f);
-    txt.SetTextAlign(13);
-    txt.DrawLatex(0.18, 0.93,
-                  ("#sigma_{mean} = " + fmtd(result.trace.sigma_mean, 2) + " #pm "
-                   + fmtd(result.trace.sigma_mean_err, 2)
-                   + " px    FWHM = " + fmtd(result.trace.fwhm_mean, 2)
-                   + " px    N = " + std::to_string(result.trace.n_valid_slices) + " slice")
-                      .c_str());
 
     if (cfg.save_png)
       c.Print((cfg.output_dir / ("profile_" + lbl + ".png")).string().c_str());
     if (root_file) {
       root_file->cd();
-      g->Write(("sigma_profile_" + lbl).c_str());
+      if (g)
+        g->Write(("sigma_profile_" + lbl).c_str());
       c.Write(("profile_canvas_" + lbl).c_str());
     }
   }
@@ -544,6 +709,8 @@ void produce_config_output(const ConfigResult& result, const OutputConfig& cfg) 
       c.Write(("centroid_canvas_" + lbl).c_str());
     }
   }
+
+  produce_blob_image(result, cfg);
 }
 
 void produce_summary(const std::vector<ConfigResult>& results, const OutputConfig& cfg) {
@@ -577,13 +744,15 @@ void produce_summary(const std::vector<ConfigResult>& results, const OutputConfi
   for (const auto& r : results)
     ref_width = std::max(ref_width, r.signal_stack.width);
 
+  // sigma_minor è l'asse minore della distribuzione 2D dell'immagine:
+  // invariante per rotazione, non influenzato dal trimming, confrontabile tra blob e streak.
   auto sigma_scaled = [&](const ConfigResult& r) -> std::pair<double, double> {
-    if (!(r.trace.sigma_mean > 0.0) || !(r.trace.sigma_mean_err > 0.0))
+    if (!(r.trace.sigma_minor > 0.0))
       return {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()};
     if (ref_width <= 0 || r.signal_stack.width <= 0)
-      return {r.trace.sigma_mean, r.trace.sigma_mean_err};
+      return {r.trace.sigma_minor, 0.0};
     const double scale = static_cast<double>(ref_width) / static_cast<double>(r.signal_stack.width);
-    return {r.trace.sigma_mean * scale, r.trace.sigma_mean_err * scale};
+    return {r.trace.sigma_minor * scale, 0.0};
   };
 
   double sigma_min  = std::numeric_limits<double>::infinity();
@@ -628,25 +797,32 @@ void produce_summary(const std::vector<ConfigResult>& results, const OutputConfi
        << "  x2=" << fmtd(r.optics.x2, 1) << " mm"
        << "  x_det=" << fmtd(r.optics.x_det, 1) << " mm";
 
-    const auto ss = sigma_scaled(r);
-    const double scale =
-        (ref_width > 0 && r.signal_stack.width > 0)
-            ? (static_cast<double>(ref_width) / static_cast<double>(r.signal_stack.width))
-            : 1.0;
+    const std::string blob_tag = r.trace.trace_detected ? "" : "  [blob, no trace]";
 
     std::ostringstream l2;
     l2 << "            "
-       << "#sigma_mean=" << fmtd(r.trace.sigma_mean, 2) << " ± " << fmtd(r.trace.sigma_mean_err, 2)
-       << " px   FWHM=" << fmtd(r.trace.fwhm_mean, 2) << " px";
+       << "#sigma_{minor}=" << fmtd(r.trace.sigma_minor, 2) << " px"
+       << "   #sigma_{major}=" << fmtd(r.trace.sigma_major, 2) << " px"
+       << "   aspect=" << fmtd(r.trace.aspect_ratio, 2) << blob_tag;
 
     std::ostringstream l3;
-    l3 << "            "
-       << "#sigma_ref=" << fmtd(ss.first, 2) << " ± " << fmtd(ss.second, 2) << " px"
-       << "   xscale=" << fmtd(scale, 2) << "   N=" << r.trace.n_valid_slices;
+    if (r.trace.trace_detected)
+      l3 << "            "
+         << "#sigma_mean=" << fmtd(r.trace.sigma_mean, 2) << " #pm "
+         << fmtd(r.trace.sigma_mean_err, 2) << " px   FWHM=" << fmtd(r.trace.fwhm_mean, 2)
+         << " px   N=" << r.trace.n_valid_slices;
+    else
+      l3 << "            "
+         << "#sigma_mean=N/A (traccia non rilevata)   aspect_ratio="
+         << fmtd(r.trace.aspect_ratio, 2);
 
     std::ostringstream l4;
-    l4 << "            "
-       << "#chi^{2}/ndof(centroide)=" << fmtd(r.centroid_fit.chi2_ndof, 2) << "   x_det_opt="
+    l4 << "            ";
+    if (r.trace.trace_detected)
+      l4 << "#chi^{2}/ndof(centroide)=" << fmtd(r.centroid_fit.chi2_ndof, 2);
+    else
+      l4 << "#chi^{2}/ndof(centroide)=N/A";
+    l4 << "   x_det_opt="
        << ((r.optics.x_det_optimal > 0.0) ? fmtd(r.optics.x_det_optimal, 1) : std::string("NaN"))
        << " mm"
        << "   #Deltax_det=" << (std::isfinite(r.dof_delta_mm) ? fmtd(r.dof_delta_mm, 2) : "NaN")
@@ -680,10 +856,10 @@ void produce_summary(const std::vector<ConfigResult>& results, const OutputConfi
     box.AddText(o.str().c_str());
   };
 
-  box.AddText("Rapporti chiave:");
-  ratio_line("#sigma_{bad,focus} / #sigma_{good,focus}", bad_focus, good_focus);
-  ratio_line("#sigma_{good,focus} / #sigma_{good,nofocus}", good_focus, good_nofocus);
-  ratio_line("#sigma_{bad,focus} / #sigma_{bad,nofocus}", bad_focus, bad_nofocus);
+  box.AddText("Rapporti chiave (#sigma_{minor}):");
+  ratio_line("#sigma_{minor}(bad,focus) / #sigma_{minor}(good,focus)", bad_focus, good_focus);
+  ratio_line("#sigma_{minor}(good,focus) / #sigma_{minor}(good,nofocus)", good_focus, good_nofocus);
+  ratio_line("#sigma_{minor}(bad,focus) / #sigma_{minor}(bad,nofocus)", bad_focus, bad_nofocus);
 
   box.Draw();
 

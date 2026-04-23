@@ -33,10 +33,10 @@ struct CliOptions {
   double sigma_err_floor    = 0.2;
   double sigma_err_scale    = 1.0;
   bool enable_trace_trim    = true;
-  double trace_trim_frac    = 0.25;
-  double trace_trim_min_snr = 3.0;
   int trace_trim_pad_slices = 10;
   int trace_trim_min_slices = 50;
+  double min_aspect_ratio          = 1.3;
+  double trace_trim_max_center_err = 5.0;
 
   double x1_good       = 0.0;
   double x2_good       = 0.0;
@@ -65,8 +65,9 @@ static void print_usage(const char* prog) {
             << "          [--slice-width N] [--slice-step N] [--snr-min F]\n"
             << "          [--center-err-floor F] [--center-err-scale F]\n"
             << "          [--sigma-err-floor F]  [--sigma-err-scale F]\n"
-            << "          [--no-trim] [--trim-frac F] [--trim-min-snr F]\n"
+            << "          [--no-trim]\n"
             << "          [--trim-pad-slices N] [--trim-min-slices N]\n"
+            << "          [--min-aspect-ratio F] [--trim-max-center-err F]\n"
             << "          [--x1-good F] [--x2-good F] [--xdet-good F]\n"
             << "          [--x1-bad F]  [--x2-bad F]  [--xdet-bad F]\n"
             << "          [--xdet-good-opt F] [--xdet-bad-opt F]\n"
@@ -136,14 +137,14 @@ static CliOptions parse_args(int argc, char** argv) {
       opt.sigma_err_scale = next_dbl();
     else if (arg == "--no-trim")
       opt.enable_trace_trim = false;
-    else if (arg == "--trim-frac")
-      opt.trace_trim_frac = next_dbl();
-    else if (arg == "--trim-min-snr")
-      opt.trace_trim_min_snr = next_dbl();
     else if (arg == "--trim-pad-slices")
       opt.trace_trim_pad_slices = next_int();
     else if (arg == "--trim-min-slices")
       opt.trace_trim_min_slices = next_int();
+    else if (arg == "--min-aspect-ratio")
+      opt.min_aspect_ratio = next_dbl();
+    else if (arg == "--trim-max-center-err")
+      opt.trace_trim_max_center_err = next_dbl();
     else if (arg == "--x1-good")
       opt.x1_good = next_dbl();
     else if (arg == "--x2-good")
@@ -224,10 +225,10 @@ int main(int argc, char** argv) {
     trace_cfg.sigma_err_floor       = opt.sigma_err_floor;
     trace_cfg.sigma_err_scale       = opt.sigma_err_scale;
     trace_cfg.enable_trace_trim     = opt.enable_trace_trim;
-    trace_cfg.trace_trim_frac       = opt.trace_trim_frac;
-    trace_cfg.trace_trim_min_snr    = opt.trace_trim_min_snr;
     trace_cfg.trace_trim_pad_slices = opt.trace_trim_pad_slices;
     trace_cfg.trace_trim_min_slices = opt.trace_trim_min_slices;
+    trace_cfg.min_aspect_ratio           = opt.min_aspect_ratio;
+    trace_cfg.trace_trim_max_center_err  = opt.trace_trim_max_center_err;
 
     riptide::exp2::OutputConfig out_cfg;
     out_cfg.output_dir       = opt.output;
@@ -323,8 +324,10 @@ int main(int argc, char** argv) {
 
     std::cout << std::left << std::setw(14) << "config" << std::right << std::setw(10) << "W"
               << std::setw(10) << "H" << std::setw(10) << "xscale" << std::setw(8) << "N"
-              << std::setw(18) << "sigma_px" << std::setw(18) << "sigma_refpx" << std::setw(14)
-              << "chi2/ndof" << std::setw(14) << "metric_ref" << std::setw(14) << "dx_det" << "\n";
+              << std::setw(18) << "sigma_px" << std::setw(18) << "sigma_refpx"
+              << std::setw(12) << "sig_minor" << std::setw(12) << "sig_major"
+              << std::setw(10) << "aspect" << std::setw(14) << "chi2/ndof"
+              << std::setw(14) << "metric_ref" << std::setw(14) << "dx_det" << "\n";
 
     for (const auto& r : results) {
       const double scale =
@@ -334,7 +337,9 @@ int main(int argc, char** argv) {
       const double sigma_ref     = r.trace.sigma_mean * scale;
       const double sigma_ref_err = r.trace.sigma_mean_err * scale;
       const double fwhm_ref      = r.trace.fwhm_mean * scale;
-      const double metric_ref    = r.centroid_fit.chi2_ndof + fwhm_ref;
+      const double metric_ref    = r.trace.trace_detected
+                                       ? (r.centroid_fit.chi2_ndof + fwhm_ref)
+                                       : std::numeric_limits<double>::quiet_NaN();
 
       std::cout << std::left << std::setw(14) << riptide::exp2::config_label_str(r.label)
                 << std::right << std::setw(10) << r.signal_stack.width << std::setw(10)
@@ -344,9 +349,14 @@ int main(int argc, char** argv) {
                 << std::setw(4) << std::fixed << std::setprecision(2) << r.trace.sigma_mean_err
                 << std::setw(8) << " " << std::setw(7) << std::fixed << std::setprecision(2)
                 << sigma_ref << "±" << std::setw(4) << std::fixed << std::setprecision(2)
-                << sigma_ref_err << std::setw(14) << std::fixed << std::setprecision(3)
-                << r.centroid_fit.chi2_ndof << std::setw(14) << std::fixed << std::setprecision(3)
-                << metric_ref;
+                << sigma_ref_err
+                << std::setw(12) << std::fixed << std::setprecision(2) << r.trace.sigma_minor
+                << std::setw(12) << std::fixed << std::setprecision(2) << r.trace.sigma_major
+                << std::setw(10) << std::fixed << std::setprecision(2) << r.trace.aspect_ratio
+                << std::setw(14) << std::fixed << std::setprecision(3)
+                << (r.trace.trace_detected ? r.centroid_fit.chi2_ndof
+                                           : std::numeric_limits<double>::quiet_NaN())
+                << std::setw(14) << std::fixed << std::setprecision(3) << metric_ref;
 
       if (std::isfinite(r.dof_delta_mm))
         std::cout << std::setw(14) << std::fixed << std::setprecision(2) << r.dof_delta_mm << "\n";

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <numeric>
@@ -141,6 +142,24 @@ static WeightedMoments compute_weighted_cov(const std::vector<double>& img, int 
   return m;
 }
 
+// Autovalori della matrice di covarianza 2×2 simmetrica [[cxx,cxy],[cxy,cyy]].
+// lambda_min ≈ varianza sull'asse minore (larghezza trasversale PSF).
+static void compute_blob_axes(const WeightedMoments& m, double& sigma_minor, double& sigma_major,
+                              double& aspect_ratio) {
+  sigma_minor   = 0.0;
+  sigma_major   = 0.0;
+  aspect_ratio  = 0.0;
+  if (!m.ok || (m.cxx + m.cyy) <= 0.0)
+    return;
+  const double tr   = m.cxx + m.cyy;
+  const double disc = std::sqrt(std::max(0.0, (m.cxx - m.cyy) * (m.cxx - m.cyy) + 4.0 * m.cxy * m.cxy));
+  const double lmax = 0.5 * (tr + disc);
+  const double lmin = std::max(0.0, 0.5 * (tr - disc));
+  sigma_major       = std::sqrt(lmax);
+  sigma_minor       = std::sqrt(lmin);
+  aspect_ratio      = (sigma_minor > 0.0) ? (sigma_major / sigma_minor) : 0.0;
+}
+
 static double angle_from_cov_pca(const WeightedMoments& m) {
   if (!m.ok)
     return 0.0;
@@ -236,6 +255,60 @@ static double stdev_of(const std::vector<double>& v, double mean) {
     sum += d * d;
   }
   return std::sqrt(sum / static_cast<double>(v.size() - 1));
+}
+
+// Centroide 1D pesato per intensità — metodo ISO 11146 (primo momento).
+// Robusto a profili non-Gaussiani, troncati o a basso SNR (nessuna convergenza richiesta).
+// center_err = sigma_dist / sqrt(N_eff),  N_eff = (Σw)² / Σw²  (effective pixel count).
+struct WCentroid {
+  double center     = 0.0;
+  double center_err = std::numeric_limits<double>::infinity();
+  double sigma_dist = 0.0;
+  double N_eff      = 0.0;
+  bool   ok         = false;
+};
+
+static WCentroid weighted_centroid_1d(const std::vector<double>& x, const std::vector<double>& y) {
+  WCentroid out;
+  const int n = static_cast<int>(x.size());
+  if (n < 3)
+    return out;
+
+  const int edge_n = std::max(1, n / 5);
+  std::vector<double> edges;
+  edges.reserve(static_cast<size_t>(2 * edge_n));
+  for (int i = 0; i < edge_n; ++i) {
+    edges.push_back(y[static_cast<size_t>(i)]);
+    edges.push_back(y[static_cast<size_t>(n - 1 - i)]);
+  }
+  const double B = median_of(edges);
+
+  double sum_w = 0.0, sum_xw = 0.0, sum_x2w = 0.0, sum_w2 = 0.0;
+  for (int i = 0; i < n; ++i) {
+    const double xi = x[static_cast<size_t>(i)];
+    const double w  = std::max(0.0, y[static_cast<size_t>(i)] - B);
+    sum_w   += w;
+    sum_xw  += w * xi;
+    sum_x2w += w * xi * xi;
+    sum_w2  += w * w;
+  }
+
+  if (!(sum_w > 0.0))
+    return out;
+
+  const double c        = sum_xw / sum_w;
+  const double var_dist = std::max(0.0, sum_x2w / sum_w - c * c);
+  const double N_eff    = (sum_w2 > 0.0) ? (sum_w * sum_w / sum_w2) : 1.0;
+  const double var_c    = (N_eff > 1.0) ? (var_dist / N_eff) : var_dist;
+
+  out.center     = c;
+  out.center_err = (var_c > 0.0 && std::isfinite(var_c))
+                       ? std::sqrt(var_c)
+                       : std::numeric_limits<double>::infinity();
+  out.sigma_dist = std::sqrt(var_dist);
+  out.N_eff      = N_eff;
+  out.ok         = std::isfinite(c) && std::isfinite(out.center_err);
+  return out;
 }
 
 struct GaussFit {
@@ -624,6 +697,16 @@ TraceResult extract_trace_profile(const std::vector<double>& img, int width, int
     m.ok     = true;
   }
 
+  // Metriche 2D invarianti per rotazione (calcolate prima del taglio delle slice).
+  compute_blob_axes(m, out.sigma_minor, out.sigma_major, out.aspect_ratio);
+  out.trace_detected = (out.aspect_ratio >= cfg.min_aspect_ratio);
+  if (!out.trace_detected) {
+    std::cerr << "[WARNING] exp2::extract_trace_profile: blob troppo circolare (aspect="
+              << std::fixed << std::setprecision(2) << out.aspect_ratio
+              << " < " << cfg.min_aspect_ratio << "), estrazione traccia saltata\n";
+    return out;
+  }
+
   const double theta = deg_to_rad(out.angle_deg);
   const double ux    = std::cos(theta);
   const double uy    = std::sin(theta);
@@ -722,47 +805,37 @@ TraceResult extract_trace_profile(const std::vector<double>& img, int width, int
       ys.push_back((n_acc > 0) ? (acc / static_cast<double>(n_acc)) : 0.0);
     }
 
+    // P1: centroide robusto con il primo momento pesato (ISO 11146).
+    // Non richiede convergenza, tolera profili troncati e non-Gaussiani.
+    const WCentroid wc = weighted_centroid_1d(xs, ys);
+
+    // Fit Gaussiano usato solo per la larghezza sigma (PSF width).
     GaussFit fit = fit_gaussian_1d(xs, ys, cfg.sigma_max);
     if (!fit.converged) {
-      const double B0 = median_of(ys);
-      double wsum     = 0.0;
-      double xsum     = 0.0;
-      for (size_t i = 0; i < xs.size(); ++i) {
-        const double w = std::max(0.0, ys[i] - B0);
-        wsum += w;
-        xsum += w * xs[i];
-      }
-      const double mu0 = (wsum > 0.0) ? (xsum / wsum) : 0.0;
-      double var       = 0.0;
-      if (wsum > 0.0) {
-        for (size_t i = 0; i < xs.size(); ++i) {
-          const double w = std::max(0.0, ys[i] - B0);
-          const double d = xs[i] - mu0;
-          var += w * d * d;
-        }
-        var /= wsum;
-      }
-      fit.mu           = mu0;
-      fit.mu_err       = std::numeric_limits<double>::infinity();
-      fit.sigma        = std::clamp(std::sqrt(std::max(1e-6, var)), 0.5, cfg.sigma_max);
-      fit.A            = *std::max_element(ys.begin(), ys.end()) - B0;
-      fit.B            = B0;
+      // Fallback sigma dal secondo momento del centroide pesato.
+      const double sigma_fb =
+          wc.ok ? std::clamp(wc.sigma_dist, 0.5, cfg.sigma_max) : cfg.sigma_max;
+      fit.sigma        = sigma_fb;
       fit.sigma_err    = std::numeric_limits<double>::infinity();
       fit.chi2_ndof    = std::numeric_limits<double>::infinity();
       fit.rms_residual = std::numeric_limits<double>::infinity();
+      // Amplitude e noise dal centroide pesato per SNR.
+      const double ymax = *std::max_element(ys.begin(), ys.end());
+      const double B0   = wc.ok ? (ys.front() + ys.back()) * 0.5 : 0.0;
+      fit.A             = std::max(0.0, ymax - B0);
     }
 
+    // Centro: usa il centroide pesato (più robusto del fit Gaussiano).
     sp.amplitude = fit.A;
-    sp.center    = fit.mu;
+    sp.center    = wc.ok ? wc.center : fit.mu;
     {
-      double ce = fit.mu_err;
-      if (!std::isfinite(ce))
-        ce = std::numeric_limits<double>::infinity();
-      ce = ce * cfg.center_err_scale;
-      if (!std::isfinite(ce) || ce <= 0.0)
-        ce = cfg.center_err_floor;
-      sp.center_err = std::max(cfg.center_err_floor, ce);
+      const double ce_raw = wc.ok ? wc.center_err : std::numeric_limits<double>::infinity();
+      const double ce     = std::isfinite(ce_raw) ? (ce_raw * cfg.center_err_scale)
+                                                   : cfg.center_err_floor;
+      sp.center_err = std::max(cfg.center_err_floor, std::isfinite(ce) ? ce : cfg.center_err_floor);
     }
+
+    // Sigma: dal fit Gaussiano (con fallback al secondo momento).
     sp.sigma = fit.sigma;
     {
       double se = fit.sigma_err;
@@ -777,21 +850,20 @@ TraceResult extract_trace_profile(const std::vector<double>& img, int width, int
 
     const double snr = (fit.noise > 0.0 && std::isfinite(fit.noise)) ? (fit.A / fit.noise) : 0.0;
     sp.snr           = snr;
-    sp.valid = std::isfinite(sp.sigma) && std::isfinite(sp.sigma_err) && (sp.sigma_err > 0.0)
-            && (sp.chi2_ndof < 5.0) && (sp.sigma > 0.5) && (sp.sigma < cfg.sigma_max)
-            && (snr > cfg.min_snr);
+
+    // Validità: centroide pesato preferito; fallback al chi²/ndof Gaussiano se wc non disponibile.
+    const bool use_wc    = wc.ok && (wc.N_eff >= 2.0);
+    const bool center_ok = std::isfinite(sp.center_err) && (sp.center_err > 0.0)
+        && (use_wc || (fit.converged && std::isfinite(fit.chi2_ndof) && (fit.chi2_ndof < 10.0)));
+    sp.valid = center_ok && std::isfinite(sp.sigma) && (sp.sigma > 0.5)
+            && (sp.sigma < cfg.sigma_max) && (snr > cfg.min_snr);
 
     out.profile.push_back(sp);
   }
 
   if (cfg.enable_trace_trim && !out.profile.empty()) {
-    double snr_max = 0.0;
-    for (const auto& sp : out.profile)
-      if (std::isfinite(sp.snr))
-        snr_max = std::max(snr_max, sp.snr);
-
-    const double snr_thr = std::max(cfg.trace_trim_min_snr, cfg.trace_trim_frac * snr_max);
-
+    // P3: trimming basato sulla qualità del centroide (center_err) invece che sull'SNR.
+    // Conserva slice con centroide affidabile anche a basso SNR (PSF larga o bordi FOV).
     int best_start = -1;
     int best_len   = 0;
     int cur_start  = -1;
@@ -799,8 +871,10 @@ TraceResult extract_trace_profile(const std::vector<double>& img, int width, int
 
     for (int i = 0; i < static_cast<int>(out.profile.size()); ++i) {
       const auto& sp  = out.profile[static_cast<size_t>(i)];
-      const bool keep = std::isfinite(sp.snr) && (sp.snr >= snr_thr) && std::isfinite(sp.sigma)
-                     && (sp.sigma > 0.5) && (sp.sigma < cfg.sigma_max);
+      const bool keep = std::isfinite(sp.center_err)
+                     && (sp.center_err <= cfg.trace_trim_max_center_err)
+                     && std::isfinite(sp.sigma) && (sp.sigma > 0.5)
+                     && (sp.sigma < cfg.sigma_max);
 
       if (keep) {
         if (cur_start < 0) {
