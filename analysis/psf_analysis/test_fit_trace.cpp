@@ -433,6 +433,37 @@ static void test_TQ3() {
   check(threw, "std::invalid_argument per cfg non presente", T);
 }
 
+// TI2D — verifica interpolazione bilineare (x e y non-banali)
+static void test_TI2D() {
+  std::cout << "\n[TI2D] interpolate() bilineare su griglia 2D\n";
+  const std::string T = "TI2D";
+
+  // DB con due valori di x (0 e 10) e y in [0, 5]
+  // mu_y(x, y) = x + y  → facile da verificare analiticamente
+  riptide::PSFDatabase db;
+  riptide::LensConfig cfg{50.0, 120.0};
+  for (double xs : {0.0, 10.0}) {
+    for (double ys = 0.0; ys <= 5.0; ys += 1.0) {
+      db[cfg].push_back(
+          {xs, ys, xs + ys, 0.0, 0.01, 0.0, 0.01, true, 1000.0, 1000.0});
+    }
+  }
+  // I punti sono già ordinati per x poi y (x=0 prima, x=10 dopo).
+
+  // Punto interno: x=5, y=2.5 → mu_y atteso = 5+2.5 = 7.5
+  auto v = riptide::interpolate(5.0, 2.5, cfg, db);
+  near(v.mu_y, 7.5, 1e-9, "mu_y bilineare (x=5, y=2.5)", T);
+  check(v.on_detector, "on_detector=true per punto interno", T);
+
+  // Punto al bordo x=0: deve restituire esattamente il valore della griglia
+  auto v0 = riptide::interpolate(0.0, 3.0, cfg, db);
+  near(v0.mu_y, 3.0, 1e-9, "mu_y bordo x=0, y=3", T);
+
+  // Punto al bordo x=10
+  auto v1 = riptide::interpolate(10.0, 2.0, cfg, db);
+  near(v1.mu_y, 12.0, 1e-9, "mu_y bordo x=10, y=2", T);
+}
+
 // TQ4
 static void test_TQ4() {
   std::cout << "\n[TQ4] Q monotona: PSF curva, sigma_z piccola → Q maggiore\n";
@@ -477,6 +508,7 @@ int main() {
   test_T7();
   test_T8();
   test_TV();
+  test_TI2D();
   test_TQ1();
   test_TQ2();
   test_TQ3();

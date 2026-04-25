@@ -4,6 +4,12 @@ cmake_minimum_required(VERSION 3.26)
 find_package(ROOT REQUIRED COMPONENTS Core RIO Hist Graf)
 include(${ROOT_USE_FILE})
 
+# nlohmann/json (header-only; bundled con ROOT o installato separatamente)
+find_path(JSON_INCLUDE_DIR nlohmann/json.hpp
+    HINTS ${ROOT_INCLUDE_DIRS} /usr/include /usr/local/include
+    REQUIRED
+)
+
 # Libreria psf_analysis
 add_library(psf_analysis STATIC
     psf_interpolator.cpp

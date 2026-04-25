@@ -232,6 +232,8 @@ struct QConfig {
   double trace_valid_fraction = 0.75; // frazione minima di tracce valide per config valida
 
   bool verbose = false;
+
+  unsigned seed = 42; // Seed per il generatore di tracce casuali (riproducibilità)
 };
 
 // Descrizione di una singola esclusione all'interno di compute_Q

@@ -123,6 +123,14 @@ int main(int argc, char** argv) {
   double upper_percentile =
       (cli.upper_percentile >= 0) ? cli.upper_percentile : config.value("upper_percentile", 0.0);
 
+  if (lower_percentile < 0.0 || lower_percentile >= 1.0 || upper_percentile < 0.0 ||
+      upper_percentile >= 1.0 || lower_percentile + upper_percentile >= 1.0) {
+    std::cerr << "Errore: percentili non validi (lower=" << lower_percentile
+              << ", upper=" << upper_percentile
+              << "). Devono essere in [0,1) con lower+upper < 1.\n";
+    return 1;
+  }
+
   // ===============================
   // Apertura file ROOT
   // ===============================

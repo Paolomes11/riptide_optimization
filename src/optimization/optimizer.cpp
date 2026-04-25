@@ -51,7 +51,11 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
     throw std::runtime_error("Impossibile aprire config: " + config_file.string());
   }
   json config;
-  f >> config;
+  try {
+    f >> config;
+  } catch (const json::parse_error& e) {
+    throw std::runtime_error("Config JSON malformato: " + std::string(e.what()));
+  }
 
   // Trova detector
   auto det = const_cast<DetectorConstruction*>(

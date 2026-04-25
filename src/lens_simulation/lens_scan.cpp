@@ -50,7 +50,11 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   if (!f.is_open())
     throw std::runtime_error("Impossibile aprire config: " + config_file.string());
   json config;
-  f >> config;
+  try {
+    f >> config;
+  } catch (const json::parse_error& e) {
+    throw std::runtime_error("Config JSON malformato: " + std::string(e.what()));
+  }
 
   auto det = const_cast<DetectorConstruction*>(
       dynamic_cast<const DetectorConstruction*>(run_manager->GetUserDetectorConstruction()));
@@ -60,6 +64,8 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   auto UImanager = G4UImanager::GetUIpointer();
   std::filesystem::path macro_to_run =
       macro_file.empty() ? "macros/lens_simulation.mac" : macro_file;
+  if (!std::filesystem::exists(macro_to_run))
+    throw std::runtime_error("Macro non trovata: " + macro_to_run.string());
 
   // Ottieni i modelli di lenti correnti dal detector o dagli argomenti
   std::string lens75_id = !lens75_id_arg.empty() ? lens75_id_arg : det->GetLens75Id();
@@ -72,7 +78,9 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
 
   // Apertura file ROOT e creazione delle Ntuple
   auto analysisManager = G4AnalysisManager::Instance();
-  analysisManager->OpenFile(root_output_file);
+  if (!analysisManager->OpenFile(root_output_file))
+    throw std::runtime_error("lens_scan: impossibile aprire il file ROOT di output: " +
+                             root_output_file);
 
   // Compressione LZ4 livello 4 — encoding: algoritmo*100 + livello (404 = LZ4 lv4)
   analysisManager->SetCompressionLevel(404);

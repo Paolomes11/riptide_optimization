@@ -16,48 +16,14 @@
 #include "detector_construction.hpp"
 #include "event_action.hpp"
 
-#include <G4OpticalPhoton.hh>
-#include <G4RunManager.hh>
-
-#include <iostream>
 
 namespace riptide {
-
-// G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* /*history*/) {
-//   auto* track = step->GetTrack();
-
-//   // Considera solo i fotoni che attraversano la superficie del fotocatodo
-//   auto* pre = step->GetPreStepPoint();
-//   if (pre->GetStepStatus() != fGeomBoundary) {
-//     return false;
-//   }
-
-//   // Recupera EventAction tramite il puntatore statico
-//   auto* eventAction = EventAction::GetEventAction();
-//   if (!eventAction) {
-//     return false;
-//   }
-
-//   // Registra il fotone come "hit"
-//   eventAction->AddPhotonHit();
-
-//   track->SetTrackStatus(fStopAndKill);
-
-//   return true;
-// }
 
 G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory*) {
   auto* pre = step->GetPreStepPoint();
 
-  // Log diagnostico: conta tutti gli step sul fotocatodo
-  // (rimuovi in produzione)
-  static std::atomic<int> total_steps{0}, boundary_steps{0};
-  ++total_steps;
-
   if (pre->GetStepStatus() != fGeomBoundary)
     return false;
-
-  ++boundary_steps;
 
   auto* eventAction = EventAction::GetEventAction();
   if (!eventAction)

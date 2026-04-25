@@ -100,13 +100,14 @@ bool compute_psf(const std::vector<Hit>& raw_hits, PSFResult& result, double sig
     var_z /= n;
     cov_yz /= n;
 
-    // INVERSA COVARIANZA
-    double det = var_y * var_z - cov_yz * cov_yz;
-    if (det < 1e-12)
-      det = 1e-12;
+    // INVERSA COVARIANZA (regolarizzazione Tikhonov: cov += ε·I)
+    constexpr double kRegEps = 1e-4;
+    double reg_yy = var_y + kRegEps;
+    double reg_zz = var_z + kRegEps;
+    double det    = reg_yy * reg_zz - cov_yz * cov_yz;
 
-    double inv_yy = var_z / det;
-    double inv_zz = var_y / det;
+    double inv_yy = reg_zz / det;
+    double inv_zz = reg_yy / det;
     double inv_yz = -cov_yz / det;
 
     // FILTRO ELLITTICO

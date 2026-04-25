@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 
@@ -442,7 +443,7 @@ LineFitResult fit_trace(const std::vector<TracePoint>& trace, double min_hits_pe
     }
     res.a = new_a;
     res.b = new_b;
-    if (std::abs(res.a - a_prev) < tol) {
+    if (std::abs(res.a - a_prev) < tol * (1.0 + std::abs(res.a))) {
       res.converged = true;
       break;
     }
@@ -541,6 +542,11 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
   fits_valid.reserve(static_cast<size_t>(qcfg.n_tracks));
 
   // Generazione tracce casuali nello scintillatore
+  std::mt19937 rng(qcfg.seed);
+  std::uniform_real_distribution<double> dist_u(-1.0, 1.0);
+  std::uniform_int_distribution<int> dist_face(0, 5);
+
+  int short_track_retries = 0;
   for (int i = 0; i < qcfg.n_tracks; ++i) {
     auto get_random_point = [&]() -> Point3D {
       // Scintillatore centrato in x=0, y=0, z=0
@@ -549,9 +555,9 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
       double y_hl = qcfg.scint_y / 2.0;
       double z_hl = qcfg.scint_z / 2.0;
 
-      int face = std::rand() % 6;
-      double u = (static_cast<double>(std::rand()) / RAND_MAX) * 2.0 - 1.0;
-      double v = (static_cast<double>(std::rand()) / RAND_MAX) * 2.0 - 1.0;
+      int face = dist_face(rng);
+      double u = dist_u(rng);
+      double v = dist_u(rng);
 
       if (face == 0)
         return {x_hl, u * y_hl, v * z_hl}; // +X
@@ -573,9 +579,14 @@ QResult compute_Q(const LensConfig& cfg, const PSFDatabase& db, const QConfig& q
     double dist =
         std::sqrt(std::pow(p2.x - p1.x, 2) + std::pow(p2.y - p1.y, 2) + std::pow(p2.z - p1.z, 2));
     if (dist < 2.5 * qcfg.trace_dt) {
-      --i; // Riprova con un'altra coppia
+      if (++short_track_retries > 1000)
+        throw std::runtime_error(
+            "compute_Q: impossibile generare tracce di lunghezza sufficiente "
+            "(riduci trace_dt o aumenta le dimensioni dello scintillatore)");
+      --i;
       continue;
     }
+    short_track_retries = 0;
 
     // 1. Traccia 3D
     std::vector<TracePoint> trace;

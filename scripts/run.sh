@@ -365,7 +365,10 @@ else
 fi
 
 echo "[INFO]  Merge dei chunk in $MERGED_OUTPUT"
-hadd -fk "$MERGED_OUTPUT" "${CHUNK_OUTPUTS[@]}"
+if ! hadd -fk "$MERGED_OUTPUT" "${CHUNK_OUTPUTS[@]}"; then
+  echo "[ERROR] hadd fallito. Output potrebbe essere corrotto: $MERGED_OUTPUT"
+  exit 1
+fi
 
 # Rimuovi i chunk intermedi
 echo "[INFO]  Rimozione chunk intermedi..."

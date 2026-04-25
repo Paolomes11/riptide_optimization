@@ -206,7 +206,9 @@ static bool solve_plane_wls(const std::vector<double>& x_src, const std::vector<
                    - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0])
                    + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
 
-  if (!std::isfinite(det) || std::abs(det) < 1e-30) {
+  const double scale =
+      std::abs(M[0][0]) * std::abs(M[1][1]) * std::abs(M[2][2]);
+  if (!std::isfinite(det) || std::abs(det) < 1e-12 * std::max(scale, 1.0)) {
     res.valid = false;
     return false;
   }
