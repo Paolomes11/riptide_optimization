@@ -66,3 +66,6 @@ add_subdirectory(dof_analysis)
 
 # Sottocartella per Resolution analysis
 add_subdirectory(resolution_analysis)
+
+# Sottocartella per selezione ottimale Pareto
+add_subdirectory(pareto_analysis)

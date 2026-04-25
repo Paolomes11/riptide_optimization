@@ -651,6 +651,78 @@ Genera la mappa 2D della linearità della risposta ottica, calcolando per ogni c
 
 ---
 
+## `pareto_selector`
+
+Seleziona la configurazione ottica ottimale aggregando i risultati di tutti
+i tool di analisi precedenti (efficienza geometrica, qualità PSF, linearità,
+profondità di campo, magnificazione) tramite analisi del **fronte di Pareto**
+e una **funzione di merito scalare pesata**.
+
+```bash
+./build/analysis/pareto_analysis/Release/pareto_selector \
+    --events  output/optimization/events.root \
+    --qmap    output/psf_analysis/q_map.tsv \
+    --chi2map output/psf_analysis/chi2_map.tsv \
+    --dofmap  output/dof_analysis/dof_map.tsv \
+    --output  output/pareto_analysis/pareto_plot.png \
+    --tsv     output/pareto_analysis/pareto_results.tsv \
+    --eta-frac 0.75 --x-det 180.0 --focus-tol 15.0 \
+    --w-eta 0.35 --w-Q 0.40 --w-dof 0.15 --w-M 0.10
+```
+
+**Pipeline interna:**
+1. Join inner di tutti e 4 i file su `(x1, x2)` con tolleranza 1e-3 mm
+2. Filtro hard constraint: `η ≥ eta_frac·η_max`, `|x*-x_det| ≤ focus_tol`, `DoF ≥ dof_min`
+3. Calcolo fronte di Pareto su `(η, Q)`: configurazioni non dominate
+4. Calcolo `Mtot` pesata su tutte le configurazioni filtrate:
+   `Mtot = w_eta·(η/η_max) − w_Q·(Q/Q_max) + w_dof·(DoF/DoF_max) − w_M·(M_abs_err/M_abs_err_max)`
+5. Output grafico e TSV
+
+| Opzione | Default | Descrizione |
+|---|---|---|
+| `--events` | `output/optimization/events.root` | File ROOT efficienza geometrica |
+| `--qmap` | `output/psf_analysis/q_map.tsv` | TSV qualità Q |
+| `--chi2map` | `output/psf_analysis/chi2_map.tsv` | TSV linearità χ² |
+| `--dofmap` | `output/dof_analysis/dof_map.tsv` | TSV DoF e magnificazione |
+| `--output` | `output/pareto_analysis/pareto_plot.png` | PNG output |
+| `--tsv` | `output/pareto_analysis/pareto_results.tsv` | TSV risultati |
+| `--eta-frac` | `0.75` | Soglia η minima relativa a η_max |
+| `--x-det` | `180.0` | Posizione detector [mm] |
+| `--focus-tol` | `15.0` | Tolleranza sul piano di fuoco [mm] |
+| `--dof-min` | `0.0` | DoF minima [mm] (0 = disabilitato) |
+| `--w-eta` | `0.35` | Peso efficienza in Mtot |
+| `--w-Q` | `0.40` | Peso qualità in Mtot |
+| `--w-dof` | `0.15` | Peso DoF in Mtot |
+| `--w-M` | `0.10` | Peso magnificazione in Mtot |
+| `--lens75-id` | `""` | Filtra per ID lente L1 |
+| `--lens60-id` | `""` | Filtra per ID lente L2 |
+
+**Output `pareto_plot.png`**: scatter plot `η/η_max` vs `Q_max/Q` con punti
+colorati per `|M-1|` (palette kViridis), dimensione proporzionale a DoF.
+Punti sul fronte di Pareto evidenziati con bordo rosso. Punto raccomandato
+marcato con stella rossa. Tabella top-5 nel pad inferiore.
+
+**Output `pareto_results.tsv`**: tutte le configurazioni filtrate con colonne
+`x1, x2, eta, eta_norm, Q, chi2, DoF, M, M_abs_err, x_focus, on_pareto, Mtot, pareto_rank`.
+
+**Posizione nel workflow** — eseguire dopo `q_map --tsv`, `chi2_map --tsv`, `dof_map --tsv`:
+
+```bash
+# Step finale (dopo q_map, chi2_map --tsv, dof_map --tsv)
+./build/analysis/pareto_analysis/Release/pareto_selector
+# → output/pareto_analysis/pareto_plot.png
+# → output/pareto_analysis/pareto_results.tsv
+# → stampa su stdout la configurazione raccomandata
+```
+
+**Test unitari:**
+```bash
+./build/analysis/pareto_analysis/Release/test_pareto_selector
+# oppure: cd build && ctest -R pareto_selector_unit -V
+```
+
+---
+
 ## Temporal Unfolding
 
 Il temporal unfolding risolve la degenerazione del fit ODR per configurazioni con forte aberrazione di campo, in cui la traccia media si ripiega su se stessa nel piano (μ_y, μ_z). La trasformazione applica uno spostamento artificiale progressivo lungo la direzione **ortogonale** alla traccia stessa:
