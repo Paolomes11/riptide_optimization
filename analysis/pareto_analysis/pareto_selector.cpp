@@ -142,6 +142,22 @@ static std::vector<std::map<std::string, std::string>> load_tsv(const std::strin
     return rows;
 }
 
+// ── TSV header validation ─────────────────────────────────────────────────────
+
+static void validate_tsv_headers(
+    const std::vector<std::map<std::string, std::string>>& rows,
+    const std::vector<std::string>& required,
+    const std::string& path)
+{
+    if (rows.empty()) return;
+    for (const auto& col : required) {
+        if (!rows[0].count(col)) {
+            std::cerr << "[ERRORE] Colonna '" << col << "' mancante in " << path << "\n";
+            std::exit(1);
+        }
+    }
+}
+
 // ── ROOT style (da q_map.cpp) ────────────────────────────────────────────────
 
 static void apply_style() {
@@ -237,8 +253,8 @@ int main(int argc, char** argv) {
     int  cfg_id        = 0;
     int  n_photons_val = 0;
     int  n_hits_val    = 0;
-    char l1_buf[256]   = {};
-    char l2_buf[256]   = {};
+    char l1_buf[4096]  = {};
+    char l2_buf[4096]  = {};
 
     tree_config->SetBranchAddress("x1",        &x1_val);
     tree_config->SetBranchAddress("x2",        &x2_val);
@@ -281,6 +297,10 @@ int main(int argc, char** argv) {
     auto chi2map_rows = load_tsv(cli.chi2map_path);
     auto dofmap_rows  = load_tsv(cli.dofmap_path);
 
+    validate_tsv_headers(qmap_rows,    {"x1", "x2", "metric"},                          cli.qmap_path);
+    validate_tsv_headers(chi2map_rows, {"x1", "x2", "metric"},                          cli.chi2map_path);
+    validate_tsv_headers(dofmap_rows,  {"x1", "x2", "dof", "M", "M_abs_err", "x_focus"}, cli.dofmap_path);
+
     // ── 3. Join inner su (x1, x2) ────────────────────────────────────────────
     int n_found_q    = 0;
     int n_found_chi2 = 0;
@@ -298,34 +318,28 @@ int main(int argc, char** argv) {
         // Cerca in q_map.tsv
         const std::map<std::string, std::string>* qrow = nullptr;
         for (const auto& r : qmap_rows) {
-            try {
-                if (coords_match(rc.x1, rc.x2, std::stod(r.at("x1")), std::stod(r.at("x2")))) {
-                    qrow = &r;
-                    break;
-                }
-            } catch (...) {}
+            if (coords_match(rc.x1, rc.x2, std::stod(r.at("x1")), std::stod(r.at("x2")))) {
+                qrow = &r;
+                break;
+            }
         }
 
         // Cerca in chi2_map.tsv
         const std::map<std::string, std::string>* chi2row = nullptr;
         for (const auto& r : chi2map_rows) {
-            try {
-                if (coords_match(rc.x1, rc.x2, std::stod(r.at("x1")), std::stod(r.at("x2")))) {
-                    chi2row = &r;
-                    break;
-                }
-            } catch (...) {}
+            if (coords_match(rc.x1, rc.x2, std::stod(r.at("x1")), std::stod(r.at("x2")))) {
+                chi2row = &r;
+                break;
+            }
         }
 
         // Cerca in dof_map.tsv
         const std::map<std::string, std::string>* dofrow = nullptr;
         for (const auto& r : dofmap_rows) {
-            try {
-                if (coords_match(rc.x1, rc.x2, std::stod(r.at("x1")), std::stod(r.at("x2")))) {
-                    dofrow = &r;
-                    break;
-                }
-            } catch (...) {}
+            if (coords_match(rc.x1, rc.x2, std::stod(r.at("x1")), std::stod(r.at("x2")))) {
+                dofrow = &r;
+                break;
+            }
         }
 
         // Contatori indipendenti per il riepilogo join
@@ -374,7 +388,7 @@ int main(int argc, char** argv) {
         ++n_joined;
     }
 
-    std::cout << "[JOIN] Configurazioni in events.root:   " << n_events_root  << "\n"
+    std::cout << "[JOIN] Configurazioni (dopo filtro lente): " << n_events_root << "\n"
               << "[JOIN] Trovate in q_map.tsv:            " << n_found_q      << "\n"
               << "[JOIN] Trovate in chi2_map.tsv:         " << n_found_chi2   << "\n"
               << "[JOIN] Trovate in dof_map.tsv:          " << n_found_dof    << "\n"
@@ -410,8 +424,7 @@ int main(int argc, char** argv) {
     }
 
     // ── 5. Calcolo Mtot e fronte di Pareto ──────────────────────────────────
-    compute_mtot(configs, cli.wc);
-    compute_pareto_front(configs);
+    compute_pareto_front(configs, cli.wc);
 
     // Fronte ordinato per rank
     std::vector<ConfigData*> front;

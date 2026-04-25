@@ -673,9 +673,9 @@ e una **funzione di merito scalare pesata**.
 **Pipeline interna:**
 1. Join inner di tutti e 4 i file su `(x1, x2)` con tolleranza 1e-3 mm
 2. Filtro hard constraint: `η ≥ eta_frac·η_max`, `|x*-x_det| ≤ focus_tol`, `DoF ≥ dof_min`
-3. Calcolo fronte di Pareto su `(η, Q)`: configurazioni non dominate
-4. Calcolo `Mtot` pesata su tutte le configurazioni filtrate:
+3. Calcolo `Mtot` pesata su tutte le configurazioni filtrate:
    `Mtot = w_eta·(η/η_max) − w_Q·(Q/Q_max) + w_dof·(DoF/DoF_max) − w_M·(M_abs_err/M_abs_err_max)`
+4. Calcolo fronte di Pareto su `(η, Q)`: configurazioni non dominate, ordinate per `Mtot` decrescente
 5. Output grafico e TSV
 
 | Opzione | Default | Descrizione |

@@ -13,7 +13,6 @@ target_link_libraries(pareto_selector
 target_include_directories(pareto_selector
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
             ${ROOT_INCLUDE_DIRS}
-            ${JSON_INCLUDE_DIR}
 )
 target_compile_features(pareto_selector PRIVATE cxx_std_17)
 

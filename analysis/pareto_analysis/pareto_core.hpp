@@ -113,8 +113,8 @@ inline void compute_mtot(std::vector<ConfigData>& configs, const WeightConfig& w
 
 // Marca on_pareto=true per i punti non dominati; poi assegna pareto_rank
 // in ordine decrescente di Mtot (1=best) ai punti sul fronte.
-// Assume che compute_mtot sia già stato chiamato.
-inline void compute_pareto_front(std::vector<ConfigData>& configs) {
+inline void compute_pareto_front(std::vector<ConfigData>& configs, const WeightConfig& wc) {
+    compute_mtot(configs, wc);
     const size_t n = configs.size();
 
     // Determina il fronte: un punto è sul fronte se nessun altro lo domina

@@ -6,6 +6,8 @@
  * T3: apply_focus_filter
  * T4: compute_mtot + pareto_rank ordering
  * T5: coords_match con tolleranza
+ * T6: apply_dof_filter
+ * T7: compute_pareto_front casi degeneri (singolo punto, punti identici)
  *
  * Ritorna 0 se tutti i test passano, 1 altrimenti.
  */
@@ -67,10 +69,8 @@ static void test_T1() {
         make_config(4.0, 4.0, 0.4, 0.6),  // D — B domina D
     };
 
-    // compute_mtot prima (richiesto da compute_pareto_front per pareto_rank)
     WeightConfig wc;
-    compute_mtot(cfgs, wc);
-    compute_pareto_front(cfgs);
+    compute_pareto_front(cfgs, wc);
 
     check(cfgs[0].on_pareto,  "A è sul fronte");
     check(cfgs[1].on_pareto,  "B è sul fronte");
@@ -165,7 +165,7 @@ static void test_T4() {
     near(cfgs[1].Mtot, 0.140, 1e-9, "Mtot P2 = 0.140");
     near(cfgs[2].Mtot, 0.110, 1e-9, "Mtot P3 = 0.110");
 
-    compute_pareto_front(cfgs);
+    compute_pareto_front(cfgs, wc);
 
     // Tutti e 3 sul fronte
     check(cfgs[0].on_pareto, "P1 sul fronte");
@@ -208,6 +208,61 @@ static void test_T5() {
     }
 }
 
+// ── T6: apply_dof_filter ─────────────────────────────────────────────────────
+
+static void test_T6() {
+    std::cout << "\n[T6] apply_dof_filter\n";
+
+    // 5 config con DoF ∈ {0, 10, 20, 30, 40}, dof_min=15 → passano {20,30,40}
+    std::vector<ConfigData> cfgs;
+    for (int d : {0, 10, 20, 30, 40})
+        cfgs.push_back(make_config(0.0, 0.0, 0.9, 1.0, 180.0, (double)d));
+
+    FilterConfig fc;
+    fc.dof_min = 15.0;
+
+    auto result = apply_dof_filter(cfgs, fc);
+
+    check(result.size() == 3, "N sopravvissuti = 3 (DoF ∈ {20,30,40})");
+    if (result.size() == 3) {
+        near(result[0].DoF, 20.0, 1e-9, "result[0].DoF = 20");
+        near(result[1].DoF, 30.0, 1e-9, "result[1].DoF = 30");
+        near(result[2].DoF, 40.0, 1e-9, "result[2].DoF = 40");
+    }
+
+    // Path disabilitato: dof_min=0 → tutti passano
+    fc.dof_min = 0.0;
+    auto all = apply_dof_filter(cfgs, fc);
+    check(all.size() == 5, "dof_min=0: tutti e 5 passano");
+}
+
+// ── T7: compute_pareto_front casi degeneri ────────────────────────────────────
+
+static void test_T7() {
+    std::cout << "\n[T7] compute_pareto_front casi degeneri\n";
+
+    WeightConfig wc;
+
+    // Sub-test A: singolo punto → sul fronte con rank=1
+    {
+        std::vector<ConfigData> cfgs = { make_config(1.0, 1.0, 0.8, 0.5) };
+        compute_pareto_front(cfgs, wc);
+        check(cfgs[0].on_pareto,       "A (singolo punto): on_pareto=true");
+        check(cfgs[0].pareto_rank == 1, "A (singolo punto): pareto_rank=1");
+    }
+
+    // Sub-test B: due punti identici (stessi eta, Q) → nessuno domina l'altro
+    {
+        std::vector<ConfigData> cfgs = {
+            make_config(1.0, 1.0, 0.7, 0.6),
+            make_config(2.0, 2.0, 0.7, 0.6),
+        };
+        compute_pareto_front(cfgs, wc);
+        check(cfgs[0].on_pareto, "B (identici): cfgs[0] sul fronte");
+        check(cfgs[1].on_pareto, "B (identici): cfgs[1] sul fronte");
+    }
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -218,6 +273,8 @@ int main() {
     test_T3();
     test_T4();
     test_T5();
+    test_T6();
+    test_T7();
 
     std::cout << "\nTEST SUMMARY: " << g_n_pass << " PASS, " << g_n_fail << " FAIL\n";
     return (g_n_fail == 0) ? 0 : 1;
