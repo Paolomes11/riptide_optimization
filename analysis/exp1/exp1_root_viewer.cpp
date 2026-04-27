@@ -21,6 +21,7 @@
 
 #include <TCanvas.h>
 #include <TFile.h>
+#include <TGaxis.h>
 #include <TH2D.h>
 #include <TLatex.h>
 #include <TStyle.h>
@@ -67,12 +68,21 @@ int main(int argc, char** argv) {
     return 1;
 
   gStyle->SetOptStat(0);
+  gStyle->SetOptTitle(0);
   gStyle->SetPalette(kViridis);
+  gStyle->SetGridColor(kGray + 1);
+  gStyle->SetGridStyle(3);
+  gStyle->SetGridWidth(1);
+  TGaxis::SetMaxDigits(4);
 
   // 1. Stacked Means
   TH2D* hg  = (TH2D*)f->Get("hg_mean");
   TH2D* hb  = (TH2D*)f->Get("hb_mean");
   TH2D* hbg = (TH2D*)f->Get("hbg_mean");
+
+  hg->SetTitle("");
+  hb->SetTitle("");
+  hbg->SetTitle("");
 
   if (hg && hb && hbg) {
     TCanvas c("c_stacked", "Stacked", 1800, 600);
@@ -86,13 +96,24 @@ int main(int argc, char** argv) {
 
     auto draw = [&](int i, TH2D* h, const char* t) {
       c.cd(i);
-      gPad->SetRightMargin(0.15);
+      gPad->SetLeftMargin(0.14);
+      gPad->SetRightMargin(0.16);
+      gPad->SetTopMargin(0.10);
+      gPad->SetGridx();
+      gPad->SetGridy();
       h->SetMinimum(vmin);
       h->SetMaximum(vmax);
+      h->GetZaxis()->SetTitle("ADU");
+      h->GetZaxis()->CenterTitle(kTRUE);
+      h->GetZaxis()->SetTitleOffset(1.6);
+      h->GetZaxis()->SetMaxDigits(2);
       h->Draw("COLZ");
       TLatex l;
       l.SetNDC();
-      l.DrawLatex(0.2, 0.92, t);
+      l.SetTextFont(42);
+      l.SetTextSize(0.055);
+      l.SetTextAlign(22);
+      l.DrawLatex(0.50, 0.935, t);
     };
     draw(1, hg, "Good");
     draw(2, hb, "Bad");
@@ -106,21 +127,31 @@ int main(int argc, char** argv) {
   if (hgd && hbd) {
     TCanvas c("c_diff", "Difference", 1200, 600);
     c.Divide(2, 1);
-    gStyle->SetPalette(kCool);
+    gStyle->SetPalette(kViridis);
     double vmax =
         std::max(get_th2d_percentile(hgd, z_max_perc), get_th2d_percentile(hbd, z_max_perc));
     auto draw = [&](int i, TH2D* h, const char* t) {
       c.cd(i);
-      gPad->SetRightMargin(0.15);
-      h->SetMinimum(-vmax);
+      gPad->SetLeftMargin(0.14);
+      gPad->SetRightMargin(0.16);
+      gPad->SetTopMargin(0.10);
+      gPad->SetGridx();
+      gPad->SetGridy();
+      h->SetMinimum(0.0);
       h->SetMaximum(vmax);
+      h->GetZaxis()->SetTitle("ADU  (#times10^{4})");
+      h->GetZaxis()->CenterTitle(kTRUE);
+      h->GetZaxis()->SetTitleOffset(1.6);
       h->Draw("COLZ");
       TLatex l;
       l.SetNDC();
-      l.DrawLatex(0.2, 0.92, t);
+      l.SetTextFont(42);
+      l.SetTextSize(0.055);
+      l.SetTextAlign(22);
+      l.DrawLatex(0.50, 0.935, t);
     };
-    draw(1, hgd, "Good - Bg");
-    draw(2, hbd, "Bad - Bg");
+    draw(1, hgd, "Good #minus Background");
+    draw(2, hbd, "Bad #minus Background");
     c.Print("output/exp1/diff_maps.png");
   }
 

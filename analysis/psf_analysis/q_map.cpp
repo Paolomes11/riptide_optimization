@@ -252,7 +252,7 @@ static PadLayout make_canvas(bool log_z) {
   pl.pad_cb   = new TPad("pad_cb", "", 0.88, 0.12, 0.96, 1.00);
   pl.pad_info = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.12);
 
-  pl.pad_plot->SetLeftMargin(0.13);
+  pl.pad_plot->SetLeftMargin(0.10);
   pl.pad_plot->SetRightMargin(0.015);
   pl.pad_plot->SetTopMargin(0.11);
   pl.pad_plot->SetBottomMargin(0.13);
@@ -331,7 +331,8 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale
   cb_axis->SetTitle(title.c_str());
   cb_axis->SetTitleFont(42);
   cb_axis->SetTitleSize(0.20);
-  cb_axis->SetTitleOffset(0.55);
+  cb_axis->CenterTitle(kTRUE);
+  cb_axis->SetTitleOffset(1.8);
   cb_axis->Draw();
 }
 
@@ -658,7 +659,19 @@ int main(int argc, char** argv) {
 
     pl.pad_plot->cd();
     h_cov.Draw("COL");
-    h_inv.Draw("BOX same");
+    for (int iy = 1; iy <= h_inv.GetNbinsY(); ++iy) {
+      for (int ix = 1; ix <= h_inv.GetNbinsX(); ++ix) {
+        if (h_inv.GetBinContent(ix, iy) > 0.5) {
+          TBox* b = new TBox(h_inv.GetXaxis()->GetBinLowEdge(ix),
+                             h_inv.GetYaxis()->GetBinLowEdge(iy),
+                             h_inv.GetXaxis()->GetBinUpEdge(ix),
+                             h_inv.GetYaxis()->GetBinUpEdge(iy));
+          b->SetFillColor(invalid_color);
+          b->SetLineColor(invalid_color);
+          b->Draw("same");
+        }
+      }
+    }
 
     // Marker stella sul massimo
     {
@@ -863,7 +876,19 @@ int main(int argc, char** argv) {
 
   pl.pad_plot->cd();
   h_Q.Draw("COL");
-  h_inv.Draw("BOX same");
+  for (int iy = 1; iy <= h_inv.GetNbinsY(); ++iy) {
+    for (int ix = 1; ix <= h_inv.GetNbinsX(); ++ix) {
+      if (h_inv.GetBinContent(ix, iy) > 0.5) {
+        TBox* b = new TBox(h_inv.GetXaxis()->GetBinLowEdge(ix),
+                           h_inv.GetYaxis()->GetBinLowEdge(iy),
+                           h_inv.GetXaxis()->GetBinUpEdge(ix),
+                           h_inv.GetYaxis()->GetBinUpEdge(iy));
+        b->SetFillColor(invalid_color);
+        b->SetLineColor(invalid_color);
+        b->Draw("same");
+      }
+    }
+  }
 
   // Marker stella sul minimo
   {
@@ -879,22 +904,6 @@ int main(int argc, char** argv) {
     lbl.SetTextAlign(12);
     lbl.DrawLatex(it_best->x1, it_best->x2,
                   (" #bf{min} (" + fmt(it_best->x1, 1) + ", " + fmt(it_best->x2, 1) + ")").c_str());
-  }
-
-  // Titolo
-  {
-    TLatex title;
-    title.SetNDC();
-    title.SetTextFont(42);
-    title.SetTextSize(0.046);
-    title.SetTextAlign(22);
-    title.SetTextColor(kBlack);
-    std::string z_lbl;
-    if (cli.dist_to_target)
-      z_lbl = "|Q-target| = |#LT#chi^{2}_{red}#GT - Q_{target}|";
-    else
-      z_lbl = "Q = #LT#chi^{2}_{red}#GT";
-    title.DrawLatex(0.535, 0.953, ("Mappa della funzione di qualit#grave{a}  " + z_lbl).c_str());
   }
 
   pl.pad_plot->RedrawAxis();

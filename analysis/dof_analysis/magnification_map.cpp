@@ -3,6 +3,7 @@
 #include <TCanvas.h>
 #include <TColor.h>
 #include <TH2D.h>
+#include <TLatex.h>
 #include <TMarker.h>
 #include <TStyle.h>
 
@@ -67,9 +68,13 @@ static void set_root_style() {
   gStyle->SetTitleFont(42, "");
   gStyle->SetStatFont(42);
   gStyle->SetOptStat(0);
+  gStyle->SetOptTitle(0);
   gStyle->SetPadTickX(1);
   gStyle->SetPadTickY(1);
   gStyle->SetNumberContours(255);
+  gStyle->SetGridColor(kGray + 1);
+  gStyle->SetGridStyle(3);
+  gStyle->SetGridWidth(1);
 }
 
 static std::vector<std::string> split_tab(const std::string& s) {
@@ -256,40 +261,62 @@ int main(int argc, char** argv) {
   h_M_error.SetMinimum(-max_abs_err);
   h_M_error.SetMaximum(+max_abs_err);
 
-  auto save_diverging = [&](TH2D& h, const std::string& name) {
+  auto save_diverging = [&](TH2D& h, const std::string& name, const std::string& title) {
     set_diverging_palette_red_white_green();
     TCanvas c(("c_" + name).c_str(), name.c_str(), 1100, 900);
-    c.SetLeftMargin(0.16);
+    c.SetLeftMargin(0.10);
     c.SetBottomMargin(0.14);
     c.SetRightMargin(0.16);
-    c.SetTopMargin(0.08);
+    c.SetTopMargin(0.10);
+    c.SetGridx();
+    c.SetGridy();
+    h.GetZaxis()->CenterTitle(kTRUE);
+    h.GetZaxis()->SetTitleOffset(1.6);
     h.Draw("COLZ");
+    c.Update();
     TMarker m(best_xy.first, best_xy.second, 29);
     m.SetMarkerSize(2.0);
     m.SetMarkerColor(kBlack);
     m.Draw("same");
+    TLatex tit;
+    tit.SetNDC();
+    tit.SetTextFont(42);
+    tit.SetTextSize(0.042);
+    tit.SetTextAlign(22);
+    tit.DrawLatex(0.50, 0.955, title.c_str());
     std::string out = (std::filesystem::path(cli.output_dir) / (name + ".png")).string();
     c.SaveAs(out.c_str());
   };
 
-  auto save_viridis = [&](TH2D& h, const std::string& name) {
+  auto save_viridis = [&](TH2D& h, const std::string& name, const std::string& title) {
     gStyle->SetPalette(kViridis);
     TCanvas c(("c_" + name).c_str(), name.c_str(), 1100, 900);
-    c.SetLeftMargin(0.16);
+    c.SetLeftMargin(0.10);
     c.SetBottomMargin(0.14);
     c.SetRightMargin(0.16);
-    c.SetTopMargin(0.08);
+    c.SetTopMargin(0.10);
+    c.SetGridx();
+    c.SetGridy();
+    h.GetZaxis()->CenterTitle(kTRUE);
+    h.GetZaxis()->SetTitleOffset(1.6);
     h.Draw("COLZ");
+    c.Update();
     TMarker m(best_xy.first, best_xy.second, 29);
     m.SetMarkerSize(2.0);
     m.SetMarkerColor(kBlack);
     m.Draw("same");
+    TLatex tit;
+    tit.SetNDC();
+    tit.SetTextFont(42);
+    tit.SetTextSize(0.042);
+    tit.SetTextAlign(22);
+    tit.DrawLatex(0.50, 0.955, title.c_str());
     std::string out = (std::filesystem::path(cli.output_dir) / (name + ".png")).string();
     c.SaveAs(out.c_str());
   };
 
-  save_diverging(h_M_error, "magnification_M_error_map");
-  save_viridis(h_M_abs_err, "magnification_M_abs_error_map");
+  save_diverging(h_M_error,   "magnification_M_error_map",     "Errore di magnificazione  M#minusM_{tgt}");
+  save_viridis(h_M_abs_err, "magnification_M_abs_error_map", "Errore assoluto magnificazione  |M#minusM_{tgt}|");
 
   return 0;
 }

@@ -94,6 +94,22 @@ static void set_root_style() {
   gStyle->SetPadTickY(1);
 }
 
+static std::optional<double> quadratic_vertex_from_three_points(double x0, double y0, double x1,
+                                                                double y1, double x2, double y2) {
+  double d0 = (x0 - x1) * (x0 - x2);
+  double d1 = (x1 - x0) * (x1 - x2);
+  double d2 = (x2 - x0) * (x2 - x1);
+  if (std::abs(d0) < 1e-12 || std::abs(d1) < 1e-12 || std::abs(d2) < 1e-12) {
+    return std::nullopt;
+  }
+  double a = (y0 / d0) + (y1 / d1) + (y2 / d2);
+  double b = (-y0 * (x1 + x2) / d0) + (-y1 * (x0 + x2) / d1) + (-y2 * (x0 + x1) / d2);
+  if (!std::isfinite(a) || !std::isfinite(b) || std::abs(a) < 1e-18) {
+    return std::nullopt;
+  }
+  return -b / (2.0 * a);
+}
+
 static double weighted_std(const std::vector<double>& x, const std::vector<double>& w) {
   double sum_w = 0.0;
   double sum_x = 0.0;
@@ -348,6 +364,8 @@ int main(int argc, char** argv) {
       f_cfg >> cfg_json;
     }
   }
+  double source_halfy       = cfg_json.value("dof_source_halfy", 5.0);
+  double sigma_y_src_theory = source_halfy / std::sqrt(3.0);
 
   TFile file(cli.input_file.c_str(), "READ");
   if (!file.IsOpen()) {
@@ -488,6 +506,16 @@ int main(int argc, char** argv) {
   double x_focus     = x_scan[i_min];
   double sigma_z_min = sigma_z[i_min];
 
+  if (i_min == 0 && x_scan.size() >= 3) {
+    double xv0 = x_scan[0], xv1 = x_scan[1], xv2 = x_scan[2];
+    auto xv = quadratic_vertex_from_three_points(xv0, sigma_z[0] * sigma_z[0],
+                                                 xv1, sigma_z[1] * sigma_z[1],
+                                                 xv2, sigma_z[2] * sigma_z[2]);
+    if (xv.has_value() && std::isfinite(*xv)) {
+      x_focus = *xv;
+    }
+  }
+
   std::vector<double> y_focus(y0.size(), 0.0);
   std::vector<double> z_focus(z0.size(), 0.0);
   double dx_focus = x_focus - best_x_virtual;
@@ -527,6 +555,16 @@ int main(int argc, char** argv) {
     x_focus     = x_scan[i_min];
     sigma_z_min = sigma_z[i_min];
 
+    if (i_min == 0 && x_scan.size() >= 3) {
+      double xv0 = x_scan[0], xv1 = x_scan[1], xv2 = x_scan[2];
+      auto xv = quadratic_vertex_from_three_points(xv0, sigma_z[0] * sigma_z[0],
+                                                   xv1, sigma_z[1] * sigma_z[1],
+                                                   xv2, sigma_z[2] * sigma_z[2]);
+      if (xv.has_value() && std::isfinite(*xv)) {
+        x_focus = *xv;
+      }
+    }
+
     y_focus.assign(y0.size(), 0.0);
     z_focus.assign(z0.size(), 0.0);
     dx_focus = x_focus - best_x_virtual;
@@ -551,9 +589,9 @@ int main(int argc, char** argv) {
   double x_hi = x_scan[static_cast<size_t>(i_hi)];
   double dof  = x_hi - x_lo;
 
-  double sigma_y_src = weighted_std(ysrc, w);
-  double sigma_y_det = weighted_std(y_focus, w);
-  double M           = (sigma_y_src > 0.0) ? (sigma_y_det / sigma_y_src) : 0.0;
+  double sigma_y_src_sampled = weighted_std(ysrc, w);
+  double sigma_y_det         = weighted_std(y_focus, w);
+  double M                   = sigma_y_src_theory > 0.0 ? sigma_y_det / sigma_y_src_theory : 0.0;
 
   double p10               = weighted_percentile(y_focus, w, 0.10);
   double p90               = weighted_percentile(y_focus, w, 0.90);
@@ -572,7 +610,8 @@ int main(int argc, char** argv) {
   std::cout << "  sigma_z(x*) = " << sigma_z_min << " mm\n";
   std::cout << "  DoF(k=" << k_threshold << ") = " << dof << " mm  (" << x_lo << " .. " << x_hi
             << ")\n";
-  std::cout << "  sigma_y_src = " << sigma_y_src << " mm\n";
+  std::cout << "  sigma_y_src (campionata) = " << sigma_y_src_sampled << " mm\n";
+  std::cout << "  sigma_y_src (teorica)    = " << sigma_y_src_theory << " mm\n";
   std::cout << "  sigma_y_det(x*) = " << sigma_y_det << " mm\n";
   std::cout << "  M(x*) = " << M << "\n";
   std::cout << "  stripe_width(P90-P10) = " << stripe_width << " mm\n";
@@ -737,8 +776,7 @@ int main(int argc, char** argv) {
   }
 
   {
-    double sigma_y_src_local = weighted_std(ysrc, w);
-    double M_focus_local     = (sigma_y_src_local > 0.0) ? (sigma_y_det / sigma_y_src_local) : 0.0;
+    double M_focus_local = sigma_y_src_theory > 0.0 ? sigma_y_det / sigma_y_src_theory : 0.0;
 
     std::vector<double> sigma_y_over_M(x_scan.size(), 0.0);
     std::vector<double> y_tmp(y0.size(), 0.0);

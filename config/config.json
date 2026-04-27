@@ -1,6 +1,6 @@
 {
   "x_min": 33.0,
-  "x_max": 171.0,
+  "x_max": 570.0,
   "dx": 3.0,
   "r1": 38.6,
   "h1": 12.5,
@@ -19,11 +19,10 @@
   "source_y_min": 0.0,
   "source_y_max": 14.14,
   "source_dy": 0.5,
-  "dof_x_virtual_mm": 180.0,
   "dof_x_virtual_offset": 30.0,
   "dof_n_photons": 100000,
   "dof_x_scan_min": 180.0,
-  "dof_x_scan_max": 400.0,
+  "dof_x_scan_max": 700.0,
   "dof_x_scan_step": 0.5,
   "dof_k_threshold": 1.414,
   "dof_pixel_size": 8.0,
@@ -33,5 +32,6 @@
   "psf_dof_x_virtual_mm": 180.0,
   "psf_dof_save_hits": false,
   "psf_dof_n_photons": 1000,
-  "m_target": 0.1333
+  "m_target": 0.1333,
+  "lens_gap_margin": 1.0
 }

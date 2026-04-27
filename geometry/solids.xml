@@ -1,4 +1,4 @@
-<box name="world" x="1000" y="1000" z="1000" lunit="mm" />
+<box name="world" x="1600" y="1000" z="1000" lunit="mm" />
 
 <ellipsoid name="lens75_x_ellipsoid" ax="38.6" by="38.6" cz="38.6" zcut1="-38.6" zcut2="-26.1"
   lunit="mm" />

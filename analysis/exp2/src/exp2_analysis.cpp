@@ -6,6 +6,7 @@
 
 #include <TAxis.h>
 #include <TBox.h>
+#include <TGaxis.h>
 #include <TCanvas.h>
 #include <TColor.h>
 #include <TEllipse.h>
@@ -65,6 +66,10 @@ static void apply_riptide_style() {
   gStyle->SetNdivisions(505, "X");
   gStyle->SetNdivisions(505, "Y");
   gStyle->SetNumberContours(255);
+  gStyle->SetGridColor(kGray + 1);
+  gStyle->SetGridStyle(3);
+  gStyle->SetGridWidth(1);
+  TGaxis::SetMaxDigits(4);
 }
 
 static double vector_percentile(std::vector<double> vals, double p, bool ignore_zeros) {
@@ -284,6 +289,9 @@ static void produce_blob_image(const riptide::exp2::ConfigResult& result,
   hc->GetYaxis()->SetTitle("y [px]");
   hc->GetXaxis()->CenterTitle(true);
   hc->GetYaxis()->CenterTitle(true);
+  hc->GetZaxis()->SetTitle("ADU");
+  hc->GetZaxis()->CenterTitle(kTRUE);
+  hc->GetZaxis()->SetTitleOffset(1.6);
 
   const double vmax = get_th2d_percentile(hc, cfg.z_max_percentile);
   hc->SetMinimum(0.0);
@@ -318,12 +326,19 @@ static void produce_blob_image(const riptide::exp2::ConfigResult& result,
     tline.Draw("SAME");
   }
 
+  TLatex main_t;
+  main_t.SetNDC();
+  main_t.SetTextFont(42);
+  main_t.SetTextSize(0.042f);
+  main_t.SetTextAlign(22);
+  main_t.DrawLatex(0.50, 0.972f, ("Profilo 2D del blob  [" + lbl + "]").c_str());
+
   TLatex lbl_txt;
   lbl_txt.SetNDC();
   lbl_txt.SetTextFont(42);
-  lbl_txt.SetTextSize(0.036f);
+  lbl_txt.SetTextSize(0.034f);
   lbl_txt.SetTextAlign(11);
-  lbl_txt.DrawLatex(0.18, 0.93,
+  lbl_txt.DrawLatex(0.18, 0.90,
                     ("#sigma_{minor}=" + fmtd(result.trace.sigma_minor, 1)
                      + "  #sigma_{major}=" + fmtd(result.trace.sigma_major, 1)
                      + " px  #theta=" + fmtd(result.trace.angle_deg, 1) + "#circ")
@@ -595,16 +610,25 @@ void produce_config_output(const ConfigResult& result, const OutputConfig& cfg) 
   {
     TCanvas c(("c_centroid_" + lbl).c_str(), ("Centroid " + lbl).c_str(), 900, 750);
 
+    TLatex c_title;
+    c_title.SetNDC();
+    c_title.SetTextFont(42);
+    c_title.SetTextSize(0.038f);
+    c_title.SetTextAlign(22);
+    c_title.DrawLatex(0.50f, 0.973f, ("Centroide della traccia  [" + lbl + "]").c_str());
+
     auto* pad_top = new TPad(("pad_top_" + lbl).c_str(), "", 0.0, 0.30, 1.0, 1.0);
     auto* pad_bot = new TPad(("pad_bot_" + lbl).c_str(), "", 0.0, 0.00, 1.0, 0.30);
     pad_top->SetBottomMargin(0.02f);
     pad_bot->SetTopMargin(0.02f);
     pad_bot->SetBottomMargin(0.35f);
-    pad_top->SetLeftMargin(0.16f);
+    pad_top->SetLeftMargin(0.12f);
     pad_top->SetRightMargin(0.06f);
-    pad_top->SetTopMargin(0.10f);
-    pad_bot->SetLeftMargin(0.16f);
+    pad_top->SetTopMargin(0.06f);
+    pad_bot->SetLeftMargin(0.12f);
     pad_bot->SetRightMargin(0.06f);
+    pad_top->SetGridx();
+    pad_top->SetGridy();
 
     pad_top->Draw();
     pad_bot->Draw();
@@ -639,7 +663,10 @@ void produce_config_output(const ConfigResult& result, const OutputConfig& cfg) 
     g->SetMarkerSize(0.9f);
     g->SetLineWidth(2);
     g->GetXaxis()->SetLabelSize(0.0);
+    g->GetXaxis()->SetTitleSize(0.0);
     g->GetYaxis()->SetTitle("centroide [px]");
+    g->GetYaxis()->SetTitleSize(0.06f);
+    g->GetYaxis()->SetTitleOffset(0.9f);
     g->Draw("AP");
 
     const double tmin = t.empty() ? 0.0 : *std::min_element(t.begin(), t.end());
@@ -669,10 +696,9 @@ void produce_config_output(const ConfigResult& result, const OutputConfig& cfg) 
     txt.SetTextFont(42);
     txt.SetTextSize(0.045f);
     txt.SetTextAlign(13);
-    txt.DrawLatex(0.18, 0.90,
+    txt.DrawLatex(0.18, 0.82,
                   ("#chi^{2}/ndof = " + fmtd(result.centroid_fit.chi2_ndof, 3)
-                   + " (ndof = " + std::to_string(result.centroid_fit.ndof) + ", converged = "
-                   + std::string(result.centroid_fit.converged ? "true" : "false") + ")")
+                   + "  (ndof = " + std::to_string(result.centroid_fit.ndof) + ")")
                       .c_str());
 
     pad_bot->cd();
@@ -682,8 +708,12 @@ void produce_config_output(const ConfigResult& result, const OutputConfig& cfg) 
     gp->SetMarkerStyle(20);
     gp->SetMarkerSize(0.7f);
     gp->SetLineWidth(2);
-    gp->GetXaxis()->SetTitle("t [px]");
-    gp->GetYaxis()->SetTitle("pull");
+    gp->GetXaxis()->SetTitle("t  [px]");
+    gp->GetXaxis()->SetTitleSize(0.10f);
+    gp->GetXaxis()->SetTitleOffset(1.1f);
+    gp->GetYaxis()->SetTitle("pull  [a.d.]");
+    gp->GetYaxis()->SetTitleSize(0.10f);
+    gp->GetYaxis()->SetTitleOffset(0.55f);
     gp->GetYaxis()->SetNdivisions(505);
     gp->Draw("AP");
 

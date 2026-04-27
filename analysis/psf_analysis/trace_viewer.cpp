@@ -369,7 +369,7 @@ int main(int argc, char** argv) {
   TPad* pad_info = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.12);
 
   // Bordi e margini del pad principale
-  pad_plot->SetLeftMargin(0.13);
+  pad_plot->SetLeftMargin(0.10);
   pad_plot->SetRightMargin(0.015);
   pad_plot->SetTopMargin(0.11);
   pad_plot->SetBottomMargin(0.13);
@@ -462,13 +462,25 @@ int main(int argc, char** argv) {
       double y_end   = py_max;
       double z_start = fit_res.a * y_start + fit_res.b;
       double z_end   = fit_res.a * y_end + fit_res.b;
-      l_fit          = new TLine(y_start, z_start, y_end, z_end);
+      if (std::abs(fit_res.a) > 1e-15) {
+        if (z_start < pz_min) { y_start = (pz_min - fit_res.b) / fit_res.a; z_start = pz_min; }
+        if (z_start > pz_max) { y_start = (pz_max - fit_res.b) / fit_res.a; z_start = pz_max; }
+        if (z_end   < pz_min) { y_end   = (pz_min - fit_res.b) / fit_res.a; z_end   = pz_min; }
+        if (z_end   > pz_max) { y_end   = (pz_max - fit_res.b) / fit_res.a; z_end   = pz_max; }
+      }
+      l_fit = new TLine(y_start, z_start, y_end, z_end);
     } else {
       double z_start = pz_min;
       double z_end   = pz_max;
       double y_start = fit_res.a * z_start + fit_res.b;
       double y_end   = fit_res.a * z_end + fit_res.b;
-      l_fit          = new TLine(y_start, z_start, y_end, z_end);
+      if (std::abs(fit_res.a) > 1e-15) {
+        if (y_start < py_min) { z_start = (py_min - fit_res.b) / fit_res.a; y_start = py_min; }
+        if (y_start > py_max) { z_start = (py_max - fit_res.b) / fit_res.a; y_start = py_max; }
+        if (y_end   < py_min) { z_end   = (py_min - fit_res.b) / fit_res.a; y_end   = py_min; }
+        if (y_end   > py_max) { z_end   = (py_max - fit_res.b) / fit_res.a; y_end   = py_max; }
+      }
+      l_fit = new TLine(y_start, z_start, y_end, z_end);
     }
     l_fit->SetLineColor(kRed + 1);
     l_fit->SetLineStyle(2);
@@ -563,7 +575,8 @@ int main(int argc, char** argv) {
   cb_axis->SetTitle("t  [mm]");
   cb_axis->SetTitleFont(42);
   cb_axis->SetTitleSize(0.20);
-  cb_axis->SetTitleOffset(0.55);
+  cb_axis->CenterTitle(kTRUE);
+  cb_axis->SetTitleOffset(1.8);
   cb_axis->Draw();
 
   //  Pad info: riepilogo parametri fisici in due colonne

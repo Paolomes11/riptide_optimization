@@ -222,7 +222,8 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, const std::str
     ax->SetTitle(title.c_str());
     ax->SetTitleFont(42);
     ax->SetTitleSize(0.20);
-    ax->SetTitleOffset(0.55);
+    ax->CenterTitle(kTRUE);
+    ax->SetTitleOffset(1.8);
     ax->Draw();
 }
 
@@ -252,7 +253,7 @@ int main(int argc, char** argv) {
     double x1_val = 0.0, x2_val = 0.0;
     int  cfg_id        = 0;
     int  n_photons_val = 0;
-    int  n_hits_val    = 0;
+    double n_hits_val  = 0.0;
     char l1_buf[4096]  = {};
     char l2_buf[4096]  = {};
 
@@ -347,21 +348,7 @@ int main(int argc, char** argv) {
         if (chi2row) ++n_found_chi2;
         if (dofrow)  ++n_found_dof;
 
-        if (!qrow) {
-            std::cerr << "[WARN] (x1=" << rc.x1 << ", x2=" << rc.x2
-                      << "): non trovata in " << cli.qmap_path << "\n";
-            continue;
-        }
-        if (!chi2row) {
-            std::cerr << "[WARN] (x1=" << rc.x1 << ", x2=" << rc.x2
-                      << "): non trovata in " << cli.chi2map_path << "\n";
-            continue;
-        }
-        if (!dofrow) {
-            std::cerr << "[WARN] (x1=" << rc.x1 << ", x2=" << rc.x2
-                      << "): non trovata in " << cli.dofmap_path << "\n";
-            continue;
-        }
+        if (!qrow || !chi2row || !dofrow) continue;
 
         // Validità: salta configurazioni marcate come non valide
         try { if (qrow->at("config_valid") == "0") continue; } catch (...) {}
@@ -393,6 +380,11 @@ int main(int argc, char** argv) {
               << "[JOIN] Trovate in chi2_map.tsv:         " << n_found_chi2   << "\n"
               << "[JOIN] Trovate in dof_map.tsv:          " << n_found_dof    << "\n"
               << "[JOIN] Configurazioni complete (join):  " << n_joined       << "\n\n";
+
+    if (n_events_root - n_found_q > 0)
+        std::cerr << "[WARN] " << (n_events_root - n_found_q)
+                  << " configurazioni da events.root assenti in " << cli.qmap_path
+                  << " (griglia PSF incompleta — ri-eseguire lens scan con lens_gap_margin aggiornato)\n\n";
 
     if (configs.empty()) {
         std::cerr << "[ERRORE] Join vuoto: nessuna configurazione completa trovata.\n";
@@ -495,9 +487,9 @@ int main(int argc, char** argv) {
     TPad* pad_cb  = new TPad("pad_cb",  "", 0.88, 0.30, 0.96, 1.0);
     TPad* pad_bot = new TPad("pad_bot", "", 0.00, 0.00, 1.00, 0.30);
 
-    pad_top->SetLeftMargin(0.16);
+    pad_top->SetLeftMargin(0.12);
     pad_top->SetRightMargin(0.05);
-    pad_top->SetTopMargin(0.08);
+    pad_top->SetTopMargin(0.12);
     pad_top->SetBottomMargin(0.14);
     pad_top->SetGridx();
     pad_top->SetGridy();
@@ -519,6 +511,14 @@ int main(int argc, char** argv) {
 
     // ── Pad superiore: scatter plot ───────────────────────────────────────────
     pad_top->cd();
+    {
+      TLatex main_t;
+      main_t.SetNDC();
+      main_t.SetTextFont(42);
+      main_t.SetTextSize(0.040);
+      main_t.SetTextAlign(22);
+      main_t.DrawLatex(0.50, 0.96, "Analisi del Fronte di Pareto");
+    }
 
     // Calcola range assi
     double xmin_p = 1e9, xmax_p = -1e9, ymin_p = 1e9, ymax_p = -1e9;
@@ -542,8 +542,8 @@ int main(int argc, char** argv) {
 
     // Frame vuoto per assi
     TH2D* frame = new TH2D("frame", "", 100, xlo, xhi, 100, ylo, yhi);
-    frame->GetXaxis()->SetTitle("#eta / #eta_{max}");
-    frame->GetYaxis()->SetTitle("Q_{max}/Q");
+    frame->GetXaxis()->SetTitle("#eta/#eta_{max}  [a.d.]");
+    frame->GetYaxis()->SetTitle("Q_{max}/Q  [a.d.]");
     frame->GetXaxis()->SetTitleOffset(1.2);
     frame->GetYaxis()->SetTitleOffset(1.5);
     frame->Draw("AXIS");
@@ -644,7 +644,7 @@ int main(int argc, char** argv) {
     leg->Draw();
 
     // ── Color bar |M−1| ───────────────────────────────────────────────────────
-    draw_colorbar(pad_cb, 0.0, M_diff_max, "|M#minus{}M_{tgt}|");
+    draw_colorbar(pad_cb, 0.0, M_diff_max, "|M#minus{}M_{tgt}|  [a.d.]");
     pad_top->cd();
 
     // ── Pad inferiore: tabella top-5 ──────────────────────────────────────────
@@ -654,16 +654,16 @@ int main(int argc, char** argv) {
     table->SetFillColor(0);
     table->SetBorderSize(0);
     table->SetTextFont(42);
-    table->SetTextSize(0.065);
+    table->SetTextSize(0.085);
     table->SetTextAlign(12);
-    table->AddText("Top-5 configurazioni sul fronte di Pareto (per M_{tot}):");
+    table->AddText("Top-3 configurazioni sul fronte di Pareto (per M_{tot}):");
 
     int shown = 0;
     for (const auto* p : front) {
-        if (shown >= 5) break;
+        if (shown >= 3) break;
         table->AddText(Form(
-            "#%d  x1=%5.1f  x2=%6.1f  |  #eta=%.3f  Q=%.3f  #chi^{2}=%.2f"
-            "  DoF=%.1f  M=%.3f  #DeltaM=%.4f  |  Mtot=%.3f",
+            "#%d  x1=%5.1f mm  x2=%6.1f mm  |  #eta=%.3f [a.d.]  Q=%.3f [a.d.]  #chi^{2}=%.2f"
+            "  DoF=%.1f mm  M=%.3f  #DeltaM=%.4f  |  Mtot=%.3f",
             p->pareto_rank, p->x1, p->x2,
             p->eta, p->Q, p->chi2, p->DoF, p->M, p->M_abs_err, p->Mtot));
         ++shown;

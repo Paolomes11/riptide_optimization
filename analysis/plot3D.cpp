@@ -229,6 +229,9 @@ int main(int argc, char** argv) {
     h->SetMaximum(p_high);
     h->SetFillColorAlpha(kAzure, 0.35);
     h->Draw("BOX2 Z");
+    h->GetZaxis()->SetTitle("Efficienza [a.d.]");
+    h->GetZaxis()->CenterTitle(kTRUE);
+    h->GetZaxis()->SetTitleOffset(1.6);
     gPad->Update();
 
     // --- AGGIUNTA GRIGLIA DI SEPARAZIONE (GRID CAGE) ---

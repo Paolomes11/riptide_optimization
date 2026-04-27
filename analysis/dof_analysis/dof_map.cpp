@@ -2,6 +2,7 @@
 
 #include <TBox.h>
 #include <TCanvas.h>
+#include <TLatex.h>
 #include <TColor.h>
 #include <TFile.h>
 #include <TH2D.h>
@@ -91,9 +92,13 @@ static void set_root_style() {
   gStyle->SetTitleFont(42, "");
   gStyle->SetStatFont(42);
   gStyle->SetOptStat(0);
+  gStyle->SetOptTitle(0);
   gStyle->SetPadTickX(1);
   gStyle->SetPadTickY(1);
   gStyle->SetNumberContours(255);
+  gStyle->SetGridColor(kGray + 1);
+  gStyle->SetGridStyle(3);
+  gStyle->SetGridWidth(1);
 }
 
 static double weighted_std(const std::vector<double>& x, const std::vector<double>& w) {
@@ -304,13 +309,15 @@ struct ResultRow {
   int within_photocathode = 0;
   double n_rays           = 0.0;
   double n_rays_core      = 0.0;
+  bool focus_before_lens2 = false;
 };
 
 static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std::vector<double>& y0,
                                 const std::vector<double>& z0, const std::vector<double>& dy,
                                 const std::vector<double>& dz, const std::vector<double>& w,
                                 const std::vector<double>& ysrc, const std::vector<double>& x_scan,
-                                double k_threshold, double core_fraction, double m_target) {
+                                double k_threshold, double core_fraction, double m_target,
+                                double sigma_y_src_theory) {
   ResultRow out;
   out.config_id = cfg.config_id;
   out.x1        = cfg.x1;
@@ -350,6 +357,7 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
       out.x_focus = *xv;
     }
   }
+  out.focus_before_lens2 = (out.x_focus < cfg.x2);
 
   double thr = k_threshold * sigma_z_min;
   int i_lo   = static_cast<int>(i_min);
@@ -419,6 +427,7 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
           out.x_focus = *xv;
         }
       }
+      out.focus_before_lens2 = (out.x_focus < cfg.x2);
 
       double thr2 = k_threshold * sigma_z_min;
       int i_lo2   = static_cast<int>(i_min2);
@@ -444,9 +453,8 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
     z_focus[i] = z0_f[i] + dz_f[i] * dx_focus;
   }
 
-  double sigma_y_src = weighted_std(ysrc_f, w_f);
   double sigma_y_det = weighted_std(y_focus, w_f);
-  out.M              = (sigma_y_src > 0.0) ? (sigma_y_det / sigma_y_src) : 0.0;
+  out.M              = (sigma_y_src_theory > 0.0) ? (sigma_y_det / sigma_y_src_theory) : 0.0;
   out.M_abs_err      = std::abs(out.M - m_target);
 
   double p10              = weighted_percentile(y_focus, w_f, 0.10);
@@ -488,6 +496,8 @@ int main(int argc, char** argv) {
   double k_threshold   = cli.k_threshold.value_or(config.value("dof_k_threshold", std::sqrt(2.0)));
   double core_fraction = cli.core_fraction.value_or(config.value("dof_core_fraction", 1.0));
   double m_target      = cli.m_target.value_or(config.value("m_target", 1.0 / 7.5));
+  double source_halfy       = config.value("dof_source_halfy", 5.0);
+  double sigma_y_src_theory = source_halfy / std::sqrt(3.0);
   if (!(core_fraction > 0.0 && core_fraction <= 1.0)) {
     std::cerr << "Errore: core_fraction deve essere in (0, 1]\n";
     return 1;
@@ -602,7 +612,7 @@ int main(int argc, char** argv) {
     }
 
     results.push_back(analyze_config(it->second, n_rays, y0, z0, dy, dz, w, ysrc, x_scan,
-                                     k_threshold, core_fraction, m_target));
+                                     k_threshold, core_fraction, m_target, sigma_y_src_theory));
   }
 
   if (!cli.tsv_out.empty()) {
@@ -612,12 +622,13 @@ int main(int argc, char** argv) {
     }
     std::ofstream out(tsv_path);
     out << "x1\tx2\tx_focus\tx_focus_scan\tdof\tM\tm_target\tM_abs_err\tstripe_width\t"
-           "within_photocathode\tn_rays\tn_rays_core\tcore_fraction\tconfig_id\n";
+           "within_photocathode\tn_rays\tn_rays_core\tcore_fraction\tconfig_id\tfocus_before_lens2\n";
     for (const auto& r : results) {
       out << r.x1 << "\t" << r.x2 << "\t" << r.x_focus << "\t" << r.x_focus_scan << "\t" << r.dof
           << "\t" << r.M << "\t" << m_target << "\t" << r.M_abs_err << "\t" << r.stripe_width
           << "\t" << r.within_photocathode << "\t" << r.n_rays << "\t" << r.n_rays_core << "\t"
-          << core_fraction << "\t" << r.config_id << "\n";
+          << core_fraction << "\t" << r.config_id << "\t" << (r.focus_before_lens2 ? 1 : 0)
+          << "\n";
     }
   }
 
@@ -658,6 +669,9 @@ int main(int argc, char** argv) {
     }
   }
 
+  TH2D h_warn("h_warn", "", n_bins_x1, x1_min_data - dx / 2.0, x1_max_data + dx / 2.0, n_bins_x2,
+              x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
+
   const double x_photocathode      = 180.0;
   const ResultRow* best_focus_near = nullptr;
   const ResultRow* best_dof_max    = nullptr;
@@ -682,6 +696,9 @@ int main(int argc, char** argv) {
     int bin_y = h_focus.GetYaxis()->FindBin(r.x2);
 
     h_mask.SetBinContent(bin_x, bin_y, 0.0);
+    if (r.focus_before_lens2) {
+      h_warn.SetBinContent(bin_x, bin_y, 1.0);
+    }
 
     h_focus.SetBinContent(bin_x, bin_y, r.x_focus);
     h_dof.SetBinContent(bin_x, bin_y, r.dof);
@@ -749,6 +766,28 @@ int main(int argc, char** argv) {
     h_margin.SetMaximum(+max_abs);
   }
 
+  auto build_warn_boxes = [&]() {
+    std::vector<std::unique_ptr<TBox>> boxes;
+    boxes.reserve(static_cast<size_t>(n_bins_x1 * n_bins_x2));
+    for (int bx = 1; bx <= n_bins_x1; ++bx) {
+      double x_lo = h_warn.GetXaxis()->GetBinLowEdge(bx);
+      double x_hi = h_warn.GetXaxis()->GetBinUpEdge(bx);
+      for (int by = 1; by <= n_bins_x2; ++by) {
+        if (h_warn.GetBinContent(bx, by) < 0.5) {
+          continue;
+        }
+        double y_lo = h_warn.GetYaxis()->GetBinLowEdge(by);
+        double y_hi = h_warn.GetYaxis()->GetBinUpEdge(by);
+        auto box    = std::make_unique<TBox>(x_lo, y_lo, x_hi, y_hi);
+        box->SetFillColorAlpha(kOrange + 1, 0.35);
+        box->SetLineColor(0);
+        box->Draw("same");
+        boxes.push_back(std::move(box));
+      }
+    }
+    return boxes;
+  };
+
   auto build_mask_boxes = [&]() {
     std::vector<std::unique_ptr<TBox>> boxes;
     boxes.reserve(static_cast<size_t>(n_bins_x1 * n_bins_x2));
@@ -762,8 +801,8 @@ int main(int argc, char** argv) {
         double y_lo = h_mask.GetYaxis()->GetBinLowEdge(by);
         double y_hi = h_mask.GetYaxis()->GetBinUpEdge(by);
         auto box    = std::make_unique<TBox>(x_lo, y_lo, x_hi, y_hi);
-        box->SetFillColor(kBlack);
-        box->SetLineColor(kBlack);
+        box->SetFillColor(kWhite);
+        box->SetLineColor(kWhite);
         box->Draw();
         boxes.push_back(std::move(box));
       }
@@ -771,14 +810,28 @@ int main(int argc, char** argv) {
     return boxes;
   };
 
+  static const std::unordered_map<std::string, std::string> kMapTitles = {
+      {"dof_focus_map",        "Posizione di fuoco ottimale"},
+      {"dof_dof_map",          "Profondit#grave{a} di campo (DoF)"},
+      {"dof_M_map",            "Magnificazione M"},
+      {"dof_stripe_map",       "Larghezza striscia"},
+      {"dof_M_error_map",      "Errore magnificazione |M#minusM_{tgt}|"},
+      {"dof_within_photocathode", "Margine fotocatodo"},
+  };
+
   auto save_map = [&](TH2D& h, const std::string& name, int palette, const ResultRow* star) {
     gStyle->SetPalette(palette);
     TCanvas c(("c_" + name).c_str(), name.c_str(), 1100, 900);
-    c.SetLeftMargin(0.16);
+    c.SetLeftMargin(0.10);
     c.SetBottomMargin(0.14);
     c.SetRightMargin(0.16);
-    c.SetTopMargin(0.08);
+    c.SetTopMargin(0.10);
+    c.SetGridx();
+    c.SetGridy();
+    h.GetZaxis()->CenterTitle(kTRUE);
+    h.GetZaxis()->SetTitleOffset(1.6);
     h.Draw("COLZ");
+    c.Update();
     if (star) {
       TMarker m(star->x1, star->x2, 29);
       m.SetMarkerSize(2.0);
@@ -786,6 +839,16 @@ int main(int argc, char** argv) {
       m.Draw("same");
     }
     auto boxes      = build_mask_boxes();
+    auto warn_boxes = build_warn_boxes();
+    auto it         = kMapTitles.find(name);
+    if (it != kMapTitles.end()) {
+      TLatex tit;
+      tit.SetNDC();
+      tit.SetTextFont(42);
+      tit.SetTextSize(0.042);
+      tit.SetTextAlign(22);
+      tit.DrawLatex(0.50, 0.955, it->second.c_str());
+    }
     std::string out = (std::filesystem::path(cli.output_dir) / (name + ".png")).string();
     c.SaveAs(out.c_str());
   };
@@ -806,12 +869,24 @@ int main(int argc, char** argv) {
     gStyle->SetNumberContours(255);
 
     TCanvas c("c_within", "within", 1100, 900);
-    c.SetLeftMargin(0.16);
+    c.SetLeftMargin(0.10);
     c.SetBottomMargin(0.14);
     c.SetRightMargin(0.16);
-    c.SetTopMargin(0.08);
+    c.SetTopMargin(0.10);
+    c.SetGridx();
+    c.SetGridy();
+    h_margin.GetZaxis()->CenterTitle(kTRUE);
+    h_margin.GetZaxis()->SetTitleOffset(1.6);
     h_margin.Draw("COLZ");
-    auto boxes = build_mask_boxes();
+    c.Update();
+    auto boxes      = build_mask_boxes();
+    auto warn_boxes = build_warn_boxes();
+    TLatex tit_w;
+    tit_w.SetNDC();
+    tit_w.SetTextFont(42);
+    tit_w.SetTextSize(0.042);
+    tit_w.SetTextAlign(22);
+    tit_w.DrawLatex(0.50, 0.955, "Margine fotocatodo");
     std::string out =
         (std::filesystem::path(cli.output_dir) / "dof_within_photocathode.png").string();
     c.SaveAs(out.c_str());

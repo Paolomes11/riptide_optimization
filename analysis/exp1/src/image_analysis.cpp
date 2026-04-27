@@ -16,11 +16,13 @@
 
 #include <TAxis.h>
 #include <TCanvas.h>
+#include <TGaxis.h>
 #include <TColor.h>
 #include <TFile.h>
 #include <TH1D.h>
 #include <TH2D.h>
 #include <TLatex.h>
+#include <TLegend.h>
 #include <TLine.h>
 #include <TPad.h>
 #include <TPaveText.h>
@@ -336,11 +338,13 @@ TH1D* project_x(const DiffImage& img, const std::string& name, const std::string
   }
 
   h->GetXaxis()->SetTitle("Pixel X");
-  h->GetYaxis()->SetTitle("Intensit#grave{a} integrata [ADU]");
+  h->GetYaxis()->SetTitle("Intensità integrata [ADU]");
   h->GetXaxis()->CenterTitle(true);
   h->GetYaxis()->CenterTitle(true);
+  h->GetXaxis()->SetTitleSize(0.055);
+  h->GetYaxis()->SetTitleSize(0.055);
   h->GetXaxis()->SetTitleOffset(1.20);
-  h->GetYaxis()->SetTitleOffset(1.55);
+  h->GetYaxis()->SetTitleOffset(0.9);
   return h;
 }
 
@@ -357,11 +361,13 @@ TH1D* project_y(const DiffImage& img, const std::string& name, const std::string
   }
 
   h->GetXaxis()->SetTitle("Pixel Y");
-  h->GetYaxis()->SetTitle("Intensit#grave{a} integrata [ADU]");
+  h->GetYaxis()->SetTitle("Intensità integrata [ADU]");
   h->GetXaxis()->CenterTitle(true);
   h->GetYaxis()->CenterTitle(true);
+  h->GetXaxis()->SetTitleSize(0.055);
+  h->GetYaxis()->SetTitleSize(0.055);
   h->GetXaxis()->SetTitleOffset(1.20);
-  h->GetYaxis()->SetTitleOffset(1.55);
+  h->GetYaxis()->SetTitleOffset(0.9);
   return h;
 }
 
@@ -424,6 +430,7 @@ static TH2D* rebin_for_display(TH2D* h) {
 
   TH2D* h_rebinned =
       static_cast<TH2D*>(h->Rebin2D(rx, ry, (std::string(h->GetName()) + "_disp").c_str()));
+  h_rebinned->Scale(1.0 / (static_cast<double>(rx) * ry));
   return h_rebinned;
 }
 
@@ -475,6 +482,8 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       vmin = 0.0;
       vmax = std::max({hg->GetMaximum(), hb->GetMaximum(), hbg->GetMaximum()});
     }
+    vmin *= 1.0e-3;
+    vmax *= 1.0e-3;
 
     auto draw_pad = [&](int idx, TH2D* h, const std::string& lbl) {
       auto* pad = static_cast<TPad*>(c.GetPad(idx));
@@ -486,9 +495,15 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
 
       // Rebinning per il canvas (risparmia memoria durante il Print PNG)
       TH2D* h_disp = rebin_for_display(h);
+      h_disp->Scale(1.0e-3);
+      h_disp->SetTitle("");
       h_disp->SetMinimum(vmin);
       h_disp->SetMaximum(vmax);
+      h_disp->GetZaxis()->SetMaxDigits(4);
       h_disp->Draw("COLZ");
+      h_disp->GetZaxis()->SetTitle("ADU  (#times10^{3})");
+      h_disp->GetZaxis()->CenterTitle(kTRUE);
+      h_disp->GetZaxis()->SetTitleOffset(1.6);
 
       TLatex t;
       t.SetNDC();
@@ -543,6 +558,8 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       smin = 0.0;
       smax = std::max({hg->GetMaximum(), hb->GetMaximum(), hbg->GetMaximum()});
     }
+    smin *= 1.0e-3;
+    smax *= 1.0e-3;
 
     auto draw_pad = [&](int idx, TH2D* h, const std::string& lbl) {
       auto* pad = static_cast<TPad*>(c.GetPad(idx));
@@ -553,9 +570,15 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       pad->cd();
 
       TH2D* h_disp = rebin_for_display(h);
+      h_disp->Scale(1.0e-3);
+      h_disp->SetTitle("");
       h_disp->SetMinimum(smin);
       h_disp->SetMaximum(smax);
+      h_disp->GetZaxis()->SetMaxDigits(4);
       h_disp->Draw("COLZ");
+      h_disp->GetZaxis()->SetTitle("ADU  (#times10^{3})");
+      h_disp->GetZaxis()->CenterTitle(kTRUE);
+      h_disp->GetZaxis()->SetTitleOffset(1.6);
 
       TLatex t;
       t.SetNDC();
@@ -597,23 +620,26 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       hbd->Write();
     }
 
-    // Scala simmetrica attorno a 0 per enfatizzare il segnale netto
-    double absmax = std::max({std::abs(hgd->GetMinimum()), hgd->GetMaximum(),
-                              std::abs(hbd->GetMinimum()), hbd->GetMaximum()});
-    gStyle->SetPalette(kCool); // palette divergente per valori negativi
+    double absmax = std::max(hgd->GetMaximum(), hbd->GetMaximum());
+    gStyle->SetPalette(kViridis);
+    TGaxis::SetMaxDigits(4);
 
     auto draw_pad = [&](int idx, TH2D* h, const std::string& lbl) {
       auto* pad = static_cast<TPad*>(c.GetPad(idx));
-      pad->SetLeftMargin(0.16);
+      pad->SetLeftMargin(0.14);
       pad->SetRightMargin(0.14);
       pad->SetTopMargin(0.11);
       pad->SetBottomMargin(0.14);
+      pad->SetGridx();
+      pad->SetGridy();
       pad->cd();
 
       TH2D* h_disp = rebin_for_display(h);
-      h_disp->SetMinimum(-absmax);
+      h_disp->SetMinimum(0.0);
       h_disp->SetMaximum(absmax);
-      h_disp->GetZaxis()->SetTitle("[ADU]");
+      h_disp->GetZaxis()->SetTitle("ADU  (#times10^{4})");
+      h_disp->GetZaxis()->CenterTitle(kTRUE);
+      h_disp->GetZaxis()->SetTitleOffset(1.6);
       h_disp->Draw("COLZ");
 
       TLatex t;
@@ -668,7 +694,7 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
 
     // Proiezione X: Good vs Bad sovrapposti
     auto setup_pad = [](TPad* p) {
-      p->SetLeftMargin(0.16);
+      p->SetLeftMargin(0.10);
       p->SetRightMargin(0.05);
       p->SetTopMargin(0.10);
       p->SetBottomMargin(0.14);
@@ -684,6 +710,16 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
     hgx->SetMaximum(xmax + 0.05 * std::abs(xmax));
     hgx->Draw("HIST");
     hbx->Draw("HIST SAME");
+    {
+      auto* leg = new TLegend(0.72, 0.72, 0.93, 0.88);
+      leg->SetBorderSize(1);
+      leg->SetFillStyle(0);
+      leg->SetTextFont(42);
+      leg->SetTextSize(0.040);
+      leg->AddEntry(hgx, "Good", "l");
+      leg->AddEntry(hbx, "Bad", "l");
+      leg->Draw();
+    }
     TLatex t1;
     t1.SetNDC();
     t1.SetTextFont(42);
@@ -699,6 +735,16 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
     hgy->SetMaximum(ymax + 0.05 * std::abs(ymax));
     hgy->Draw("HIST");
     hby->Draw("HIST SAME");
+    {
+      auto* leg = new TLegend(0.72, 0.72, 0.93, 0.88);
+      leg->SetBorderSize(1);
+      leg->SetFillStyle(0);
+      leg->SetTextFont(42);
+      leg->SetTextSize(0.040);
+      leg->AddEntry(hgy, "Good", "l");
+      leg->AddEntry(hby, "Bad", "l");
+      leg->Draw();
+    }
     TLatex t2;
     t2.SetNDC();
     t2.SetTextFont(42);

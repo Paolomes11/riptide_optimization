@@ -370,7 +370,7 @@ static PadLayout make_canvas(bool log_z) {
   pl.pad_cb   = new TPad("pad_cb", "", 0.88, 0.12, 0.96, 1.00);
   pl.pad_info = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.12);
 
-  pl.pad_plot->SetLeftMargin(0.13);
+  pl.pad_plot->SetLeftMargin(0.10);
   pl.pad_plot->SetRightMargin(0.015);
   pl.pad_plot->SetTopMargin(0.11);
   pl.pad_plot->SetBottomMargin(0.13);
@@ -381,7 +381,7 @@ static PadLayout make_canvas(bool log_z) {
     pl.pad_plot->SetLogz();
 
   pl.pad_cb->SetLeftMargin(0.25);
-  pl.pad_cb->SetRightMargin(0.30);
+  pl.pad_cb->SetRightMargin(0.35);
   pl.pad_cb->SetTopMargin(0.11);
   pl.pad_cb->SetBottomMargin(0.13);
 
@@ -443,7 +443,8 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale
   cb_axis->SetTitle(title.c_str());
   cb_axis->SetTitleFont(42);
   cb_axis->SetTitleSize(0.20);
-  cb_axis->SetTitleOffset(0.55);
+  cb_axis->CenterTitle(kTRUE);
+  cb_axis->SetTitleOffset(1.8);
   cb_axis->Draw();
 }
 
@@ -465,7 +466,7 @@ static void draw_info_panel(TPad* pad_info, int total_cfgs, int n_invalid, doubl
   info.SetNDC(true);
   info.SetTextFont(42);
 
-  const double col1 = 0.03, col2 = 0.52;
+  const double col1 = 0.03, col2 = 0.48;
   const double hdr = 0.82, row1 = 0.52, row2 = 0.18;
 
   info.SetTextSize(0.13);
@@ -833,7 +834,7 @@ int main(int argc, char** argv) {
 
   std::string cb_title = "#chi^{2}";
   if (cli.corr_map) {
-    cb_title = "#rho";
+    cb_title = "#rho  [a.d.]";
   } else if (cli.adaptive_target) {
     cb_title = "|#chi^{2}/ndof - #chi^{2}_{target}|";
   } else if (cli.dist_to_n) {

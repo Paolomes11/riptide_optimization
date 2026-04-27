@@ -324,7 +324,7 @@ int main(int argc, char** argv) {
   // ===============================
   TCanvas canvas("canvas", "Efficiency map", 900, 700);
   canvas.SetLeftMargin(0.12);
-  canvas.SetRightMargin(0.18); // margine più moderato
+  canvas.SetRightMargin(0.15);
   canvas.SetTopMargin(0.08);
   canvas.SetBottomMargin(0.12);
 
@@ -332,6 +332,9 @@ int main(int argc, char** argv) {
   canvas.SetGridy();
 
   // disegna l'istogramma con COLZ
+  h_efficiency.GetZaxis()->SetTitle("Efficienza [a.d.]");
+  h_efficiency.GetZaxis()->SetTitleSize(0.04);
+  h_efficiency.GetZaxis()->SetTitleOffset(1.1);
   h_efficiency.Draw("COLZ");
 
   // forza ROOT a creare la palette
@@ -340,15 +343,13 @@ int main(int argc, char** argv) {
   // ottieni la palette generata da COLZ
   TPaletteAxis* palette = (TPaletteAxis*)h_efficiency.GetListOfFunctions()->FindObject("palette");
   if (palette) {
-    palette->SetX1NDC(0.88); // bordo sinistro palette vicino al grafico
-    palette->SetX2NDC(0.92); // bordo destro palette
-    palette->SetTitle("Efficienza");
-    palette->SetTitleOffset(1.0); // titolo appena spostato, non troppo lontano
+    palette->SetX1NDC(0.86);
+    palette->SetX2NDC(0.91);
     palette->SetLabelSize(0.03);
-    palette->SetTitleSize(0.035);
   }
 
   // aggiorna canvas e salva
+  canvas.Modified();
   canvas.Update();
   canvas.SaveAs(cli.output_png.c_str());
 

@@ -1067,6 +1067,32 @@ Il segmento valido della traccia viene identificato come il più lungo blocco co
 
 ## Riferimenti metodologici
 
+### Metodo di propagazione raggi (`dof_map`)
+
+Il tool `dof_map` (e `dof_plot`) trova il piano di fuoco ottimale di un sistema a doppia lente tramite la seguente catena:
+
+**1. Registrazione dei raggi al piano virtuale.**
+Durante la simulazione Geant4, ogni fotone che attraversa il piano virtuale `x_virtual = x2 + x_virtual_offset` (default: `x2 + 30 mm`, sempre dopo la seconda lente) viene fermato e registrato con posizione transversa `(y₀, z₀)` e direzione `(dy, dz) = (py/px, pz/px)` nel sistema di riferimento del fascio.
+
+**2. Propagazione lineare da `x_virtual`.**
+Per trovare il fuoco, la distribuzione dei raggi viene valutata a una griglia di piani `{xᵢ}` tramite:
+
+```
+z(xᵢ) = z₀ + dz · (xᵢ − x_virtual)
+```
+
+La propagazione vale sia in avanti (`xᵢ > x_virtual`) che all'indietro (`xᵢ < x_virtual`, fino a `x2`). Questo è **esatto** nell'ottica geometrica: tra `x_virtual` e qualunque piano nel tratto `x2 ≤ x ≤ fotocatodo` non esistono elementi ottici, quindi i raggi si propagano in linea retta. Le direzioni `(dy, dz)` codificano già la rifrazione di entrambe le lenti (calcolata da Geant4 con la fisica completa, incluse le aberrazioni).
+
+> Nota: a differenza dell'ottica matriciale ABCD — appropriata per modellare sistemi con parametri gaussiani — qui si usa direttamente il fan di raggi Monte Carlo, che include aberrazioni di ordine superiore. Le matrici ABCD sarebbero un'approssimazione più grossolana.
+
+**3. Ricerca del fuoco: minimo di σ_z(x).**
+Il piano di fuoco `x*` è la posizione che minimizza la deviazione standard pesata del profilo trasverso `σ_z(x)`. Questo corrisponde alla ricerca del piano di best focus per minimizzazione dell'RMS dello spot, lo stesso criterio usato dalla funzione "Quick Focus" di Zemax.
+
+Per affinare la posizione sub-step, si esegue un'interpolazione parabolica di `σ_z²(x)` attorno al minimo (fit di Lagrange sui tre punti più vicini). La varianza `σ²` varia quadraticamente con la distanza dal fuoco per un fascio geometrico ideale, rendendo il vertice della parabola la stima ottimale di `x*`.
+
+**4. Casistica fuoco prima della seconda lente.**
+Quando il minimo di `σ_z` cade al primo punto dello scan (`i_min == 0`), l'estrapolazione parabolica può restituire `x_focus < x2`. In questo caso la propagazione lineare all'indietro attraverserebbe la seconda lente, dove il raggio verrebbe rifratto: il risultato è fisicamente non valido. Questi bin vengono evidenziati nelle mappe 2D con un **overlay arancione semitrasparente** (α = 0.35) e contrassegnati con `focus_before_lens2 = 1` nel TSV di output.
+
 ### Estrazione traccia e centroide
 
 - **ISO 11146-1:2005** — *Lasers and laser-related equipment: Test methods for laser beam widths, divergence angles and beam propagation ratios*. Definisce il metodo dei momenti del secondo ordine per la misura della larghezza del fascio (usato per `sigma_minor`, `sigma_dist`).
@@ -1082,6 +1108,16 @@ Il segmento valido della traccia viene identificato come il più lungo blocco co
 - **Nir, G. et al.** *pyradon: Python tools for streak detection in astronomical images using the Fast Radon Transform*. GitHub: [guynir42/pyradon](https://github.com/guynir42/pyradon). Implementazione di riferimento per la trasformata di Radon veloce applicata a immagini con streak diffuse.
 
 - **Yanagisawa, T. et al. (2015)**. *Streak Detection and Analysis Pipeline for Space-debris Optical Images*. ResearchGate. Base per la pipeline di estrazione di features (centroide, larghezza, flusso) da immagini ottiche con streak lineari a basso SNR.
+
+### Propagazione raggi e ricerca del fuoco
+
+- **Ray transfer matrix analysis** — Wikipedia. Descrizione dell'ottica matriciale ABCD; la sua applicabilità è limitata ai sistemi con lenti sottili e fasci parassiali, a differenza del metodo Monte Carlo usato qui. URL: https://en.wikipedia.org/wiki/Ray_transfer_matrix_analysis
+
+- **ABCD Matrix** — RP Photonics Encyclopedia. Trattazione formale delle matrici di trasferimento per sistemi ottici gaussiani. URL: https://www.rp-photonics.com/abcd_matrix.html
+
+- **DevOptical Part 19: A Quick Focus Algorithm** — The Pulsar. Descrizione del criterio di best focus per minimizzazione dell'RMS dello spot, identico al criterio `min σ_z` di `dof_map`. URL: https://www.thepulsar.be/article/-devoptical-part-19--a-quick-focus-algorithm
+
+- **Zemax OpticStudio Manual** — Ansys (già UCSD mirror). Conferma che il piano di best focus si trova minimizzando l'RMS radiale dei raggi su una scansione assiale. URL: https://neurophysics.ucsd.edu/Manuals/Zemax/ZemaxManual.pdf
 
 ### Fit robusto (RANSAC / ODR)
 

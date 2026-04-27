@@ -141,7 +141,7 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
       pairs.push_back({p[0].get<double>(), p[1].get<double>()});
     }
   } else {
-    const double margin = 3.0;
+    const double margin = config.value("lens_gap_margin", 1.0);
     double x1_start     = config.value("x1_start", x_min);
     double x1_end       = config.value("x1_end", x_max);
 

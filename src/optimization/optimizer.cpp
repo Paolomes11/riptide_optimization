@@ -161,7 +161,7 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
         pairs.push_back({p[0].get<double>(), p[1].get<double>()});
       }
     } else {
-      const double margin = 1.0;
+      const double margin = config.value("lens_gap_margin", 1.0);
       for (double x1 = x_min; x1 <= x_max; x1 += dx) {
         // Ora che SetLensPositions lavora con i centri geometrici,
         // la collisione è data semplicemente dalla somma dei semi-spessori
