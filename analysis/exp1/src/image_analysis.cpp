@@ -620,8 +620,9 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       hbd->Write();
     }
 
-    double absmax = std::max(hgd->GetMaximum(), hbd->GetMaximum());
-    gStyle->SetPalette(kViridis);
+    double absmax = std::max({std::abs(hgd->GetMinimum()), hgd->GetMaximum(),
+                              std::abs(hbd->GetMinimum()), hbd->GetMaximum()});
+    gStyle->SetPalette(kCool);
     TGaxis::SetMaxDigits(4);
 
     auto draw_pad = [&](int idx, TH2D* h, const std::string& lbl) {
@@ -635,7 +636,7 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       pad->cd();
 
       TH2D* h_disp = rebin_for_display(h);
-      h_disp->SetMinimum(0.0);
+      h_disp->SetMinimum(-absmax);
       h_disp->SetMaximum(absmax);
       h_disp->GetZaxis()->SetTitle("ADU  (#times10^{4})");
       h_disp->GetZaxis()->CenterTitle(kTRUE);

@@ -127,9 +127,9 @@ int main(int argc, char** argv) {
   if (hgd && hbd) {
     TCanvas c("c_diff", "Difference", 1200, 600);
     c.Divide(2, 1);
-    gStyle->SetPalette(kViridis);
-    double vmax =
-        std::max(get_th2d_percentile(hgd, z_max_perc), get_th2d_percentile(hbd, z_max_perc));
+    gStyle->SetPalette(kCool);
+    double vmax = std::max({std::abs(hgd->GetMinimum()), hgd->GetMaximum(),
+                            std::abs(hbd->GetMinimum()), hbd->GetMaximum()});
     auto draw = [&](int i, TH2D* h, const char* t) {
       c.cd(i);
       gPad->SetLeftMargin(0.14);
@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
       gPad->SetTopMargin(0.10);
       gPad->SetGridx();
       gPad->SetGridy();
-      h->SetMinimum(0.0);
+      h->SetMinimum(-vmax);
       h->SetMaximum(vmax);
       h->GetZaxis()->SetTitle("ADU  (#times10^{4})");
       h->GetZaxis()->CenterTitle(kTRUE);

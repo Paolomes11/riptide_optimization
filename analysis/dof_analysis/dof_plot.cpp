@@ -104,7 +104,7 @@ static std::optional<double> quadratic_vertex_from_three_points(double x0, doubl
   }
   double a = (y0 / d0) + (y1 / d1) + (y2 / d2);
   double b = (-y0 * (x1 + x2) / d0) + (-y1 * (x0 + x2) / d1) + (-y2 * (x0 + x1) / d2);
-  if (!std::isfinite(a) || !std::isfinite(b) || std::abs(a) < 1e-18) {
+  if (!std::isfinite(a) || !std::isfinite(b) || std::abs(a) < 1e-18 || a <= 0.0) {
     return std::nullopt;
   }
   return -b / (2.0 * a);
@@ -511,7 +511,7 @@ int main(int argc, char** argv) {
     auto xv = quadratic_vertex_from_three_points(xv0, sigma_z[0] * sigma_z[0],
                                                  xv1, sigma_z[1] * sigma_z[1],
                                                  xv2, sigma_z[2] * sigma_z[2]);
-    if (xv.has_value() && std::isfinite(*xv)) {
+    if (xv.has_value() && std::isfinite(*xv) && *xv <= x_scan.back()) {
       x_focus = *xv;
     }
   }
@@ -560,7 +560,7 @@ int main(int argc, char** argv) {
       auto xv = quadratic_vertex_from_three_points(xv0, sigma_z[0] * sigma_z[0],
                                                    xv1, sigma_z[1] * sigma_z[1],
                                                    xv2, sigma_z[2] * sigma_z[2]);
-      if (xv.has_value() && std::isfinite(*xv)) {
+      if (xv.has_value() && std::isfinite(*xv) && *xv <= x_scan.back()) {
         x_focus = *xv;
       }
     }
