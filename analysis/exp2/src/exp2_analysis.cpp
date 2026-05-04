@@ -22,8 +22,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -36,6 +38,33 @@ static std::string fmtd(double v, int prec = 2) {
   std::ostringstream o;
   o << std::fixed << std::setprecision(prec) << v;
   return o.str();
+}
+
+static std::vector<std::map<std::string, std::string>> load_tsv(const std::string& path) {
+  std::ifstream f(path);
+  if (!f.is_open()) return {};
+  std::vector<std::map<std::string, std::string>> rows;
+  std::string line;
+  std::vector<std::string> headers;
+  bool first = true;
+  while (std::getline(f, line)) {
+    if (line.empty()) continue;
+    std::vector<std::string> fields;
+    std::istringstream ss(line);
+    std::string tok;
+    while (std::getline(ss, tok, '\t'))
+      fields.push_back(tok);
+    if (first) {
+      headers = fields;
+      first   = false;
+      continue;
+    }
+    std::map<std::string, std::string> row;
+    for (size_t i = 0; i < headers.size() && i < fields.size(); ++i)
+      row[headers[i]] = fields[i];
+    rows.push_back(std::move(row));
+  }
+  return rows;
 }
 
 static void apply_riptide_style() {
@@ -890,6 +919,66 @@ void produce_summary(const std::vector<ConfigResult>& results, const OutputConfi
   ratio_line("#sigma_{minor}(bad,focus) / #sigma_{minor}(good,focus)", bad_focus, good_focus);
   ratio_line("#sigma_{minor}(good,focus) / #sigma_{minor}(good,nofocus)", good_focus, good_nofocus);
   ratio_line("#sigma_{minor}(bad,focus) / #sigma_{minor}(bad,nofocus)", bad_focus, bad_nofocus);
+
+  if (!cfg.qmap_path.empty() && good_focus && bad_nofocus) {
+    auto rows = load_tsv(cfg.qmap_path);
+    auto find_q = [&](double x1t, double x2t) -> double {
+      for (const auto& r : rows) {
+        auto it_valid = r.find("config_valid");
+        if (it_valid != r.end() && it_valid->second == "0") continue;
+        auto it_x1 = r.find("x1");
+        auto it_x2 = r.find("x2");
+        auto it_m  = r.find("metric");
+        if (it_x1 == r.end() || it_x2 == r.end() || it_m == r.end()) continue;
+        if (std::abs(std::stod(it_x1->second) - x1t) < 1e-3
+            && std::abs(std::stod(it_x2->second) - x2t) < 1e-3)
+          return std::stod(it_m->second);
+      }
+      return std::numeric_limits<double>::quiet_NaN();
+    };
+
+    const double Q_good  = find_q(good_focus->optics.x1, good_focus->optics.x2);
+    const double Q_bad   = find_q(bad_nofocus->optics.x1, bad_nofocus->optics.x2);
+    const double Q_ratio = (std::isfinite(Q_good) && std::isfinite(Q_bad) && Q_bad > 0.0)
+                               ? Q_good / Q_bad
+                               : std::numeric_limits<double>::quiet_NaN();
+
+    const auto sg              = sigma_scaled(*good_focus);
+    const auto sb              = sigma_scaled(*bad_nofocus);
+    const double sigma_rat_exp = (sg.first > 0.0 && sb.first > 0.0)
+                                     ? sg.first / sb.first
+                                     : std::numeric_limits<double>::quiet_NaN();
+
+    box.AddText(" ");
+    box.AddText("Confronto simulazione vs esperimento (good_focus / bad_nofocus):");
+    {
+      std::ostringstream o;
+      o << "  Q_sim(good_focus)   = " << (std::isfinite(Q_good) ? fmtd(Q_good, 4) : "NaN")
+        << "   [(x1,x2) = (" << fmtd(good_focus->optics.x1, 1) << ", "
+        << fmtd(good_focus->optics.x2, 1) << ") mm]";
+      box.AddText(o.str().c_str());
+    }
+    {
+      std::ostringstream o;
+      o << "  Q_sim(bad_nofocus)  = " << (std::isfinite(Q_bad) ? fmtd(Q_bad, 4) : "NaN")
+        << "   [(x1,x2) = (" << fmtd(bad_nofocus->optics.x1, 1) << ", "
+        << fmtd(bad_nofocus->optics.x2, 1) << ") mm]";
+      box.AddText(o.str().c_str());
+    }
+    {
+      std::ostringstream o;
+      o << "  Q_ratio (sim)       = " << (std::isfinite(Q_ratio) ? fmtd(Q_ratio, 4) : "NaN")
+        << "   [< 1 #rightarrow good ha qualit#grave{a} migliore]";
+      box.AddText(o.str().c_str());
+    }
+    {
+      std::ostringstream o;
+      o << "  #sigma_{minor} ratio (exp) = "
+        << (std::isfinite(sigma_rat_exp) ? fmtd(sigma_rat_exp, 4) : "NaN")
+        << "   [< 1 #rightarrow good ha spot pi#grave{u} stretto]";
+      box.AddText(o.str().c_str());
+    }
+  }
 
   box.Draw();
 

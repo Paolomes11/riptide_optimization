@@ -53,6 +53,8 @@ struct CliOptions {
 
   bool save_png  = true;
   bool save_root = true;
+
+  std::string qmap_path = "";
 };
 
 static void print_usage(const char* prog) {
@@ -72,6 +74,7 @@ static void print_usage(const char* prog) {
             << "          [--x1-bad F]  [--x2-bad F]  [--xdet-bad F]\n"
             << "          [--xdet-good-opt F] [--xdet-bad-opt F]\n"
             << "          [--z-min F] [--z-max F]\n"
+            << "          [--qmap <path>]\n"
             << "          [--no-root] [--no-png] [--help]\n";
 }
 
@@ -169,6 +172,8 @@ static CliOptions parse_args(int argc, char** argv) {
       opt.save_root = false;
     else if (arg == "--no-png")
       opt.save_png = false;
+    else if (arg == "--qmap")
+      opt.qmap_path = next();
     else {
       std::cerr << "Opzione sconosciuta: " << arg << "\n";
       print_usage(argv[0]);
@@ -236,6 +241,7 @@ int main(int argc, char** argv) {
     out_cfg.save_root        = opt.save_root;
     out_cfg.z_min_percentile = opt.z_min;
     out_cfg.z_max_percentile = opt.z_max;
+    out_cfg.qmap_path        = opt.qmap_path;
 
     const auto good_focus_dir   = opt.data_dir / opt.good_focus_dir;
     const auto good_nofocus_dir = opt.data_dir / opt.good_nofocus_dir;

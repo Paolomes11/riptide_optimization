@@ -439,7 +439,8 @@ static TH2D* rebin_for_display(TH2D* h) {
 void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
                     const StackedImage& good_stack, const StackedImage& bad_stack,
                     const StackedImage& bg_stack, const ComparisonResult& comparison,
-                    const std::optional<FrameByFrameResult>& fbf, const AnalysisConfig& cfg) {
+                    const std::optional<FrameByFrameResult>& fbf,
+                    const std::optional<SimEff1>& sim, const AnalysisConfig& cfg) {
   std::filesystem::create_directories(cfg.output_dir);
 
   apply_riptide_style();
@@ -766,80 +767,90 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
   // Pagina 5: pannello riassuntivo
 
   {
-    TCanvas c("c_summary", "Summary", 900, 700);
+    TCanvas c("c_summary", "Summary", 900, 950);
     c.SetLeftMargin(0.02);
     c.SetRightMargin(0.02);
     c.SetTopMargin(0.02);
     c.SetBottomMargin(0.02);
     c.cd();
 
-    // Sfondo grigio chiaro
     c.SetFillColor(TColor::GetColor(248, 248, 252));
 
-    // Titolo
     TLatex title;
     title.SetNDC();
     title.SetTextFont(42);
-    title.SetTextSize(0.055);
+    title.SetTextSize(0.050);
     title.SetTextAlign(22);
-    title.SetTextColor(TColor::GetColor(26, 58, 107)); // darkblue RIPTIDE
-    title.DrawLatex(0.50, 0.92, "Exp1 — Analisi Statistica Immagini FITS");
+    title.SetTextColor(TColor::GetColor(26, 58, 107));
+    title.DrawLatex(0.50, 0.93, "Exp1 — Analisi Statistica Immagini FITS");
 
-    // Linea separatrice
-    TLine sep(0.05, 0.88, 0.95, 0.88);
+    TLine sep(0.05, 0.89, 0.95, 0.89);
     sep.SetLineColor(TColor::GetColor(26, 58, 107));
     sep.SetLineWidth(2);
     sep.Draw();
 
-    // Corpo testo
-    TPaveText pt(0.05, 0.10, 0.95, 0.86, "NDC");
+    TPaveText pt(0.05, 0.04, 0.95, 0.87, "NDC");
     pt.SetFillColor(0);
     pt.SetBorderSize(0);
     pt.SetTextFont(42);
-    pt.SetTextSize(0.040);
+    pt.SetTextSize(0.028);
     pt.SetTextAlign(12);
 
     auto add = [&](const std::string& s) { pt.AddText(s.c_str()); };
 
-    add(" ");
     add("Stacking: #sigma-clipping (3#sigma, 3 iterazioni) su 10 frame per serie");
     add(" ");
-    add("  Integrale netto Good  (segnale - fondo):");
-    add(("    I_{good} = " + fmt_sci(comparison.good.integral, 4) + " ADU #cdot px   (#pm "
+    add(("  I_{good} = " + fmt_sci(comparison.good.integral, 4) + " ADU #cdot px   (#pm "
          + fmt_sci(comparison.good.sigma_integral, 3) + ")")
             .c_str());
-    add(" ");
-    add("  Integrale netto Bad   (segnale - fondo):");
-    add(("    I_{bad}  = " + fmt_sci(comparison.bad.integral, 4) + " ADU #cdot px   (#pm "
+    add(("  I_{bad}  = " + fmt_sci(comparison.bad.integral, 4) + " ADU #cdot px   (#pm "
          + fmt_sci(comparison.bad.sigma_integral, 3) + ")")
             .c_str());
     add(" ");
-    add("  #bf{Risultati:}");
-    add(("    #DeltaI = I_{good} - I_{bad} = " + fmt_sci(comparison.delta, 4) + " ADU #cdot px")
+    add(("  #DeltaI = " + fmt_sci(comparison.delta, 4) + " ADU #cdot px"
+         + "     #sigma_{#DeltaI} = " + fmt_sci(comparison.sigma_delta, 3) + " ADU #cdot px")
             .c_str());
-    add(("    #sigma_{#DeltaI} = " + fmt_sci(comparison.sigma_delta, 3) + " ADU #cdot px").c_str());
-    add(" ");
-    add(("    #bf{Rapporto:} I_{good} / I_{bad} = " + fmtd(comparison.ratio, 3) + " #pm "
+    add(("  #bf{R_{exp} (stacking)} = I_{good}/I_{bad} = " + fmtd(comparison.ratio, 3) + " #pm "
          + fmtd(comparison.sigma_ratio, 3))
-            .c_str());
-    add(("    #bf{Significativit#grave{a}:} (R-1)/#sigma_{R} = " + fmtd(comparison.significance, 2)
-         + " #sigma")
             .c_str());
 
     if (fbf) {
       add(" ");
       add("  #bf{Metodo 2: Frame-to-Frame Fluctuations}");
-      add(("    Rapporto medio R = " + fmtd(fbf->mean_ratio, 3) + " #pm "
-           + fmtd(fbf->sigma_ratio_mean, 3))
+      add(("    R_{exp} (fbf) = " + fmtd(fbf->mean_ratio, 3) + " #pm "
+           + fmtd(fbf->sigma_ratio_mean, 3) + "     #sigma_{R} = " + fmtd(fbf->sigma_ratio_std, 3)
+           + " (" + std::to_string(fbf->n_frames_used) + " frame)")
               .c_str());
-      add(("    Incertezza esp. #sigma_{R} = " + fmtd(fbf->sigma_ratio_std, 3) + " ("
-           + std::to_string(fbf->n_frames_used) + " frame)")
+    }
+
+    if (sim) {
+      add(" ");
+      add("  #bf{Confronto con simulazione (events.root):}");
+      add(("    R_{exp} (stacking) = " + fmtd(comparison.ratio, 3) + " #pm "
+           + fmtd(comparison.sigma_ratio, 3))
               .c_str());
-      add(("    Significativit#grave{a} S = " + fmtd(fbf->significance, 2) + " #sigma").c_str());
+      if (fbf) {
+        add(("    R_{exp} (fbf)      = " + fmtd(fbf->mean_ratio, 3) + " #pm "
+             + fmtd(fbf->sigma_ratio_mean, 3) + "  (" + std::to_string(fbf->n_frames_used)
+             + " frame)")
+                .c_str());
+      }
+      add(("    R_{sim} (raw)      = #eta_{g}/#eta_{b} = " + fmtd(sim->ratio_sim, 3) + " #pm "
+           + fmtd(sim->sigma_ratio_sim, 3))
+              .c_str());
+      add(("    C_{geom}           = f_{good}/f_{bad} = " + fmtd(sim->c_geom, 4)
+           + "   (correzione sorgente rect #rightarrow sfera)")
+              .c_str());
+      add(("    #bf{R_{sim} (corr.)} = " + fmtd(sim->ratio_sim_corr, 3) + " #pm "
+           + fmtd(sim->sigma_ratio_sim_corr, 3))
+              .c_str());
+      add(("    (#eta_{good} = " + fmtd(sim->eta_good, 4) + ",  #eta_{bad} = "
+           + fmtd(sim->eta_bad, 4) + ")")
+              .c_str());
     }
 
     add(" ");
-    add(("    N pixel ROI: " + std::to_string(comparison.good.n_pixels)).c_str());
+    add(("  N pixel ROI: " + std::to_string(comparison.good.n_pixels)).c_str());
 
     pt.Draw();
 
@@ -865,7 +876,6 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
   std::cout << "  σ_ΔI    = " << fmt_sci(comparison.sigma_delta, 3) << " ADU·px\n";
   std::cout << "  Rapporto = " << fmtd(comparison.ratio, 3) << " ± "
             << fmtd(comparison.sigma_ratio, 3) << "\n";
-  std::cout << "  Signif.  = " << fmtd(comparison.significance, 2) << " σ\n";
 
   if (fbf) {
     std::cout << "  [Metodo 2: Frame-to-Frame Fluctuations]\n";
@@ -873,12 +883,28 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
               << fmtd(fbf->sigma_ratio_mean, 3) << "\n";
     std::cout << "  σ_R      = " << fmtd(fbf->sigma_ratio_std, 3) << " (dev. std sperimentale)\n";
     std::cout << "  N        = " << fbf->n_frames_used << " frame utilizzati\n";
-    std::cout << "  Signif.  = " << fmtd(fbf->significance, 2) << " σ\n";
     std::cout << "  Valori R_k: ";
     for (size_t i = 0; i < fbf->ratios.size(); ++i) {
       std::cout << fmtd(fbf->ratios[i], 3) << (i == fbf->ratios.size() - 1 ? "" : ", ");
     }
     std::cout << "\n";
+  }
+
+  if (sim) {
+    std::cout << "  [Confronto con simulazione]\n";
+    std::cout << "  R_exp (stacking) = " << fmtd(comparison.ratio, 3) << " ± "
+              << fmtd(comparison.sigma_ratio, 3) << "\n";
+    if (fbf)
+      std::cout << "  R_exp (fbf)      = " << fmtd(fbf->mean_ratio, 3) << " ± "
+                << fmtd(fbf->sigma_ratio_mean, 3) << " (" << fbf->n_frames_used << " frame)\n";
+    std::cout << "  R_sim (raw)      = " << fmtd(sim->ratio_sim, 3) << " ± "
+              << fmtd(sim->sigma_ratio_sim, 3) << "\n";
+    std::cout << "  C_geom           = " << fmtd(sim->c_geom, 4)
+              << "  (f_good/f_bad, correzione sorgente rect→sfera)\n";
+    std::cout << "  R_sim (corr.)    = " << fmtd(sim->ratio_sim_corr, 3) << " ± "
+              << fmtd(sim->sigma_ratio_sim_corr, 3) << "\n";
+    std::cout << "  η_good           = " << fmtd(sim->eta_good, 4) << "\n";
+    std::cout << "  η_bad            = " << fmtd(sim->eta_bad, 4) << "\n";
   }
 
   std::cout << "─────────────────────────────────────────────────────────────────\n";

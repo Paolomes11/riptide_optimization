@@ -113,6 +113,17 @@ struct FrameByFrameResult {
   std::vector<double> ratios; // Lista dei rapporti R_k
 };
 
+/// Efficienza simulata da events.root (optimization_main) per le due configurazioni
+struct SimEff1 {
+  double eta_good              = 0.0;
+  double eta_bad               = 0.0;
+  double ratio_sim             = 0.0;
+  double sigma_ratio_sim       = 0.0;
+  double c_geom                = 1.0; // f_good/f_bad: correzione sorgente rect→sfera
+  double ratio_sim_corr        = 0.0; // R_sim × c_geom
+  double sigma_ratio_sim_corr  = 0.0;
+};
+
 // Configurazione analisi
 
 struct AnalysisConfig {
@@ -179,7 +190,8 @@ FrameByFrameResult analyze_frame_by_frame(const std::vector<FitsFrame>& good_fra
 void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
                     const StackedImage& good_stack, const StackedImage& bad_stack,
                     const StackedImage& bg_stack, const ComparisonResult& comparison,
-                    const std::optional<FrameByFrameResult>& fbf, const AnalysisConfig& cfg);
+                    const std::optional<FrameByFrameResult>& fbf,
+                    const std::optional<SimEff1>& sim, const AnalysisConfig& cfg);
 
 // Helpers per ROOT
 

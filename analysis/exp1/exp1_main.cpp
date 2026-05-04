@@ -42,8 +42,16 @@
 #include "frame_stats.hpp"
 #include "image_analysis.hpp"
 
+#include <TFile.h>
+#include <TTree.h>
+
+#include <nlohmann/json.hpp>
+
+#include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -66,6 +74,13 @@ struct CliOptions {
   bool save_png                  = true;
   bool save_root                 = true;
   exp1::ROI roi; // default: intero frame
+
+  std::string lens_path   = "";
+  std::string config_path = "config/config.json";
+  double x1_good          = 0.0;
+  double x2_good          = 0.0;
+  double x1_bad           = 0.0;
+  double x2_bad           = 0.0;
 };
 
 static void print_usage(const char* prog) {
@@ -88,6 +103,12 @@ static void print_usage(const char* prog) {
             << "                           (x1=-1, y1=-1 = fino al bordo)\n"
             << "  --no-root              Non salvare file .root\n"
             << "  --no-png               Non salvare file .png\n"
+            << "  --lens <path>          lens.root per confronto simulazione (opzionale)\n"
+            << "  --sim-config <path>    config.json per n_photons [config/config.json]\n"
+            << "  --x1-good F            x1 configurazione good [mm]\n"
+            << "  --x2-good F            x2 configurazione good [mm]\n"
+            << "  --x1-bad  F            x1 configurazione bad  [mm]\n"
+            << "  --x2-bad  F            x2 configurazione bad  [mm]\n"
             << "  --help                 Mostra questo messaggio\n";
 }
 
@@ -145,6 +166,18 @@ static CliOptions parse_args(int argc, char** argv) {
       opt.save_root = false;
     else if (arg == "--no-png")
       opt.save_png = false;
+    else if (arg == "--lens")
+      opt.lens_path = next();
+    else if (arg == "--sim-config")
+      opt.config_path = next();
+    else if (arg == "--x1-good")
+      opt.x1_good = next_dbl();
+    else if (arg == "--x2-good")
+      opt.x2_good = next_dbl();
+    else if (arg == "--x1-bad")
+      opt.x1_bad = next_dbl();
+    else if (arg == "--x2-bad")
+      opt.x2_bad = next_dbl();
     else {
       std::cerr << "Opzione sconosciuta: " << arg << "\n";
       print_usage(argv[0]);
@@ -175,6 +208,47 @@ static exp1::StackedImage do_stack(const std::vector<exp1::FitsFrame>& frames,
               << " iterazioni)\n";
     return exp1::sigma_clip_stack(frames, cfg);
   }
+}
+
+// ─── Fattore correttivo geometrico sorgente rettangolare → sferica ──────────
+//
+// La sorgente GPS è un rettangolo 2·src_xh × 2·src_zh mm a Y = src_y mm sopra
+// l'asse ottico (X), che emette in un emisfero verso le lenti (a X = x1_i).
+// La sorgente sperimentale è un bulbo semisferico di pochi mm centrato in
+// origine (0,0,0), assimilato a una sorgente puntiforme.
+//
+// L'angolo solido parassiale da un punto (xs, src_y, zs) verso l'apertura
+// della prima lente in x = x1 è proporzionale a (x1-xs)/d³, con d = distanza.
+// Mediando su z ∈ [-src_zh, src_zh]:
+//
+//   Ω̄_z(xs; x1) ∝ (x1-xs) / [(a²+src_y²)·√(a²+src_y²+src_zh²)]   a = x1-xs
+//
+// Per src_y = 5 mm, src_zh = 5 mm i termini costanti diventano 25 e 50.
+// L'antiderivata di [2·src_zh·a / ((a²+src_y²)√(a²+src_y²+src_zh²))] rispetto ad a
+// (sostituzione t = √(a²+src_y²+src_zh²)) è:
+//
+//   L(a) = ln|(√(a²+50) − 5) / (√(a²+50) + 5)|   [src_y=src_zh=5 → 50=25+25]
+//
+// Mediando anche su xs ∈ [-src_xh, src_xh]:
+//
+//   <Ω_rect>(x1) ∝ (1/(4·src_xh·src_zh)) · [L(x1+src_xh) − L(x1−src_xh)]
+//
+// Ω_sphere(x1) ∝ 1/x1²   (sorgente puntiforme in origine)
+//
+// Fattore correttivo per config i:  f_i = 4·src_xh·src_zh / (x1_i² · ΔL_i)
+// Correzione al rapporto:           C = f_good / f_bad
+
+// L(a) = ln|(√(a²+src_y²+src_zh²)−src_zh) / (√(a²+src_y²+src_zh²)+src_zh)|
+// hardcoded per src_y = src_zh = 5 mm → costanti 25+25 = 50
+static double geom_L(double a) {
+  double t = std::sqrt(a * a + 50.0);
+  return std::log((t - 5.0) / (t + 5.0));
+}
+
+static double geom_correction(double x1, double src_xh, double src_zh) {
+  double delta = geom_L(x1 + src_xh) - geom_L(x1 - src_xh);
+  if (delta <= 0.0) return 1.0;
+  return (4.0 * src_xh * src_zh) / (x1 * x1 * delta);
 }
 
 // main
@@ -244,7 +318,111 @@ int main(int argc, char** argv) {
 
     auto comparison = exp1::compare(good_int, bad_int);
 
-    // 7. Output ROOT
+    // 7. Confronto simulazione (opzionale) — solo events.root da optimization_main
+
+    std::optional<exp1::SimEff1> maybe_sim;
+    if (!opt.lens_path.empty() && opt.x1_good != 0.0 && opt.x1_bad != 0.0) {
+
+      // Parametri sorgente per la correzione geometrica
+      double src_xh = 30.0; // source_thickness/2 [mm]
+      double src_zh = 5.0;  // source_width/2     [mm]
+      {
+        std::ifstream fcfg(opt.config_path);
+        if (fcfg) {
+          nlohmann::json j;
+          fcfg >> j;
+          src_xh = j.value("source_thickness", 60.0) / 2.0;
+          src_zh = j.value("source_width",     10.0) / 2.0;
+        }
+      }
+
+      TFile ev_file(opt.lens_path.c_str(), "READ");
+      if (ev_file.IsZombie()) {
+        std::cerr << "[WARNING] Impossibile aprire il file ROOT: " << opt.lens_path << "\n";
+      } else {
+        TTree* tc  = static_cast<TTree*>(ev_file.Get("Configurations"));
+        TTree* tef = static_cast<TTree*>(ev_file.Get("Efficiency"));
+
+        if (!tc || !tef) {
+          std::cerr << "[WARNING] Tree 'Configurations' o 'Efficiency' non trovato in "
+                    << opt.lens_path << "\n";
+        } else {
+          // Leggi Configurations → mappa config_id → (x1, x2)
+          struct CfgPos { double x1, x2; };
+          std::map<int, CfgPos> cfg_map;
+          {
+            double x1_val, x2_val;
+            int cfg_id_val;
+            tc->SetBranchAddress("config_id", &cfg_id_val);
+            tc->SetBranchAddress("x1", &x1_val);
+            tc->SetBranchAddress("x2", &x2_val);
+            for (Long64_t i = 0; i < tc->GetEntries(); ++i) {
+              tc->GetEntry(i);
+              cfg_map[cfg_id_val] = {x1_val, x2_val};
+            }
+          }
+
+          // Leggi Efficiency: una riga per configurazione
+          std::map<int, double> eff_map;
+          std::map<int, double> total_ph;
+          {
+            int eff_cfg_id, n_photons_branch;
+            double n_hits_val;
+            tef->SetBranchAddress("config_id",  &eff_cfg_id);
+            tef->SetBranchAddress("n_photons",  &n_photons_branch);
+            tef->SetBranchAddress("n_hits",     &n_hits_val);
+            for (Long64_t i = 0; i < tef->GetEntries(); ++i) {
+              tef->GetEntry(i);
+              if (n_photons_branch > 0) {
+                eff_map[eff_cfg_id]  = n_hits_val / n_photons_branch;
+                total_ph[eff_cfg_id] = static_cast<double>(n_photons_branch);
+              }
+            }
+          }
+
+          int id_good = -1, id_bad = -1;
+          for (const auto& [id, pos] : cfg_map) {
+            if (std::abs(pos.x1 - opt.x1_good) < 1e-3 && std::abs(pos.x2 - opt.x2_good) < 1e-3)
+              id_good = id;
+            if (std::abs(pos.x1 - opt.x1_bad) < 1e-3 && std::abs(pos.x2 - opt.x2_bad) < 1e-3)
+              id_bad = id;
+          }
+
+          if (id_good >= 0 && id_bad >= 0 && eff_map.count(id_good) && eff_map.count(id_bad)) {
+            exp1::SimEff1 s;
+            s.eta_good = eff_map[id_good];
+            s.eta_bad  = eff_map[id_bad];
+            if (s.eta_bad > 0.0) {
+              s.ratio_sim = s.eta_good / s.eta_bad;
+
+              double n_g  = total_ph[id_good];
+              double n_b  = total_ph[id_bad];
+              double se_g = (n_g > 0.0) ? std::sqrt(s.eta_good * (1.0 - s.eta_good) / n_g) : 0.0;
+              double se_b = (n_b > 0.0) ? std::sqrt(s.eta_bad  * (1.0 - s.eta_bad)  / n_b) : 0.0;
+              s.sigma_ratio_sim = s.ratio_sim
+                                  * std::sqrt((se_g / s.eta_good) * (se_g / s.eta_good)
+                                              + (se_b / s.eta_bad) * (se_b / s.eta_bad));
+
+              // Fattore correttivo geometrico sorgente rettangolare → sferica a origine
+              double f_good = geom_correction(opt.x1_good, src_xh, src_zh);
+              double f_bad  = geom_correction(opt.x1_bad,  src_xh, src_zh);
+              s.c_geom               = f_good / f_bad;
+              s.ratio_sim_corr       = s.ratio_sim       * s.c_geom;
+              s.sigma_ratio_sim_corr = s.sigma_ratio_sim * s.c_geom;
+
+              maybe_sim = s;
+            }
+          } else {
+            std::cerr << "[WARNING] Configurazioni (x1=" << opt.x1_good << ",x2=" << opt.x2_good
+                      << ") o (x1=" << opt.x1_bad << ",x2=" << opt.x2_bad
+                      << ") non trovate nel file ROOT\n";
+          }
+        }
+        ev_file.Close();
+      }
+    }
+
+    // 8. Output ROOT
 
     std::cout << "\n Produzione output\n";
     exp1::AnalysisConfig acfg;
@@ -256,7 +434,7 @@ int main(int argc, char** argv) {
     acfg.z_max_percentile = opt.z_max;
 
     exp1::produce_output(good_diff, bad_diff, good_stack, bad_stack, bg_stack, comparison, fbf,
-                         acfg);
+                         maybe_sim, acfg);
 
   } catch (const std::exception& e) {
     std::cerr << "\n[ERRORE] " << e.what() << "\n";

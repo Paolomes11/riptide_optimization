@@ -345,7 +345,7 @@ Il limite superiore `source_y_max = 10√2 ≈ 14.14 mm` garantisce che tracce d
 ```bash
 lsblk
 sudo mkdir -p /mnt/external_ssd
-sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p1 /mnt/external_ssd
+sudo mount -o noatime,nodiratime,discard /dev/nvme1n1p2 /mnt/external_ssd
 mountpoint -q /mnt/external_ssd && echo "OK"
 ```
 

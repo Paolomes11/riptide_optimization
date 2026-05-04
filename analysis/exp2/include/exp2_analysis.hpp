@@ -67,6 +67,7 @@ struct OutputConfig {
   bool save_root                   = true;
   double z_min_percentile          = 0.005;
   double z_max_percentile          = 0.995;
+  std::string qmap_path            = "";
 };
 
 /**
