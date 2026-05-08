@@ -55,6 +55,8 @@ while [[ $# -gt 0 ]]; do
       LENS75_ID="$2"; EXTRA_ARGS+=("--lens75-id" "$2"); shift 2 ;;
     --lens60-id)
       LENS60_ID="$2"; EXTRA_ARGS+=("--lens60-id" "$2"); shift 2 ;;
+    --focus-tsv)
+      EXTRA_ARGS+=("--focus-tsv" "$2"); shift 2 ;;
     *)
       EXTRA_ARGS+=("$1"); shift ;;
   esac

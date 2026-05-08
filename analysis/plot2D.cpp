@@ -33,6 +33,7 @@ struct Config {
   double x2;
   std::string lens1_id;
   std::string lens2_id;
+  int focus_valid = 1; // 1=valida, 0=fuoco invalido (da branch focus_valid nel ROOT)
 };
 
 struct CliConfig {
@@ -161,6 +162,9 @@ int main(int argc, char** argv) {
   double n_hits_val;
   char l1_id_buf[256];
   char l2_id_buf[256];
+  double x_det_val   = 0.0;
+  int    fv_val      = 1;
+  bool   has_fv_branch = (tree_config->GetBranch("focus_valid") != nullptr);
 
   tree_config->SetBranchAddress("x1", &x1_val);
   tree_config->SetBranchAddress("x2", &x2_val);
@@ -168,6 +172,10 @@ int main(int argc, char** argv) {
   if (tree_config->GetBranch("lens75_id")) {
     tree_config->SetBranchAddress("lens75_id", l1_id_buf);
     tree_config->SetBranchAddress("lens60_id", l2_id_buf);
+  }
+  if (has_fv_branch) {
+    tree_config->SetBranchAddress("x_det",        &x_det_val);
+    tree_config->SetBranchAddress("focus_valid",   &fv_val);
   }
 
   if (is_opt_mode) {
@@ -189,7 +197,7 @@ int main(int argc, char** argv) {
     tree_config->GetEntry(i);
     std::string s1        = tree_config->GetBranch("lens75_id") ? l1_id_buf : "default";
     std::string s2        = tree_config->GetBranch("lens60_id") ? l2_id_buf : "default";
-    config_map[config_id] = {x1_val, x2_val, s1, s2};
+    config_map[config_id] = {x1_val, x2_val, s1, s2, has_fv_branch ? fv_val : 1};
 
     bool found = false;
     for (auto const& p : available_pairs) {
@@ -228,8 +236,17 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  // Separa configurazioni invalide (focus_valid=0) da quelle valide
+  std::map<int, Config> filtered_invalid;
+  for (auto const& [id, cfg] : filtered_config) {
+    if (cfg.focus_valid == 0)
+      filtered_invalid[id] = cfg;
+  }
+  for (auto const& [id, _] : filtered_invalid)
+    filtered_config.erase(id);
+
   // ===============================
-  // Ricostruzione configurazioni
+  // Ricostruzione configurazioni (range su valide + invalide)
   // ===============================
   double x1_min_all = 1e9;
   double x1_max_all = -1e9;
@@ -237,6 +254,12 @@ int main(int argc, char** argv) {
   double x2_max_all = -1e9;
 
   for (auto const& [id, cfg] : filtered_config) {
+    x1_min_all = std::min(x1_min_all, cfg.x1);
+    x1_max_all = std::max(x1_max_all, cfg.x1);
+    x2_min_all = std::min(x2_min_all, cfg.x2);
+    x2_max_all = std::max(x2_max_all, cfg.x2);
+  }
+  for (auto const& [id, cfg] : filtered_invalid) {
     x1_min_all = std::min(x1_min_all, cfg.x1);
     x1_max_all = std::max(x1_max_all, cfg.x1);
     x2_min_all = std::min(x2_min_all, cfg.x2);
@@ -251,6 +274,11 @@ int main(int argc, char** argv) {
                     Form("Efficiency: %s + %s;X1 [mm];X2 [mm]", sel_l1.c_str(), sel_l2.c_str()),
                     n_bins_x1, x1_min_all - dx / 2.0, x1_max_all + dx / 2.0, n_bins_x2,
                     x2_min_all - dx / 2.0, x2_max_all + dx / 2.0);
+
+  TH2D h_invalid("h_invalid", "", n_bins_x1, x1_min_all - dx / 2.0, x1_max_all + dx / 2.0,
+                 n_bins_x2, x2_min_all - dx / 2.0, x2_max_all + dx / 2.0);
+  for (auto const& [id, cfg] : filtered_invalid)
+    h_invalid.Fill(cfg.x1, cfg.x2, 1.0);
 
   // Riempimento istogramma
   std::map<int, double> efficiency_sum;
@@ -346,6 +374,13 @@ int main(int argc, char** argv) {
     palette->SetX1NDC(0.86);
     palette->SetX2NDC(0.91);
     palette->SetLabelSize(0.03);
+  }
+
+  // disegna celle invalide (fuoco troppo vicino alla lente) in grigio
+  if (h_invalid.GetEntries() > 0) {
+    h_invalid.SetFillColor(kGray + 1);
+    h_invalid.SetLineColor(kGray + 1);
+    h_invalid.Draw("BOX SAME");
   }
 
   // aggiorna canvas e salva

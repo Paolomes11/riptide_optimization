@@ -71,8 +71,11 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
       }
     }
 
-    if (!m_lens75_phys || !m_lens60_phys || !m_photocathode_phys) {
-      throw std::runtime_error("Lens/photocathode physical volumes not found in GDML");
+    if (!m_lens75_phys || !m_lens60_phys) {
+      throw std::runtime_error("Lens physical volumes not found in GDML");
+    }
+    if (!m_photocathode_phys) {
+      spdlog::warn("Photocathode physical volume not found in GDML — SD disabled");
     }
 
     // Supporto per LensCutter: sostituisci i solidi se gli ID sono forniti

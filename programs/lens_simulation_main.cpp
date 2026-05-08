@@ -45,11 +45,12 @@ int main(int argc, char** argv) {
   std::filesystem::path config_file = "config/config.json";
   std::string lens75_id;
   std::string lens60_id;
-  bool visualize = false;
-  bool batch     = false;
-  bool lens_sim  = false;
-  bool show_help = false;
-  bool use_ssd   = false;
+  bool        visualize = false;
+  bool        batch     = false;
+  bool        lens_sim  = false;
+  bool        show_help = false;
+  bool        use_ssd   = false;
+  std::string focus_tsv;
 
   // Path di output: default locale, sovrascrivibile da CLI o --ssd
   std::string root_output_file = "output/lens_simulation/lens.root";
@@ -69,7 +70,10 @@ int main(int argc, char** argv) {
            | lyra::opt(use_ssd)["--ssd"]("Write output to external SSD (uses --ssd-mount)")
            | lyra::opt(visualize)["-v"]["--visualize"]("Enable visualization mode")
            | lyra::opt(batch)["-b"]["--batch"]("Enable batch mode (no visualization)")
-           | lyra::opt(lens_sim)["-l"]["--lens-sim"]("Enable lens simulation mode");
+           | lyra::opt(lens_sim)["-l"]["--lens-sim"]("Enable lens simulation mode")
+           | lyra::opt(focus_tsv, "tsv")["--focus-tsv"](
+                 "TSV file from dof_map with per-(x1,x2) focus positions; enables moving detector "
+                 "to focus (requires x_focus >= x2 + lens_det_gap)");
 
   auto result = cli.parse({argc, argv});
   if (!result) {
@@ -139,7 +143,7 @@ int main(int argc, char** argv) {
     if (lens_sim) {
       spdlog::info("Running lens simulation");
       riptide::lens_scan(&run_manager, macro_file, root_output_file, config_file, lens75_id,
-                         lens60_id);
+                         lens60_id, focus_tsv);
       return EXIT_SUCCESS;
     }
 

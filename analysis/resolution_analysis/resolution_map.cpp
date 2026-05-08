@@ -119,8 +119,11 @@ struct Aggregated {
   int n_dof           = 0;
   double sum_delta_y  = 0.0;
   int n_delta_y       = 0;
+  double sum_focus    = 0.0;
+  int    n_focus      = 0;
   double dof_mean     = 0.0;
   double delta_y_mean = 0.0;
+  double focus_mean   = std::numeric_limits<double>::quiet_NaN();
 };
 
 static std::optional<std::pair<double, double>>
@@ -275,6 +278,7 @@ int main(int argc, char** argv) {
       (cli.lower_percentile >= 0.0) ? cli.lower_percentile : config.value("lower_percentile", 0.0);
   double upper_percentile =
       (cli.upper_percentile >= 0.0) ? cli.upper_percentile : config.value("upper_percentile", 0.0);
+  double lens_det_gap = config.value("lens_det_gap", 0.0);
 
   if (!(scan_step > 0.0)) {
     std::cerr << "Errore: scan_step deve essere > 0\n";
@@ -377,6 +381,14 @@ int main(int argc, char** argv) {
       agg[rr.config_id].n_dof += 1;
     }
 
+    if (rr.sigma_dz > 1e-12) {
+      double xf = it->second.x_virtual - rr.cov_z_dz / (rr.sigma_dz * rr.sigma_dz);
+      if (std::isfinite(xf)) {
+        agg[rr.config_id].sum_focus += xf;
+        agg[rr.config_id].n_focus  += 1;
+      }
+    }
+
     auto delta = compute_delta_y_min_at_focus(rr, it->second, x_scan, k);
     if (delta.has_value() && std::isfinite(*delta) && *delta > 0.0) {
       agg[rr.config_id].sum_delta_y += *delta;
@@ -387,6 +399,8 @@ int main(int argc, char** argv) {
   for (auto& [id, a] : agg) {
     a.dof_mean     = (a.n_dof > 0) ? (a.sum_dof / static_cast<double>(a.n_dof)) : 0.0;
     a.delta_y_mean = (a.n_delta_y > 0) ? (a.sum_delta_y / static_cast<double>(a.n_delta_y)) : 0.0;
+    a.focus_mean   = (a.n_focus > 0) ? (a.sum_focus / static_cast<double>(a.n_focus))
+                                      : std::numeric_limits<double>::quiet_NaN();
   }
 
   int n_bins_x1 = std::round((x1_max_data - x1_min_data) / dx_grid) + 1;
@@ -406,6 +420,9 @@ int main(int argc, char** argv) {
                   x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
                   x2_max_data + dx_grid / 2.0);
   TH2D h_mask_delta("h_mask_delta", "", n_bins_x1, x1_min_data - dx_grid / 2.0,
+                    x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
+                    x2_max_data + dx_grid / 2.0);
+  TH2D h_focus_warn("h_focus_warn", "", n_bins_x1, x1_min_data - dx_grid / 2.0,
                     x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
                     x2_max_data + dx_grid / 2.0);
   for (int bx = 1; bx <= n_bins_x1; ++bx) {
@@ -429,6 +446,10 @@ int main(int argc, char** argv) {
     auto it = agg.find(id);
     if (it == agg.end()) {
       continue;
+    }
+
+    if (std::isfinite(it->second.focus_mean) && it->second.focus_mean < c.x2 + lens_det_gap) {
+      h_focus_warn.SetBinContent(bx, by, 1.0);
     }
 
     if (it->second.n_dof > 0) {
@@ -490,6 +511,28 @@ int main(int argc, char** argv) {
     }
   }
 
+  auto build_warn_boxes = [&]() {
+    std::vector<std::unique_ptr<TBox>> boxes;
+    boxes.reserve(static_cast<size_t>(n_bins_x1 * n_bins_x2));
+    for (int bx = 1; bx <= n_bins_x1; ++bx) {
+      double x_lo = h_focus_warn.GetXaxis()->GetBinLowEdge(bx);
+      double x_hi = h_focus_warn.GetXaxis()->GetBinUpEdge(bx);
+      for (int by = 1; by <= n_bins_x2; ++by) {
+        if (h_focus_warn.GetBinContent(bx, by) < 0.5) {
+          continue;
+        }
+        double y_lo = h_focus_warn.GetYaxis()->GetBinLowEdge(by);
+        double y_hi = h_focus_warn.GetYaxis()->GetBinUpEdge(by);
+        auto box    = std::make_unique<TBox>(x_lo, y_lo, x_hi, y_hi);
+        box->SetFillColorAlpha(kOrange + 1, 0.35);
+        box->SetLineColor(0);
+        box->Draw("same");
+        boxes.push_back(std::move(box));
+      }
+    }
+    return boxes;
+  };
+
   auto build_mask_boxes = [&](TH2D& h_mask) {
     std::vector<std::unique_ptr<TBox>> boxes;
     boxes.reserve(static_cast<size_t>(n_bins_x1 * n_bins_x2));
@@ -520,6 +563,7 @@ int main(int argc, char** argv) {
     c.SetRightMargin(0.16);
     c.SetTopMargin(0.08);
     h.Draw("COLZ");
+    auto warn_boxes = build_warn_boxes();
     auto boxes      = build_mask_boxes(h_mask);
     std::string out = (std::filesystem::path(cli.output_dir) / (name + ".png")).string();
     c.SaveAs(out.c_str());

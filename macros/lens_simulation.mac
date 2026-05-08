@@ -16,6 +16,3 @@
 /gps/ang/rot2 0 0 1
 /gps/ang/mintheta 0 deg
 /gps/ang/maxtheta 90 deg
-
-# Run
-/run/beamOn 1000

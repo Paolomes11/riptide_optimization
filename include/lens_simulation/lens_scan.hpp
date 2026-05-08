@@ -24,7 +24,8 @@ namespace riptide {
 void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                const std::string& root_output_file,
                const std::filesystem::path& config_file = "config/config.json",
-               const std::string& lens75_id = "", const std::string& lens60_id = "");
+               const std::string& lens75_id = "", const std::string& lens60_id = "",
+               const std::string& focus_tsv = "");
 }
 
 #endif // RIPTIDE_LENS_SCAN_HPP

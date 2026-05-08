@@ -16,6 +16,7 @@
 #include "action_initialization.hpp"
 #include "detector_construction.hpp"
 #include "event_action.hpp"
+#include "focus_map.hpp"
 #include "importance_sampling.hpp"
 #include "primary_generator_action.hpp"
 
@@ -35,7 +36,8 @@ namespace riptide {
 
 void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                const std::string& root_output_file, const std::filesystem::path& config_file,
-               const std::string& lens75_id_arg, const std::string& lens60_id_arg) {
+               const std::string& lens75_id_arg, const std::string& lens60_id_arg,
+               const std::string& focus_tsv) {
   using json = nlohmann::json;
 
   // Crea la directory di output se non esiste
@@ -92,6 +94,8 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   analysisManager->CreateNtupleDColumn("x2");
   analysisManager->CreateNtupleSColumn("lens75_id");
   analysisManager->CreateNtupleSColumn("lens60_id");
+  analysisManager->CreateNtupleDColumn("x_det");      // posizione detector per questa config
+  analysisManager->CreateNtupleIColumn("focus_valid"); // 1=valida, 0=fuoco invalido
   analysisManager->FinishNtuple(0);
 
   // Vettori bound per le hit (necessari per CreateNtupleFColumn con std::vector)
@@ -113,16 +117,32 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   double x_min = config["x_min"];
   double dx    = config["dx"];
   double x_max;
-  if (config.contains("x_det")) {
-    double x_det     = config["x_det"].get<double>();
-    double x_det_gap = config.value("lens_det_gap", 0.0);
-    x_max            = x_det - x_det_gap;
-    spdlog::info("x_max = x_det({:.1f}) - lens_det_gap({:.1f}) = {:.1f} mm", x_det, x_det_gap,
+  double global_x_det  = 0.0;
+  double lens_det_gap  = config.value("lens_det_gap", 0.0);
+  bool   use_focus_map = !focus_tsv.empty();
+
+  if (use_focus_map) {
+    x_max = config.contains("x_max") ? config["x_max"].get<double>()
+                                      : config["x_det"].get<double>() - lens_det_gap;
+    global_x_det = config.value("x_det", 0.0);
+    det->SetDetectorPosition(global_x_det);
+    spdlog::info("focus-tsv mode: x_max={:.1f}, TSV={}", x_max, focus_tsv);
+  } else if (config.contains("x_det")) {
+    double x_det = config["x_det"].get<double>();
+    x_max        = x_det - lens_det_gap;
+    global_x_det = x_det;
+    spdlog::info("x_max = x_det({:.1f}) - lens_det_gap({:.1f}) = {:.1f} mm", x_det, lens_det_gap,
                  x_max);
     det->SetDetectorPosition(x_det);
   } else {
-    x_max = config["x_max"];
+    x_max        = config["x_max"];
+    global_x_det = config.value("x_det", 0.0);
   }
+
+  // Carica mappa fuochi se richiesto
+  FocusMap focus_map;
+  if (use_focus_map)
+    focus_map = load_focus_map(focus_tsv);
 
   // Parametri sorgente GPS (mappa 3D PSF)
   double source_y_min = config.value("source_y_min", 0.0);
@@ -133,6 +153,7 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   double source_x_max = config.value("source_x_max", 30.0);
   double source_dx    = config.value("source_dx", 5.0);
 
+  int lens_n_photons   = config.value("lens_n_photons", 1000);
   int config_id_offset = config.value("config_id_offset", 0);
   int run_id_offset    = config.value("run_id_offset", 0);
 
@@ -150,6 +171,16 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     for (const auto& p : config["pairs"]) {
       pairs.push_back({p[0].get<double>(), p[1].get<double>()});
     }
+  } else if (use_focus_map) {
+    // Coppie estratte direttamente dal TSV per garantire allineamento
+    double x1_start = config.value("x1_start", x_min);
+    double x1_end   = config.value("x1_end", x_max);
+    for (auto& p : get_pairs_from_focus_map(focus_map)) {
+      if (p.first >= x1_start - 1e-6 && p.first <= x1_end + 1e-6 &&
+          p.second <= x_max + 1e-6)
+        pairs.push_back(p);
+    }
+    spdlog::info("focus-tsv: {} coppie caricate dal TSV", pairs.size());
   } else {
     const double margin = config.value("lens_gap_margin", 1.0);
     double x1_start     = config.value("x1_start", x_min);
@@ -170,6 +201,29 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     double x1 = pair.first;
     double x2 = pair.second;
 
+    // Determina posizione detector e validità per questa config
+    double x_det_config = global_x_det;
+    int    focus_valid  = 1;
+    if (use_focus_map) {
+      auto fopt = lookup_focus(focus_map, x1, x2);
+      if (!fopt) {
+        focus_valid  = 0;
+        x_det_config = 0.0;
+        spdlog::warn("focus-tsv: nessuna corrispondenza per ({:.1f},{:.1f}) — config invalida",
+                     x1, x2);
+      } else {
+        x_det_config = *fopt;
+        if (std::isnan(x_det_config) || x_det_config <= 0.0 ||
+            x_det_config < x2 + lens_det_gap) {
+          focus_valid = 0;
+          spdlog::warn("focus-tsv: fuoco {:.1f} invalido per lens2={:.1f} + gap={:.1f}",
+                       x_det_config, x2, lens_det_gap);
+        } else {
+          det->SetDetectorPosition(x_det_config);
+        }
+      }
+    }
+
     det->SetLensPositions(x1, x2);
     run_manager->GeometryHasBeenModified();
 
@@ -178,79 +232,89 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     analysisManager->FillNtupleDColumn(0, 2, x2);
     analysisManager->FillNtupleSColumn(0, 3, lens75_id);
     analysisManager->FillNtupleSColumn(0, 4, lens60_id);
+    analysisManager->FillNtupleDColumn(0, 5, x_det_config);
+    analysisManager->FillNtupleIColumn(0, 6, focus_valid);
     analysisManager->AddNtupleRow(0);
 
-    for (double x_source = source_x_min; x_source <= source_x_max + 1e-9; x_source += source_dx) {
-      for (double y_source = source_y_min; y_source <= source_y_max + 1e-9; y_source += source_dy) {
-        UImanager->ApplyCommand("/gps/pos/centre " + std::to_string(x_source) + " "
-                                + std::to_string(y_source) + " 0 mm");
+    if (focus_valid) {
+      for (double x_source = source_x_min; x_source <= source_x_max + 1e-9; x_source += source_dx) {
+        for (double y_source = source_y_min; y_source <= source_y_max + 1e-9;
+             y_source += source_dy) {
+          UImanager->ApplyCommand("/gps/pos/centre " + std::to_string(x_source) + " "
+                                  + std::to_string(y_source) + " 0 mm");
 
-        // Calcola il cono statico per questo run (sorgente puntiforme)
-        if (config.value("use_importance_sampling", false)) {
-          G4ThreeVector pos(x_source, y_source, 0);
-          G4ThreeVector axis;
-          double maxTheta;
-          auto params = det->GetLens75Params();
-          axis        = (G4ThreeVector(params.x, 0, 0) - pos).unit();
-          ImportanceSamplingHelper::CalculateCone(pos, params, axis, maxTheta);
+          // Calcola il cono statico per questo run (sorgente puntiforme)
+          if (config.value("use_importance_sampling", false)) {
+            G4ThreeVector pos(x_source, y_source, 0);
+            G4ThreeVector axis;
+            double maxTheta;
+            auto params = det->GetLens75Params();
+            axis        = (G4ThreeVector(params.x, 0, 0) - pos).unit();
+            ImportanceSamplingHelper::CalculateCone(pos, params, axis, maxTheta);
 
-          // Angolo solido emisferico originale (piatto)
-          double originalOmega = 2.0 * M_PI;
-          double cosMaxTheta   = std::cos(maxTheta);
-          double newOmega      = 2.0 * M_PI * (1.0 - cosMaxTheta);
-          double weight        = newOmega / originalOmega;
+            double originalOmega = 2.0 * M_PI;
+            double cosMaxTheta   = std::cos(maxTheta);
+            double newOmega      = 2.0 * M_PI * (1.0 - cosMaxTheta);
+            double weight        = newOmega / originalOmega;
 
-          if (run_counter == 0) {
-            spdlog::info("Configured Importance Sampling: theta_max = {:.2f} deg, weight = {:.4f}",
-                         maxTheta * 180.0 / M_PI, weight);
+            if (run_counter == 0) {
+              spdlog::info(
+                  "Configured Importance Sampling: theta_max = {:.2f} deg, weight = {:.4f}",
+                  maxTheta * 180.0 / M_PI, weight);
+            }
+
+            auto* primaryGen =
+                const_cast<PrimaryGeneratorAction*>(static_cast<const PrimaryGeneratorAction*>(
+                    run_manager->GetUserPrimaryGeneratorAction()));
+            if (primaryGen) {
+              primaryGen->SetStaticCone(axis, maxTheta);
+            }
           }
 
-          auto* primaryGen =
-              const_cast<PrimaryGeneratorAction*>(static_cast<const PrimaryGeneratorAction*>(
-                  run_manager->GetUserPrimaryGeneratorAction()));
-          if (primaryGen) {
-            primaryGen->SetStaticCone(axis, maxTheta);
-          }
-        }
-
-        int run_id        = run_counter++;
-        auto* eventAction = dynamic_cast<EventAction*>(
-            const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
-        if (eventAction) {
-          eventAction->runID = run_id;
-          eventAction->ResetLastRunHitCount();
-          eventAction->ClearEventHits();
-        }
-
-        long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-        CLHEP::HepRandom::setTheSeed(seed);
-
-        UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
-
-        if (eventAction) {
-          const auto& hits = eventAction->GetEventHits();
-          y_hits_vec.clear();
-          z_hits_vec.clear();
-          y_hits_vec.reserve(hits.size());
-          z_hits_vec.reserve(hits.size());
-          for (const auto& h : hits) {
-            y_hits_vec.push_back(h.y);
-            z_hits_vec.push_back(h.z);
+          int run_id        = run_counter++;
+          auto* eventAction = dynamic_cast<EventAction*>(
+              const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
+          if (eventAction) {
+            eventAction->runID = run_id;
+            eventAction->ResetLastRunHitCount();
+            eventAction->ClearEventHits();
           }
 
-          double n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0.0;
-          analysisManager->FillNtupleIColumn(1, 0, config_counter);
-          analysisManager->FillNtupleIColumn(1, 1, run_id);
-          analysisManager->FillNtupleDColumn(1, 2, x_source);
-          analysisManager->FillNtupleDColumn(1, 3, y_source);
-          analysisManager->FillNtupleDColumn(1, 4, n_hits);
-          analysisManager->AddNtupleRow(1);
-        }
+          long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+          CLHEP::HepRandom::setTheSeed(seed);
 
-        spdlog::info("Run done: config_id={}, x_src={}, y_src={}, n_hits={}", config_counter,
-                     x_source, y_source, eventAction ? eventAction->GetLastRunHitCount() : 0);
+          UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
+          UImanager->ApplyCommand("/run/beamOn " + std::to_string(lens_n_photons));
+
+          if (eventAction) {
+            const auto& hits = eventAction->GetEventHits();
+            y_hits_vec.clear();
+            z_hits_vec.clear();
+            y_hits_vec.reserve(hits.size());
+            z_hits_vec.reserve(hits.size());
+            for (const auto& h : hits) {
+              y_hits_vec.push_back(h.y);
+              z_hits_vec.push_back(h.z);
+            }
+
+            double n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0.0;
+            analysisManager->FillNtupleIColumn(1, 0, config_counter);
+            analysisManager->FillNtupleIColumn(1, 1, run_id);
+            analysisManager->FillNtupleDColumn(1, 2, x_source);
+            analysisManager->FillNtupleDColumn(1, 3, y_source);
+            analysisManager->FillNtupleDColumn(1, 4, n_hits);
+            analysisManager->AddNtupleRow(1);
+          }
+
+          spdlog::info("Run done: config_id={}, x_src={}, y_src={}, n_hits={}", config_counter,
+                       x_source, y_source, eventAction ? eventAction->GetLastRunHitCount() : 0);
+        }
       }
+    } else {
+      spdlog::info("Skipped config_id={} (focus_valid=0, x_det={:.1f})", config_counter,
+                   x_det_config);
     }
+
     config_counter++;
   }
 

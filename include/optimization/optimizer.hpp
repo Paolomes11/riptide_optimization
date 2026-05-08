@@ -25,7 +25,7 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
                       const std::string& root_output_file,
                       const std::filesystem::path& config_file = "config/config.json",
                       bool all_lenses = false, const std::string& lens75_id = "",
-                      const std::string& lens60_id = "");
+                      const std::string& lens60_id = "", const std::string& focus_tsv = "");
 }
 
 #endif // RIPTIDE_OPTIMIZER_HPP
