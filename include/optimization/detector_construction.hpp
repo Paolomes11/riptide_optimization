@@ -53,9 +53,10 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   std::optional<std::string> m_lens60_id;
 
   // Volumi fisici
-  G4VPhysicalVolume* m_world       = nullptr;
-  G4VPhysicalVolume* m_lens75_phys = nullptr;
-  G4VPhysicalVolume* m_lens60_phys = nullptr;
+  G4VPhysicalVolume* m_world            = nullptr;
+  G4VPhysicalVolume* m_lens75_phys      = nullptr;
+  G4VPhysicalVolume* m_lens60_phys      = nullptr;
+  G4VPhysicalVolume* m_photocathode_phys = nullptr;
 
  public:
   DetectorConstruction(std::filesystem::path geometry_path, double lens75_x = 83.9,
@@ -69,6 +70,7 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
 
   // Setter per ottimizzazione
   void SetLensPositions(double lens75_x, double lens60_x);
+  void SetDetectorPosition(double x_det);
 
   // Nuovo: Cambia i modelli delle lenti al volo
   void SetLenses(const std::string& lens75_id, const std::string& lens60_id);

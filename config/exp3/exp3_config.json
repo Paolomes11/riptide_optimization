@@ -1,0 +1,24 @@
+{
+    "display": {
+        "mm_per_px_x":   0.0,
+        "mm_per_px_y":   0.0,
+        "width_px":      1920,
+        "height_px":     1080,
+        "wavelength_nm": 525.0
+    },
+    "axial_distances_nominal_mm":  [150.0, 165.0, 180.0, 195.0, 210.0],
+    "axial_distances_measured_mm": [150.0, 165.0, 180.0, 195.0, 210.0],
+    "orientations_deg":            [0.0, 30.0, 60.0, 90.0, 120.0, 150.0],
+    "calibration_grid_step_px":    50,
+    "stack_n_sigma":    3.0,
+    "stack_n_iter":     3,
+    "stack_min_frames": 2,
+    "min_snr":             5.0,
+    "min_valid_slices":    30,
+    "angle_tolerance_deg": 10.0,
+    "q_map_tsv": "output/psf_analysis/q_tsv11.tsv",
+    "lens_configs": [
+        { "x1_mm": 0.0, "x2_mm": 0.0, "label": "good" },
+        { "x1_mm": 0.0, "x2_mm": 0.0, "label": "bad"  }
+    ]
+}

@@ -116,8 +116,18 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
 
   // Parametri di ottimizzazione
   double x_min = config["x_min"];
-  double x_max = config["x_max"];
   double dx    = config["dx"];
+  double x_max;
+  if (config.contains("x_det")) {
+    double x_det     = config["x_det"].get<double>();
+    double x_det_gap = config.value("lens_det_gap", 0.0);
+    x_max            = x_det - x_det_gap;
+    spdlog::info("x_max = x_det({:.1f}) - lens_det_gap({:.1f}) = {:.1f} mm", x_det, x_det_gap,
+                 x_max);
+    det->SetDetectorPosition(x_det);
+  } else {
+    x_max = config["x_max"];
+  }
 
   // Parametri sorgente GPS
   double source_width     = config.value("source_width", 60.0);

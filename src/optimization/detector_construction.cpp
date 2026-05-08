@@ -66,11 +66,13 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
         m_lens75_phys = pv;
       } else if (name == "lens60_x_phys") {
         m_lens60_phys = pv;
+      } else if (name == "photocathode_x_phys") {
+        m_photocathode_phys = pv;
       }
     }
 
-    if (!m_lens75_phys || !m_lens60_phys) {
-      throw std::runtime_error("Lens physical volumes not found in GDML");
+    if (!m_lens75_phys || !m_lens60_phys || !m_photocathode_phys) {
+      throw std::runtime_error("Lens/photocathode physical volumes not found in GDML");
     }
 
     // Supporto per LensCutter: sostituisci i solidi se gli ID sono forniti
@@ -175,6 +177,16 @@ void DetectorConstruction::SetLensPositions(double lens75_x, double lens60_x) {
   // Forza il ricalcolo della geometria per evitare che fotoni
   // vengano tracciati con la geometria della configurazione precedente
   G4RunManager::GetRunManager()->GeometryHasBeenModified();
+}
+
+void DetectorConstruction::SetDetectorPosition(double x_det) {
+  if (!m_photocathode_phys) {
+    spdlog::warn("SetDetectorPosition: m_photocathode_phys is null, skipping");
+    return;
+  }
+  m_photocathode_phys->SetTranslation(G4ThreeVector(x_det, 0, 0));
+  G4RunManager::GetRunManager()->GeometryHasBeenModified();
+  spdlog::info("Detector (photocathode) position set to x = {:.2f} mm", x_det);
 }
 
 void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::string& lens60_id) {

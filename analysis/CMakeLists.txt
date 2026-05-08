@@ -58,6 +58,9 @@ add_subdirectory(psf_analysis)
 # Sottocartella per esperimento 2 (tracce laser)
 add_subdirectory(exp2)
 
+# Sottocartella per esperimento 3 (funzione Q sperimentale)
+add_subdirectory(exp3)
+
 # Sottocartella per esperimento 1 (immagini FITS)
 add_subdirectory(exp1)
 
