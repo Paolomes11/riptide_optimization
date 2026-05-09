@@ -272,6 +272,22 @@ static double weighted_percentile(const std::vector<double>& x, const std::vecto
   return x[idx.back()];
 }
 
+static double weighted_radius_percentile(const std::vector<double>& y, const std::vector<double>& z,
+                                         const std::vector<double>& w, double fraction) {
+  double wy = 0.0, wz = 0.0, wtot = 0.0;
+  for (size_t i = 0; i < w.size(); ++i) {
+    wy += w[i] * y[i];
+    wz += w[i] * z[i];
+    wtot += w[i];
+  }
+  if (wtot <= 0.0) return std::numeric_limits<double>::quiet_NaN();
+  double cy = wy / wtot, cz = wz / wtot;
+  std::vector<double> r(y.size());
+  for (size_t i = 0; i < r.size(); ++i)
+    r[i] = std::sqrt((y[i] - cy) * (y[i] - cy) + (z[i] - cz) * (z[i] - cz));
+  return weighted_percentile(r, w, fraction);
+}
+
 static std::optional<double> quadratic_vertex_from_three_points(double x0, double y0, double x1,
                                                                 double y1, double x2, double y2) {
   double d0 = (x0 - x1) * (x0 - x2);
@@ -310,6 +326,7 @@ struct ResultRow {
   double n_rays           = 0.0;
   double n_rays_core      = 0.0;
   bool focus_before_lens2 = false;
+  double EE80             = std::numeric_limits<double>::quiet_NaN();
 };
 
 static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std::vector<double>& y0,
@@ -462,6 +479,9 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
   out.stripe_width        = p90 - p10;
   out.within_photocathode = (out.stripe_width <= 16.0) ? 1 : 0;
 
+  double R80   = weighted_radius_percentile(y_focus, z_focus, w_f, 0.80);
+  out.EE80     = std::isfinite(R80) ? 2.0 * R80 : std::numeric_limits<double>::quiet_NaN();
+
   double n_w_after = 0.0;
   for (double wi : w_f) {
     n_w_after += wi;
@@ -548,10 +568,6 @@ int main(int argc, char** argv) {
     x_virtual_min = std::min(x_virtual_min, c.x_virtual);
     x_virtual_max = std::max(x_virtual_max, c.x_virtual);
   }
-  if (std::isfinite(x_virtual_max)) {
-    scan_min = std::max(scan_min, x_virtual_max);
-  }
-
   for (double x = scan_min; x <= scan_max + 1e-12; x += scan_step) {
     x_scan.push_back(x);
   }
@@ -621,14 +637,14 @@ int main(int argc, char** argv) {
       std::filesystem::create_directories(tsv_path.parent_path());
     }
     std::ofstream out(tsv_path);
-    out << "x1\tx2\tx_focus\tx_focus_scan\tdof\tM\tm_target\tM_abs_err\tstripe_width\t"
+    out << "x1\tx2\tx_focus\tx_focus_scan\tdof\tM\tm_target\tM_abs_err\tEE80\tstripe_width\t"
            "within_photocathode\tn_rays\tn_rays_core\tcore_fraction\tconfig_id\tfocus_before_lens2\n";
     for (const auto& r : results) {
       out << r.x1 << "\t" << r.x2 << "\t" << r.x_focus << "\t" << r.x_focus_scan << "\t" << r.dof
-          << "\t" << r.M << "\t" << m_target << "\t" << r.M_abs_err << "\t" << r.stripe_width
-          << "\t" << r.within_photocathode << "\t" << r.n_rays << "\t" << r.n_rays_core << "\t"
-          << core_fraction << "\t" << r.config_id << "\t" << (r.focus_before_lens2 ? 1 : 0)
-          << "\n";
+          << "\t" << r.M << "\t" << m_target << "\t" << r.M_abs_err << "\t" << r.EE80 << "\t"
+          << r.stripe_width << "\t" << r.within_photocathode << "\t" << r.n_rays << "\t"
+          << r.n_rays_core << "\t" << core_fraction << "\t" << r.config_id << "\t"
+          << (r.focus_before_lens2 ? 1 : 0) << "\n";
     }
   }
 
@@ -655,6 +671,8 @@ int main(int argc, char** argv) {
   TH2D h_M_abs_err("h_M_abs_err", ";x1 [mm];x2 [mm];|M - M_{target}|", n_bins_x1,
                    x1_min_data - dx / 2.0, x1_max_data + dx / 2.0, n_bins_x2,
                    x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
+  TH2D h_EE80("h_EE80", ";x1 [mm];x2 [mm];EE80 [mm]", n_bins_x1, x1_min_data - dx / 2.0,
+              x1_max_data + dx / 2.0, n_bins_x2, x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
   TH2D h_stripe("h_stripe", ";x1 [mm];x2 [mm];stripe width [mm]", n_bins_x1, x1_min_data - dx / 2.0,
                 x1_max_data + dx / 2.0, n_bins_x2, x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
   TH2D h_margin("h_margin", ";x1 [mm];x2 [mm];16 - stripe width [mm]", n_bins_x1,
@@ -704,6 +722,7 @@ int main(int argc, char** argv) {
     h_dof.SetBinContent(bin_x, bin_y, r.dof);
     h_M.SetBinContent(bin_x, bin_y, r.M);
     h_M_abs_err.SetBinContent(bin_x, bin_y, r.M_abs_err);
+    if (std::isfinite(r.EE80)) h_EE80.SetBinContent(bin_x, bin_y, r.EE80);
     h_stripe.SetBinContent(bin_x, bin_y, r.stripe_width);
     double margin = 16.0 - r.stripe_width;
     h_margin.SetBinContent(bin_x, bin_y, margin);
@@ -811,11 +830,12 @@ int main(int argc, char** argv) {
   };
 
   static const std::unordered_map<std::string, std::string> kMapTitles = {
-      {"dof_focus_map",        "Posizione di fuoco ottimale"},
-      {"dof_dof_map",          "Profondit#grave{a} di campo (DoF)"},
-      {"dof_M_map",            "Magnificazione M"},
-      {"dof_stripe_map",       "Larghezza striscia"},
-      {"dof_M_error_map",      "Errore magnificazione |M#minusM_{tgt}|"},
+      {"dof_focus_map",           "Posizione di fuoco ottimale"},
+      {"dof_dof_map",             "Profondit#grave{a} di campo (DoF)"},
+      {"dof_M_map",               "Magnificazione M"},
+      {"dof_EE80_map",            "Diametro EE80 al fuoco [mm]"},
+      {"dof_stripe_map",          "Larghezza striscia"},
+      {"dof_M_error_map",         "Errore magnificazione |M#minusM_{tgt}|"},
       {"dof_within_photocathode", "Margine fotocatodo"},
   };
 
@@ -856,6 +876,7 @@ int main(int argc, char** argv) {
   save_map(h_focus, "dof_focus_map", kRainBow, best_focus_near);
   save_map(h_dof, "dof_dof_map", kBird, best_dof_max);
   save_map(h_M, "dof_M_map", kViridis, best_M_neutral);
+  save_map(h_EE80, "dof_EE80_map", kViridis, nullptr);
   save_map(h_stripe, "dof_stripe_map", kViridis, nullptr);
   save_map(h_M_abs_err, "dof_M_error_map", kViridis, best_M_target);
 

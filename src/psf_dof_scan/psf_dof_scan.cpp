@@ -135,10 +135,12 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
   }
   analysisManager->SetCompressionLevel(404);
 
-  bool save_hits     = config.value("psf_dof_save_hits", false);
-  int n_photons      = config.value("psf_dof_n_photons", 10000);
-  double x_virtual   = config.value("psf_dof_x_virtual_mm", 180.0);
-  int config_id_off  = config.value("config_id_offset", 0);
+  bool save_hits          = config.value("psf_dof_save_hits", false);
+  int n_photons           = config.value("psf_dof_n_photons", 10000);
+  bool has_virtual_mm     = config.contains("psf_dof_x_virtual_mm");
+  double x_virtual_mm     = config.value("psf_dof_x_virtual_mm", 180.0);
+  double x_virtual_offset = config.value("psf_dof_x_virtual_offset", 30.0);
+  int config_id_off       = config.value("config_id_offset", 0);
   int run_id_off     = config.value("run_id_offset", 0);
   int config_counter = config_id_off;
   int run_counter    = run_id_off;
@@ -171,6 +173,10 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
   analysisManager->CreateNtupleDColumn("sigma_dz");
   analysisManager->CreateNtupleDColumn("cov_y_dy");
   analysisManager->CreateNtupleDColumn("cov_z_dz");
+  analysisManager->CreateNtupleIColumn("n_killed_lens1");
+  analysisManager->CreateNtupleIColumn("n_killed_lens2");
+  analysisManager->CreateNtupleIColumn("n_killed_back");
+  analysisManager->CreateNtupleDColumn("is_weight");
   if (save_hits) {
     analysisManager->CreateNtupleFColumn("y_hits", eventAction->YHits());
     analysisManager->CreateNtupleFColumn("z_hits", eventAction->ZHits());
@@ -203,16 +209,6 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
   UImanager->ApplyCommand("/gps/ang/mintheta 0 deg");
   UImanager->ApplyCommand("/gps/ang/maxtheta 90 deg");
 
-  steppingAction->SetVirtualPlane(x_virtual);
-  {
-    auto lens1      = det->GetLens75Params();
-    double x1_front = lens1.x - 0.5 * lens1.tc - 1e-3;
-    double r1_lens  = 0.5 * det->GetLens75Diameter();
-    double x2_front = det->GetLens60X() - 0.5 * det->GetLens60Thickness() - 1e-3;
-    double r2_lens  = 0.5 * det->GetLens60Diameter();
-    steppingAction->SetLensAperturePlanes(x1_front, r1_lens, x2_front, r2_lens);
-  }
-
   double h1 = det->GetLens75Thickness();
   double h2 = det->GetLens60Thickness();
 
@@ -244,6 +240,17 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
     det->SetLensPositions(x1, x2);
     run_manager->GeometryHasBeenModified();
 
+    double x_virtual = has_virtual_mm ? x_virtual_mm : (x2 + x_virtual_offset);
+    steppingAction->SetVirtualPlane(x_virtual);
+    {
+      auto lens1      = det->GetLens75Params();
+      double x1_front = lens1.x - 0.5 * lens1.tc - 1e-3;
+      double r1_lens  = 0.5 * det->GetLens75Diameter();
+      double x2_front = det->GetLens60X() - 0.5 * det->GetLens60Thickness() - 1e-3;
+      double r2_lens  = 0.5 * det->GetLens60Diameter();
+      steppingAction->SetLensAperturePlanes(x1_front, r1_lens, x2_front, r2_lens);
+    }
+
     analysisManager->FillNtupleIColumn(0, 0, config_counter);
     analysisManager->FillNtupleDColumn(0, 1, x1);
     analysisManager->FillNtupleDColumn(0, 2, x2);
@@ -257,6 +264,7 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
         UImanager->ApplyCommand("/gps/pos/centre " + std::to_string(x_source) + " "
                                 + std::to_string(y_source) + " 0 mm");
 
+        double is_weight = 1.0;
         if (config.value("use_importance_sampling", false)) {
           G4ThreeVector pos(x_source, y_source, 0);
           auto params = det->GetLens75Params();
@@ -265,10 +273,12 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
           axis            = (G4ThreeVector(params.x, 0, 0) - pos).unit();
           ImportanceSamplingHelper::CalculateCone(pos, params, axis, maxTheta);
           primaryGen->SetStaticCone(axis, maxTheta);
+          is_weight = 1.0 - std::cos(maxTheta);
         }
 
         int run_id = run_counter++;
         eventAction->ClearRays();
+        steppingAction->ResetKillCounters();
 
         long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
         CLHEP::HepRandom::setTheSeed(seed);
@@ -280,6 +290,9 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
         }
 
         auto stats = compute_stats(eventAction->Moments());
+        int k1     = steppingAction->GetKilledLens1();
+        int k2     = steppingAction->GetKilledLens2();
+        int k_back = steppingAction->GetKilledBack();
 
         analysisManager->FillNtupleIColumn(1, 0, config_counter);
         analysisManager->FillNtupleIColumn(1, 1, run_id);
@@ -297,10 +310,17 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
         analysisManager->FillNtupleDColumn(1, 13, stats.sigma_dz);
         analysisManager->FillNtupleDColumn(1, 14, stats.cov_y_dy);
         analysisManager->FillNtupleDColumn(1, 15, stats.cov_z_dz);
+        analysisManager->FillNtupleIColumn(1, 16, k1);
+        analysisManager->FillNtupleIColumn(1, 17, k2);
+        analysisManager->FillNtupleIColumn(1, 18, k_back);
+        analysisManager->FillNtupleDColumn(1, 19, is_weight);
         analysisManager->AddNtupleRow(1);
 
-        spdlog::info("Run done: config_id={}, run_id={}, x_src={}, y_src={}, hits_w={:.1f}",
-                     config_counter, run_id, x_source, y_source, stats.n_hits);
+        spdlog::info(
+            "Run done: config_id={}, run_id={}, x_src={}, y_src={}, hits_w={:.1f}, "
+            "killed_l1={}, killed_l2={}, killed_back={}, is_weight={:.4f}, photons={}",
+            config_counter, run_id, x_source, y_source, stats.n_hits, k1, k2, k_back,
+            is_weight, n_photons);
       }
     }
 

@@ -30,11 +30,7 @@ void PsfDofSteppingAction::UserSteppingAction(const G4Step* step) {
   auto momentum = track->GetMomentum();
 
   if (pos.x() < -1.0 * CLHEP::mm && momentum.x() < 0.0) {
-    track->SetTrackStatus(fStopAndKill);
-    return;
-  }
-
-  if (std::abs(pos.y()) > 150.0 * CLHEP::mm || std::abs(pos.z()) > 150.0 * CLHEP::mm) {
+    ++m_n_killed_back;
     track->SetTrackStatus(fStopAndKill);
     return;
   }
@@ -55,6 +51,7 @@ void PsfDofSteppingAction::UserSteppingAction(const G4Step* step) {
     double z = (pp.z() + t * (qp.z() - pp.z())) / CLHEP::mm;
     double r = std::hypot(y, z);
     if (r > m_rLens1Aperture) {
+      ++m_n_killed_lens1;
       track->SetTrackStatus(fStopAndKill);
       return;
     }
@@ -75,6 +72,7 @@ void PsfDofSteppingAction::UserSteppingAction(const G4Step* step) {
     double z = (pp.z() + t * (qp.z() - pp.z())) / CLHEP::mm;
     double r = std::hypot(y, z);
     if (r > m_rLens2Aperture) {
+      ++m_n_killed_lens2;
       track->SetTrackStatus(fStopAndKill);
       return;
     }

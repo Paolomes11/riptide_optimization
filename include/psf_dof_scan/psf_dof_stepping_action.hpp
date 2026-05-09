@@ -24,6 +24,15 @@ class PsfDofSteppingAction : public G4UserSteppingAction {
     m_xVirtual = x_mm;
   }
 
+  void ResetKillCounters() {
+    m_n_killed_lens1 = 0;
+    m_n_killed_lens2 = 0;
+    m_n_killed_back  = 0;
+  }
+  int GetKilledLens1() const { return m_n_killed_lens1; }
+  int GetKilledLens2() const { return m_n_killed_lens2; }
+  int GetKilledBack()  const { return m_n_killed_back; }
+
   void UserSteppingAction(const G4Step* step) override;
 
  private:
@@ -34,6 +43,9 @@ class PsfDofSteppingAction : public G4UserSteppingAction {
   double m_rLens2Aperture          = 0.0;
   bool m_hasLensApertures          = false;
   bool m_crossedLens1              = false;
+  int m_n_killed_lens1             = 0;
+  int m_n_killed_lens2             = 0;
+  int m_n_killed_back              = 0;
   PsfDofEventAction* m_eventAction = nullptr;
 };
 

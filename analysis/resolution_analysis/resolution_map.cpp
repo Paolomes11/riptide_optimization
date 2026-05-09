@@ -31,6 +31,10 @@ struct CliConfig {
   double lower_percentile = -1.0;
   double upper_percentile = -1.0;
   std::string tsv_out;
+  std::string dump_csv;
+  int max_entries  = -1;
+  int entry_stride = 1;
+  int entry_offset = 0;
 };
 
 static CliConfig parse_args(int argc, char** argv) {
@@ -65,13 +69,22 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.upper_percentile = std::stod(next());
     else if (arg == "--tsv")
       cfg.tsv_out = next();
+    else if (arg == "--dump-csv")
+      cfg.dump_csv = next();
+    else if (arg == "--max-entries")
+      cfg.max_entries = std::stoi(next());
+    else if (arg == "--entry-stride")
+      cfg.entry_stride = std::stoi(next());
+    else if (arg == "--entry-offset")
+      cfg.entry_offset = std::stoi(next());
     else if (arg == "--help" || arg == "-h") {
       std::cout << "Uso:\n"
                 << "  resolution_map --input psf_dof.root --config config/config.json\n"
                 << "                 [--output dir/] [--k 1.414]\n"
                 << "                 [--scan-min 180] [--scan-max 400] [--scan-step 0.5]\n"
                 << "                 [--low 0.0] [--high 0.0]\n"
-                << "                 [--tsv output/resolution_map.tsv]\n";
+                << "                 [--tsv output/resolution_map.tsv]\n"
+                << "                 [--dump-csv diag.csv] [--max-entries N]\n";
       std::exit(0);
     } else {
       std::cerr << "Opzione sconosciuta: " << arg << "\n";
@@ -112,6 +125,9 @@ struct RunRow {
   double sigma_dz = 0.0;
   double cov_z_dz = 0.0;
   double mu_dy    = 0.0;
+  double sigma_y  = 0.0;
+  double sigma_dy = 0.0;
+  double cov_y_dy = 0.0;
 };
 
 struct Aggregated {
@@ -121,9 +137,12 @@ struct Aggregated {
   int n_delta_y       = 0;
   double sum_focus    = 0.0;
   int    n_focus      = 0;
+  double sum_EE80     = 0.0;
+  int    n_EE80       = 0;
   double dof_mean     = 0.0;
   double delta_y_mean = 0.0;
   double focus_mean   = std::numeric_limits<double>::quiet_NaN();
+  double EE80_mean    = std::numeric_limits<double>::quiet_NaN();
 };
 
 static std::optional<std::pair<double, double>>
@@ -237,7 +256,7 @@ static std::optional<double> compute_delta_y_min_at_focus(const RunRow& r, const
   }
 
   double dx = x_focus - cfg.x_virtual;
-  if (!(std::abs(r.y_src) > 1e-12) || !(std::abs(dx) > 1e-12)) {
+  if (!(std::abs(r.y_src) > 1e-12)) {
     return std::nullopt;
   }
 
@@ -252,6 +271,22 @@ static std::optional<double> compute_delta_y_min_at_focus(const RunRow& r, const
   }
 
   return k * sigma_min / std::abs(Mbar);
+}
+
+static std::optional<double> compute_EE80_at_focus(const RunRow& r, const ConfigInfo& cfg,
+                                                    const std::vector<double>& x_scan) {
+  auto [sigma_z_min, x_focus] = compute_sigma_z_min_and_focus(r, cfg, x_scan);
+  if (!std::isfinite(sigma_z_min) || !std::isfinite(x_focus)) return std::nullopt;
+
+  double dx = x_focus - cfg.x_virtual;
+  double v_y =
+      r.sigma_y * r.sigma_y + 2.0 * r.cov_y_dy * dx + r.sigma_dy * r.sigma_dy * dx * dx;
+  double sigma_y_focus = std::sqrt(std::max(0.0, v_y));
+
+  // approssimazione 2D gaussiana isotropa: R80 = sqrt(-2*ln(0.2))*sigma ≈ 1.7941*sigma
+  double sigma_rms = std::sqrt((sigma_y_focus * sigma_y_focus + sigma_z_min * sigma_z_min) / 2.0);
+  constexpr double k_EE80 = 2.0 * 1.7941;
+  return k_EE80 * sigma_rms;
 }
 
 int main(int argc, char** argv) {
@@ -323,11 +358,10 @@ int main(int argc, char** argv) {
 
   std::unordered_map<int, ConfigInfo> config_map;
   config_map.reserve(static_cast<size_t>(tree_cfg->GetEntries()));
-  double x1_min_data   = std::numeric_limits<double>::infinity();
-  double x1_max_data   = -std::numeric_limits<double>::infinity();
-  double x2_min_data   = std::numeric_limits<double>::infinity();
-  double x2_max_data   = -std::numeric_limits<double>::infinity();
-  double x_virtual_max = -std::numeric_limits<double>::infinity();
+  double x1_min_data = std::numeric_limits<double>::infinity();
+  double x1_max_data = -std::numeric_limits<double>::infinity();
+  double x2_min_data = std::numeric_limits<double>::infinity();
+  double x2_max_data = -std::numeric_limits<double>::infinity();
 
   for (int i = 0; i < tree_cfg->GetEntries(); ++i) {
     tree_cfg->GetEntry(i);
@@ -337,17 +371,18 @@ int main(int argc, char** argv) {
     x1_max_data               = std::max(x1_max_data, x1_cfg);
     x2_min_data               = std::min(x2_min_data, x2_cfg);
     x2_max_data               = std::max(x2_max_data, x2_cfg);
-    x_virtual_max             = std::max(x_virtual_max, x_virtual_cfg);
   }
 
-  if (std::isfinite(x_virtual_max)) {
-    scan_min = std::max(scan_min, x_virtual_max);
-  }
-
-  auto x_scan = build_scan(scan_min, scan_max, scan_step);
-  if (x_scan.empty()) {
-    std::cerr << "Errore: scan range vuoto\n";
-    return 1;
+  std::unordered_map<int, std::vector<double>> x_scan_per_cfg;
+  x_scan_per_cfg.reserve(config_map.size());
+  for (const auto& [id, c] : config_map) {
+    // scan_min non è vincolato a x_virtual: la formula σ²(dx) è valida anche
+    // per dx < 0 (estrapolazione a ritroso), quindi il fuoco può cadere
+    // upstream del piano virtuale
+    auto cfg_scan = build_scan(scan_min, scan_max, scan_step);
+    if (!cfg_scan.empty()) {
+      x_scan_per_cfg[id] = std::move(cfg_scan);
+    }
   }
 
   RunRow rr;
@@ -361,11 +396,37 @@ int main(int argc, char** argv) {
   tree_runs->SetBranchAddress("sigma_dz", &rr.sigma_dz);
   tree_runs->SetBranchAddress("cov_z_dz", &rr.cov_z_dz);
   tree_runs->SetBranchAddress("mu_dy", &rr.mu_dy);
+  tree_runs->SetBranchAddress("sigma_y",  &rr.sigma_y);
+  tree_runs->SetBranchAddress("sigma_dy", &rr.sigma_dy);
+  tree_runs->SetBranchAddress("cov_y_dy", &rr.cov_y_dy);
 
   std::unordered_map<int, Aggregated> agg;
   agg.reserve(config_map.size());
 
-  for (int i = 0; i < tree_runs->GetEntries(); ++i) {
+  std::ofstream dump_file;
+  bool do_dump = !cli.dump_csv.empty();
+  if (do_dump) {
+    std::filesystem::path dp(cli.dump_csv);
+    if (dp.has_parent_path()) {
+      std::filesystem::create_directories(dp.parent_path());
+    }
+    dump_file.open(cli.dump_csv);
+    dump_file << "config_id\tx1\tx2\tx_virtual\t"
+              << "run_id\ty_src\tn_hits\t"
+              << "sigma_z\tsigma_dz\tcov_z_dz\t"
+              << "x_focus_analytical\tfocus_in_scan\t"
+              << "sigma_min_computed\tdof\tdelta_y\tmag_M\n";
+  }
+
+  int total_entries = tree_runs->GetEntries();
+  int stride        = std::max(1, cli.entry_stride);
+  int offset        = std::max(0, std::min(cli.entry_offset, stride - 1));
+  int i_start       = offset;
+  int n_to_process  = (cli.max_entries > 0)
+                          ? std::min(i_start + cli.max_entries * stride, total_entries)
+                          : total_entries;
+
+  for (int i = i_start; i < n_to_process; i += stride) {
     tree_runs->GetEntry(i);
     if (!(rr.n_hits > 0.0)) {
       continue;
@@ -375,7 +436,13 @@ int main(int argc, char** argv) {
       continue;
     }
 
-    double dof = compute_dof_from_curve(rr, it->second, x_scan, k);
+    auto scan_it = x_scan_per_cfg.find(rr.config_id);
+    if (scan_it == x_scan_per_cfg.end()) {
+      continue;
+    }
+    const auto& cfg_x_scan = scan_it->second;
+
+    double dof = compute_dof_from_curve(rr, it->second, cfg_x_scan, k);
     if (std::isfinite(dof) && dof > 0.0) {
       agg[rr.config_id].sum_dof += dof;
       agg[rr.config_id].n_dof += 1;
@@ -389,10 +456,46 @@ int main(int argc, char** argv) {
       }
     }
 
-    auto delta = compute_delta_y_min_at_focus(rr, it->second, x_scan, k);
+    auto delta = compute_delta_y_min_at_focus(rr, it->second, cfg_x_scan, k);
     if (delta.has_value() && std::isfinite(*delta) && *delta > 0.0) {
       agg[rr.config_id].sum_delta_y += *delta;
       agg[rr.config_id].n_delta_y += 1;
+    }
+
+    auto ee80 = compute_EE80_at_focus(rr, it->second, cfg_x_scan);
+    if (ee80.has_value() && std::isfinite(*ee80) && *ee80 > 0.0) {
+      agg[rr.config_id].sum_EE80 += *ee80;
+      agg[rr.config_id].n_EE80 += 1;
+    }
+
+    if (do_dump) {
+      const auto& c = it->second;
+      double x_focus_analytical = std::numeric_limits<double>::quiet_NaN();
+      if (rr.sigma_dz > 1e-12) {
+        x_focus_analytical = c.x_virtual - rr.cov_z_dz / (rr.sigma_dz * rr.sigma_dz);
+      }
+      bool focus_in_scan = std::isfinite(x_focus_analytical)
+                           && x_focus_analytical >= scan_min
+                           && x_focus_analytical <= scan_max;
+      auto [sigma_min_comp, x_focus_comp] = compute_sigma_z_min_and_focus(rr, c, cfg_x_scan);
+
+      double mag_M = std::numeric_limits<double>::quiet_NaN();
+      if (std::isfinite(x_focus_comp) && std::abs(rr.y_src) > 1e-12) {
+        double dx         = x_focus_comp - c.x_virtual;
+        double y_bar_foc  = rr.mu_y + rr.mu_dy * dx;
+        if (std::isfinite(y_bar_foc)) {
+          mag_M = y_bar_foc / rr.y_src;
+        }
+      }
+
+      dump_file << c.config_id << "\t" << c.x1 << "\t" << c.x2 << "\t" << c.x_virtual << "\t"
+                << rr.run_id << "\t" << rr.y_src << "\t" << rr.n_hits << "\t"
+                << rr.sigma_z << "\t" << rr.sigma_dz << "\t" << rr.cov_z_dz << "\t"
+                << x_focus_analytical << "\t" << (focus_in_scan ? 1 : 0) << "\t"
+                << sigma_min_comp << "\t"
+                << (std::isfinite(dof) ? dof : std::numeric_limits<double>::quiet_NaN()) << "\t"
+                << (delta.has_value() ? *delta : std::numeric_limits<double>::quiet_NaN()) << "\t"
+                << mag_M << "\n";
     }
   }
 
@@ -401,6 +504,8 @@ int main(int argc, char** argv) {
     a.delta_y_mean = (a.n_delta_y > 0) ? (a.sum_delta_y / static_cast<double>(a.n_delta_y)) : 0.0;
     a.focus_mean   = (a.n_focus > 0) ? (a.sum_focus / static_cast<double>(a.n_focus))
                                       : std::numeric_limits<double>::quiet_NaN();
+    a.EE80_mean    = (a.n_EE80 > 0) ? (a.sum_EE80 / static_cast<double>(a.n_EE80))
+                                     : std::numeric_limits<double>::quiet_NaN();
   }
 
   int n_bins_x1 = std::round((x1_max_data - x1_min_data) / dx_grid) + 1;
@@ -412,6 +517,9 @@ int main(int argc, char** argv) {
   TH2D h_delta_y_mean("h_delta_y_mean", ";x1 [mm];x2 [mm];#delta y_{min,mean} [mm]", n_bins_x1,
                       x1_min_data - dx_grid / 2.0, x1_max_data + dx_grid / 2.0, n_bins_x2,
                       x2_min_data - dx_grid / 2.0, x2_max_data + dx_grid / 2.0);
+  TH2D h_EE80_mean("h_EE80_mean", ";x1 [mm];x2 [mm];EE80_{mean} [mm]", n_bins_x1,
+                   x1_min_data - dx_grid / 2.0, x1_max_data + dx_grid / 2.0, n_bins_x2,
+                   x2_min_data - dx_grid / 2.0, x2_max_data + dx_grid / 2.0);
 
   TH2D h_mask_cfg("h_mask_cfg", "", n_bins_x1, x1_min_data - dx_grid / 2.0,
                   x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
@@ -422,6 +530,9 @@ int main(int argc, char** argv) {
   TH2D h_mask_delta("h_mask_delta", "", n_bins_x1, x1_min_data - dx_grid / 2.0,
                     x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
                     x2_max_data + dx_grid / 2.0);
+  TH2D h_mask_EE80("h_mask_EE80", "", n_bins_x1, x1_min_data - dx_grid / 2.0,
+                   x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
+                   x2_max_data + dx_grid / 2.0);
   TH2D h_focus_warn("h_focus_warn", "", n_bins_x1, x1_min_data - dx_grid / 2.0,
                     x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
                     x2_max_data + dx_grid / 2.0);
@@ -430,13 +541,16 @@ int main(int argc, char** argv) {
       h_mask_cfg.SetBinContent(bx, by, 1.0);
       h_mask_dof.SetBinContent(bx, by, 1.0);
       h_mask_delta.SetBinContent(bx, by, 1.0);
+      h_mask_EE80.SetBinContent(bx, by, 1.0);
     }
   }
 
   double dof_min = std::numeric_limits<double>::infinity();
-  double dof_max = -std::numeric_limits<double>::infinity();
-  double dy_min  = std::numeric_limits<double>::infinity();
-  double dy_max  = -std::numeric_limits<double>::infinity();
+  double dof_max  = -std::numeric_limits<double>::infinity();
+  double dy_min   = std::numeric_limits<double>::infinity();
+  double dy_max   = -std::numeric_limits<double>::infinity();
+  double ee80_min = std::numeric_limits<double>::infinity();
+  double ee80_max = -std::numeric_limits<double>::infinity();
 
   for (const auto& [id, c] : config_map) {
     int bx = h_dof_mean.GetXaxis()->FindBin(c.x1);
@@ -464,6 +578,12 @@ int main(int argc, char** argv) {
       dy_min = std::min(dy_min, it->second.delta_y_mean);
       dy_max = std::max(dy_max, it->second.delta_y_mean);
     }
+    if (it->second.n_EE80 > 0 && std::isfinite(it->second.EE80_mean)) {
+      h_EE80_mean.SetBinContent(bx, by, it->second.EE80_mean);
+      h_mask_EE80.SetBinContent(bx, by, 0.0);
+      ee80_min = std::min(ee80_min, it->second.EE80_mean);
+      ee80_max = std::max(ee80_max, it->second.EE80_mean);
+    }
   }
 
   if (std::isfinite(dof_min) && std::isfinite(dof_max)) {
@@ -473,6 +593,10 @@ int main(int argc, char** argv) {
   if (std::isfinite(dy_min) && std::isfinite(dy_max)) {
     h_delta_y_mean.SetMinimum(dy_min);
     h_delta_y_mean.SetMaximum(dy_max);
+  }
+  if (std::isfinite(ee80_min) && std::isfinite(ee80_max)) {
+    h_EE80_mean.SetMinimum(ee80_min);
+    h_EE80_mean.SetMaximum(ee80_max);
   }
 
   {
@@ -571,6 +695,7 @@ int main(int argc, char** argv) {
 
   save_map(h_dof_mean, h_mask_cfg, "resolution_dof_mean_map", kViridis);
   save_map(h_delta_y_mean, h_mask_delta, "resolution_delta_y_min_mean_map", kViridis);
+  save_map(h_EE80_mean, h_mask_EE80, "resolution_EE80_mean_map", kViridis);
 
   if (!cli.tsv_out.empty()) {
     std::filesystem::path tsv_path = cli.tsv_out;
@@ -578,14 +703,15 @@ int main(int argc, char** argv) {
       std::filesystem::create_directories(tsv_path.parent_path());
     }
     std::ofstream out(tsv_path);
-    out << "x1\tx2\tdof_mean\tdelta_y_min_mean\tconfig_id\tn_runs_dof\tn_runs_delta_y\n";
+    out << "x1\tx2\tdof_mean\tdelta_y_min_mean\tEE80_mean\tconfig_id\tn_runs_dof\tn_runs_delta_y\tn_runs_EE80\n";
     for (const auto& [id, c] : config_map) {
       auto it = agg.find(id);
       if (it == agg.end()) {
         continue;
       }
       out << c.x1 << "\t" << c.x2 << "\t" << it->second.dof_mean << "\t" << it->second.delta_y_mean
-          << "\t" << id << "\t" << it->second.n_dof << "\t" << it->second.n_delta_y << "\n";
+          << "\t" << it->second.EE80_mean << "\t" << id << "\t" << it->second.n_dof << "\t"
+          << it->second.n_delta_y << "\t" << it->second.n_EE80 << "\n";
     }
   }
 

@@ -138,7 +138,7 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
   UImanager->ApplyCommand("/gps/pos/centre 0 " + std::to_string(source_y_centre) + " 0 mm");
   UImanager->ApplyCommand("/gps/pos/halfx " + std::to_string(source_halfz) + " mm");
   UImanager->ApplyCommand("/gps/pos/halfy " + std::to_string(source_halfy) + " mm");
-  UImanager->ApplyCommand("/gps/pos/rot1 0 0 1");
+  UImanager->ApplyCommand("/gps/pos/rot1 1 0 0");
   UImanager->ApplyCommand("/gps/pos/rot2 0 1 0");
 
   UImanager->ApplyCommand("/gps/ang/type iso");
@@ -150,13 +150,13 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
   std::vector<G4ThreeVector> source_points;
   source_points.reserve(4);
   source_points.push_back(G4ThreeVector(
-      0.0 * CLHEP::mm, (source_y_centre - source_halfy) * CLHEP::mm, (-source_halfz) * CLHEP::mm));
+      (-source_halfz) * CLHEP::mm, (source_y_centre - source_halfy) * CLHEP::mm, 0.0 * CLHEP::mm));
   source_points.push_back(G4ThreeVector(
-      0.0 * CLHEP::mm, (source_y_centre - source_halfy) * CLHEP::mm, (+source_halfz) * CLHEP::mm));
+      (+source_halfz) * CLHEP::mm, (source_y_centre - source_halfy) * CLHEP::mm, 0.0 * CLHEP::mm));
   source_points.push_back(G4ThreeVector(
-      0.0 * CLHEP::mm, (source_y_centre + source_halfy) * CLHEP::mm, (-source_halfz) * CLHEP::mm));
+      (-source_halfz) * CLHEP::mm, (source_y_centre + source_halfy) * CLHEP::mm, 0.0 * CLHEP::mm));
   source_points.push_back(G4ThreeVector(
-      0.0 * CLHEP::mm, (source_y_centre + source_halfy) * CLHEP::mm, (+source_halfz) * CLHEP::mm));
+      (+source_halfz) * CLHEP::mm, (source_y_centre + source_halfy) * CLHEP::mm, 0.0 * CLHEP::mm));
 
   int config_id_offset = config.value("config_id_offset", 0);
   int config_counter   = config_id_offset;

@@ -34,11 +34,6 @@ void DofSteppingAction::UserSteppingAction(const G4Step* step) {
     return;
   }
 
-  if (std::abs(pos.y()) > 150.0 * CLHEP::mm || std::abs(pos.z()) > 150.0 * CLHEP::mm) {
-    track->SetTrackStatus(fStopAndKill);
-    return;
-  }
-
   double pre_x  = step->GetPreStepPoint()->GetPosition().x() / CLHEP::mm;
   double post_x = step->GetPostStepPoint()->GetPosition().x() / CLHEP::mm;
 

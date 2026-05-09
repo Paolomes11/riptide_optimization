@@ -39,9 +39,10 @@ class PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction {
   }
 
   void SetStaticCone(const G4ThreeVector& axis, double maxTheta) {
-    m_staticAxis     = axis;
-    m_staticMaxTheta = maxTheta;
-    m_hasStaticCone  = true;
+    m_staticAxis            = axis;
+    m_staticMaxTheta        = maxTheta;
+    m_hasStaticCone         = true;
+    m_useImportanceSampling = true;
   }
 
  private:

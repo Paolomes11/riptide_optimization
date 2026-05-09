@@ -6,7 +6,7 @@
 /gps/pos/type Volume
 /gps/pos/shape Sphere
 /gps/pos/radius 1 mm
-/gps/pos/centre 0 10 0 mm
+/gps/pos/centre 100 0 0 mm
 
 # Emissione: isotropa verso il detector (+X)
 /gps/ang/type iso
