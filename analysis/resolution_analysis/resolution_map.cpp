@@ -376,10 +376,8 @@ int main(int argc, char** argv) {
   std::unordered_map<int, std::vector<double>> x_scan_per_cfg;
   x_scan_per_cfg.reserve(config_map.size());
   for (const auto& [id, c] : config_map) {
-    // scan_min non è vincolato a x_virtual: la formula σ²(dx) è valida anche
-    // per dx < 0 (estrapolazione a ritroso), quindi il fuoco può cadere
-    // upstream del piano virtuale
-    auto cfg_scan = build_scan(scan_min, scan_max, scan_step);
+    double cfg_scan_min = std::max(scan_min, c.x2 + lens_det_gap);
+    auto cfg_scan = build_scan(cfg_scan_min, scan_max, scan_step);
     if (!cfg_scan.empty()) {
       x_scan_per_cfg[id] = std::move(cfg_scan);
     }

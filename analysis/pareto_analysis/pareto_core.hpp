@@ -16,6 +16,7 @@ struct ConfigData {
     double M;          // magnificazione
     double M_abs_err;  // |M - m_target| (colonna "M_abs_err" del TSV)
     double x_focus;    // piano di fuoco [mm]
+    double EE80 = std::numeric_limits<double>::quiet_NaN(); // EE80 medio [mm] (da resolution TSV)
     bool   on_pareto   = false;
     double Mtot        = 0.0;
     int    pareto_rank = 0;  // 1=best Mtot sul fronte, 0=non sul fronte
@@ -26,6 +27,7 @@ struct FilterConfig {
     double x_det     = 180.0;  // posizione detector [mm]
     double focus_tol = 15.0;   // tolleranza fuoco [mm]
     double dof_min   = 0.0;    // DoF minima [mm] (0 = disabilitato)
+    double ee80_max  = 0.0;    // EE80 massimo [mm] (0 = disabilitato)
 };
 
 struct WeightConfig {
@@ -77,6 +79,17 @@ inline std::vector<ConfigData> apply_dof_filter(const std::vector<ConfigData>& c
     std::vector<ConfigData> result;
     for (const auto& c : configs)
         if (c.DoF >= fc.dof_min)
+            result.push_back(c);
+    return result;
+}
+
+// Applica EE80 <= ee80_max; se ee80_max <= 0 o EE80 non disponibile ritorna tutti
+inline std::vector<ConfigData> apply_ee80_filter(const std::vector<ConfigData>& configs,
+                                                   const FilterConfig& fc) {
+    if (fc.ee80_max <= 0.0) return configs;
+    std::vector<ConfigData> result;
+    for (const auto& c : configs)
+        if (std::isfinite(c.EE80) && c.EE80 <= fc.ee80_max)
             result.push_back(c);
     return result;
 }

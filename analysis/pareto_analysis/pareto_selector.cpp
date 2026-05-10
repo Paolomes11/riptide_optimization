@@ -39,14 +39,15 @@ using namespace riptide::pareto;
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
 struct CliConfig {
-    std::string events_path  = "output/optimization/events.root";
-    std::string qmap_path    = "output/psf_analysis/q_map.tsv";
-    std::string chi2map_path = "output/psf_analysis/chi2_map.tsv";
-    std::string dofmap_path  = "output/dof_analysis/dof_map.tsv";
-    std::string output_path  = "output/pareto_analysis/pareto_plot.png";
-    std::string tsv_path     = "output/pareto_analysis/pareto_results.tsv";
-    std::string lens75_id    = "";
-    std::string lens60_id    = "";
+    std::string events_path      = "output/optimization/events.root";
+    std::string qmap_path        = "output/psf_analysis/q_map.tsv";
+    std::string chi2map_path     = "output/psf_analysis/chi2_map.tsv";
+    std::string dofmap_path      = "output/dof_analysis/dof_map.tsv";
+    std::string resolution_path  = "";
+    std::string output_path      = "output/pareto_analysis/pareto_plot.png";
+    std::string tsv_path         = "output/pareto_analysis/pareto_results.tsv";
+    std::string lens75_id        = "";
+    std::string lens60_id        = "";
     FilterConfig fc;
     WeightConfig wc;
 };
@@ -64,6 +65,8 @@ static void print_help() {
         "  --x-det     F     Posizione detector mm [180.0]\n"
         "  --focus-tol F     Tolleranza fuoco mm   [15.0]\n"
         "  --dof-min   F     DoF minima mm (0=off) [0.0]\n"
+        "  --resolution PATH TSV risoluzione (opt) [\"\"]\n"
+        "  --ee80-max  F     EE80 max mm (0=off)   [0.0]\n"
         "  --w-eta     F     Peso eta in Mtot      [0.35]\n"
         "  --w-Q       F     Peso Q in Mtot        [0.40]\n"
         "  --w-dof     F     Peso DoF in Mtot      [0.15]\n"
@@ -93,7 +96,9 @@ static CliConfig parse_args(int argc, char** argv) {
         else if (key == "--eta-frac")  cfg.fc.eta_frac  = std::stod(next());
         else if (key == "--x-det")     cfg.fc.x_det     = std::stod(next());
         else if (key == "--focus-tol") cfg.fc.focus_tol = std::stod(next());
-        else if (key == "--dof-min")   cfg.fc.dof_min   = std::stod(next());
+        else if (key == "--dof-min")    cfg.fc.dof_min      = std::stod(next());
+        else if (key == "--resolution") cfg.resolution_path = next();
+        else if (key == "--ee80-max")   cfg.fc.ee80_max     = std::stod(next());
         else if (key == "--w-eta")     cfg.wc.w_eta     = std::stod(next());
         else if (key == "--w-Q")       cfg.wc.w_Q       = std::stod(next());
         else if (key == "--w-dof")     cfg.wc.w_dof     = std::stod(next());
@@ -391,6 +396,23 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // ── 3b. Join opzionale con TSV di resolution (EE80) ─────────────────────
+    if (!cli.resolution_path.empty()) {
+        auto res_rows = load_tsv(cli.resolution_path);
+        validate_tsv_headers(res_rows, {"x1", "x2", "EE80_mean"}, cli.resolution_path);
+        int n_ee80_found = 0;
+        for (auto& cd : configs) {
+            for (const auto& r : res_rows) {
+                if (coords_match(cd.x1, cd.x2, std::stod(r.at("x1")), std::stod(r.at("x2")))) {
+                    try { cd.EE80 = std::stod(r.at("EE80_mean")); ++n_ee80_found; } catch (...) {}
+                    break;
+                }
+            }
+        }
+        std::cout << "[JOIN] Trovate in resolution.tsv (EE80): " << n_ee80_found
+                  << "/" << configs.size() << "\n\n";
+    }
+
     // ── 4. Pipeline filtri ───────────────────────────────────────────────────
     std::cout << "[FILTER] Totale prima dei filtri:       " << configs.size() << "\n";
 
@@ -405,6 +427,12 @@ int main(int argc, char** argv) {
     if (cli.fc.dof_min > 0.0) {
         configs = apply_dof_filter(configs, cli.fc);
         std::cout << "[FILTER] Dopo filtro DoF (>=" << cli.fc.dof_min << " mm):     "
+                  << configs.size() << "\n";
+    }
+
+    if (cli.fc.ee80_max > 0.0) {
+        configs = apply_ee80_filter(configs, cli.fc);
+        std::cout << "[FILTER] Dopo filtro EE80 (<=" << cli.fc.ee80_max << " mm):   "
                   << configs.size() << "\n";
     }
 
@@ -460,7 +488,7 @@ int main(int argc, char** argv) {
             std::cerr << "[ERRORE] Impossibile aprire TSV output: " << cli.tsv_path << "\n";
         } else {
             tsv << "x1\tx2\teta\teta_norm\tQ\tchi2\tDoF\tM\tM_abs_err\t"
-                   "x_focus\ton_pareto\tMtot\tpareto_rank\n";
+                   "x_focus\tEE80\ton_pareto\tMtot\tpareto_rank\n";
             for (const auto& c : configs) {
                 tsv << std::fixed << std::setprecision(6)
                     << c.x1       << "\t" << c.x2         << "\t"
@@ -468,6 +496,7 @@ int main(int argc, char** argv) {
                     << c.Q        << "\t" << c.chi2         << "\t"
                     << c.DoF      << "\t" << c.M            << "\t"
                     << c.M_abs_err << "\t" << c.x_focus     << "\t"
+                    << c.EE80     << "\t"
                     << (c.on_pareto ? 1 : 0) << "\t"
                     << c.Mtot     << "\t" << c.pareto_rank  << "\n";
             }

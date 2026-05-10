@@ -34,7 +34,7 @@ struct PSFPoint {
   double cov_yy;    // varianza y [mm^2]
   double cov_yz;    // covarianza y-z [mm^2]
   double cov_zz;    // varianza z [mm^2]
-  bool on_detector; // mantenuto per compatibilità (true se n_hits >= soglia)
+  bool on_detector; // true se n_hits >= soglia configurata
   double n_hits;    // numero di fotoni arrivati (pesato, usato per efficienza locale)
   double n_hits_count;
 };
@@ -57,7 +57,7 @@ struct PSFValue {
 // Un punto della traccia sul detector
 struct TracePoint {
   double t;     // parametro lungo la traccia [mm]
-  double r;     // mantenuto per compatibilità (distanza radiale x=0)
+  double r;     // distanza radiale del punto sorgente dall'asse ottico [mm]
   double x_src; // posizione x sorgente associata [mm]
   double y_src; // posizione y sorgente associata [mm]
   double z_src; // posizione z sorgente associata [mm]
@@ -67,7 +67,7 @@ struct TracePoint {
   // = Sigma_distribuzione / n_hits_count.
   // NON e' la covarianza della distribuzione dei fotoni sulla macchia PSF.
   Cov2 cov;
-  bool valid; // mantenuto per compatibilità
+  bool valid; // true se il punto è sul detector (on_detector && n_hits sufficienti)
   double n_hits;
   double n_hits_count;
 };
@@ -160,12 +160,6 @@ struct Point3D {
  */
 std::vector<TracePoint> build_trace_3d(const Point3D& p1, const Point3D& p2, const LensConfig& cfg,
                                        const PSFDatabase& db, double dt);
-
-/**
- * Wrapper di compatibilità per costruire una traccia rettilinea lungo l'asse X.
- */
-std::vector<TracePoint> build_trace(double y0, const LensConfig& cfg, const PSFDatabase& db,
-                                    double L = 10.0, double dt = 0.1);
 
 /**
  * Verifica se una traccia è valida in base alla frazione di punti validi.

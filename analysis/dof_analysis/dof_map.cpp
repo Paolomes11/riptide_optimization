@@ -334,7 +334,7 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
                                 const std::vector<double>& dz, const std::vector<double>& w,
                                 const std::vector<double>& ysrc, const std::vector<double>& x_scan,
                                 double k_threshold, double core_fraction, double m_target,
-                                double sigma_y_src_theory) {
+                                double sigma_y_src_theory, double lens_det_gap) {
   ResultRow out;
   out.config_id = cfg.config_id;
   out.x1        = cfg.x1;
@@ -374,7 +374,20 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
       out.x_focus = *xv;
     }
   }
-  out.focus_before_lens2 = (out.x_focus < cfg.x2);
+
+  const double x_limit = cfg.x2 + lens_det_gap;
+  if (out.x_focus < x_limit) {
+    out.focus_before_lens2 = true;
+    size_t i_clamp = 0;
+    while (i_clamp + 1 < x_scan.size() && x_scan[i_clamp] < x_limit - 1e-9)
+      ++i_clamp;
+    i_min          = i_clamp;
+    out.x_focus    = x_scan[i_min];
+    out.x_focus_scan = out.x_focus;
+    sigma_z_min    = sigma_z[i_min];
+  } else {
+    out.focus_before_lens2 = false;
+  }
 
   double thr = k_threshold * sigma_z_min;
   int i_lo   = static_cast<int>(i_min);
@@ -444,7 +457,18 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
           out.x_focus = *xv;
         }
       }
-      out.focus_before_lens2 = (out.x_focus < cfg.x2);
+      if (out.x_focus < x_limit) {
+        out.focus_before_lens2 = true;
+        size_t i_clamp2 = 0;
+        while (i_clamp2 + 1 < x_scan.size() && x_scan[i_clamp2] < x_limit - 1e-9)
+          ++i_clamp2;
+        i_min2         = i_clamp2;
+        out.x_focus_scan = x_scan[i_min2];
+        out.x_focus      = out.x_focus_scan;
+        sigma_z_min      = sigma_z2[i_min2];
+      } else {
+        out.focus_before_lens2 = false;
+      }
 
       double thr2 = k_threshold * sigma_z_min;
       int i_lo2   = static_cast<int>(i_min2);
@@ -518,6 +542,7 @@ int main(int argc, char** argv) {
   double m_target      = cli.m_target.value_or(config.value("m_target", 1.0 / 7.5));
   double source_halfy       = config.value("dof_source_halfy", 5.0);
   double sigma_y_src_theory = source_halfy / std::sqrt(3.0);
+  double lens_det_gap       = config.value("lens_det_gap", 0.0);
   if (!(core_fraction > 0.0 && core_fraction <= 1.0)) {
     std::cerr << "Errore: core_fraction deve essere in (0, 1]\n";
     return 1;
@@ -628,7 +653,8 @@ int main(int argc, char** argv) {
     }
 
     results.push_back(analyze_config(it->second, n_rays, y0, z0, dy, dz, w, ysrc, x_scan,
-                                     k_threshold, core_fraction, m_target, sigma_y_src_theory));
+                                     k_threshold, core_fraction, m_target, sigma_y_src_theory,
+                                     lens_det_gap));
   }
 
   if (!cli.tsv_out.empty()) {

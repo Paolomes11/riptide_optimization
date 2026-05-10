@@ -230,13 +230,16 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
                        x1, x2);
         } else {
           x_det_config = *fopt;
-          if (std::isnan(x_det_config) || x_det_config <= 0.0 ||
-              x_det_config < x2 + lens_det_gap) {
+          if (std::isnan(x_det_config) || x_det_config <= 0.0) {
             focus_valid = 0;
-            spdlog::warn(
-                "focus-tsv: fuoco {:.1f} invalido per lens2={:.1f} + gap={:.1f}", x_det_config, x2,
-                lens_det_gap);
+            spdlog::warn("focus-tsv: fuoco {:.1f} invalido (NaN/non positivo)", x_det_config);
           } else {
+            if (x_det_config < x2 + lens_det_gap) {
+              spdlog::warn(
+                  "focus-tsv: fuoco {:.1f} prima del limite {:.1f}, clamped a {:.1f}",
+                  x_det_config, x2 + lens_det_gap, x2 + lens_det_gap);
+              x_det_config = x2 + lens_det_gap;
+            }
             det->SetDetectorPosition(x_det_config);
           }
         }

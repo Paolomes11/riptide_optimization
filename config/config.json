@@ -1,6 +1,6 @@
 {
   "x_det": 579.8,
-  "lens_det_gap": 0.0,
+  "lens_det_gap": 10.0,
   "x_min": 99.0,
   "x_max": 300.0,
   "dx": 3.0,
@@ -36,7 +36,7 @@
   "dof_x_scan_step": 0.5,
   "dof_k_threshold": 1.414,
   "dof_source_halfy": 5.0,
-  "dof_source_halfz": 30.0,
+  "dof_source_halfx": 30.0,
   "dof_source_y_centre": 5.0,
 
   "psf_dof_x_virtual_offset": 30.0,

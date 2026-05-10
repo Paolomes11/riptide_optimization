@@ -78,13 +78,10 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  TTree* runs = (TTree*)f.Get("Runs");
-  if (!runs) {
-    runs = (TTree*)f.Get("LensSimulation");
-  }
+  TTree* runs    = (TTree*)f.Get("Runs");
   TTree* configs = (TTree*)f.Get("Configurations");
   if (!runs || !configs) {
-    std::cerr << "Required trees (Runs/LensSimulation and Configurations) not found in "
+    std::cerr << "Required trees (Runs and Configurations) not found in "
               << input_file << "!" << std::endl;
     return 1;
   }

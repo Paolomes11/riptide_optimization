@@ -86,11 +86,8 @@ int main(int argc, char** argv) {
 
   TTree* tConfig = (TTree*)file->Get("Configurations");
   TTree* tRuns   = (TTree*)file->Get("Runs");
-  if (!tRuns) {
-    tRuns = (TTree*)file->Get("LensSimulation");
-  }
   if (!tConfig || !tRuns) {
-    std::cerr << "Impossibile leggere Configurations o Runs/LensSimulation TTree\n";
+    std::cerr << "Impossibile leggere Configurations o Runs TTree\n";
     return 1;
   }
 

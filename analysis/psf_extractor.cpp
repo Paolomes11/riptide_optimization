@@ -192,12 +192,8 @@ int main(int argc, char** argv) {
   TTree* tConfig = dynamic_cast<TTree*>(fin->Get("Configurations"));
   TTree* tRuns   = dynamic_cast<TTree*>(fin->Get("Runs"));
 
-  if (!tRuns) {
-    tRuns = dynamic_cast<TTree*>(fin->Get("LensSimulation"));
-  }
-
   if (!tConfig || !tRuns) {
-    std::cerr << "Errore: TTree Configurations o Runs/LensSimulation mancanti nel file di input\n";
+    std::cerr << "Errore: TTree Configurations o Runs mancanti nel file di input\n";
     return 1;
   }
 
