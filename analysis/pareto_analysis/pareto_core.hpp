@@ -43,10 +43,12 @@ inline bool coords_match(double x1a, double x2a, double x1b, double x2b,
     return std::abs(x1a - x1b) < tol && std::abs(x2a - x2b) < tol;
 }
 
-// A domina B nel senso di Pareto (η↑, Q↓):
-// A.eta >= B.eta AND A.Q <= B.Q con almeno una disuguaglianza stretta
+// A domina B nel senso di Pareto (η↑, Q↓, ΔM↓):
+// A.eta >= B.eta AND A.Q <= B.Q AND A.M_abs_err <= B.M_abs_err
+// con almeno una disuguaglianza stretta
 inline bool pareto_dominates(const ConfigData& A, const ConfigData& B) {
-    return (A.eta >= B.eta && A.Q <= B.Q) && (A.eta > B.eta || A.Q < B.Q);
+    return (A.eta >= B.eta && A.Q <= B.Q && A.M_abs_err <= B.M_abs_err)
+        && (A.eta > B.eta  || A.Q < B.Q  || A.M_abs_err < B.M_abs_err);
 }
 
 inline std::vector<ConfigData> apply_eta_filter(const std::vector<ConfigData>& configs,
@@ -95,7 +97,8 @@ inline std::vector<ConfigData> apply_ee80_filter(const std::vector<ConfigData>& 
 }
 
 // Calcola Mtot per tutti i config (modifica in-place).
-// Formula: Mtot = w_eta*(η/η_max) - w_Q*(Q/Q_max) + w_dof*(DoF/DoF_max) - w_M*(M_abs_err/M_abs_err_max)
+// Formula: Mtot = w_eta*(η/η_max) + w_Q*(1−Q/Q_max) + w_dof*(DoF/DoF_max) + w_M*(1−M_abs_err/M_abs_err_max)
+// Tutti i termini ∈ [0,1]; Mtot ∈ [0,1] dove 1 è il punto ideale.
 // Normalizzazione interna al vettore; se max==0 usa 1.0 come guardia.
 inline void compute_mtot(std::vector<ConfigData>& configs, const WeightConfig& wc) {
     if (configs.empty()) return;
@@ -115,12 +118,19 @@ inline void compute_mtot(std::vector<ConfigData>& configs, const WeightConfig& w
     if (DoF_max   <= 0.0) DoF_max   = 1.0;
     if (M_err_max <= 0.0) M_err_max = 1.0;
 
+    double w_sum = wc.w_eta + wc.w_Q + wc.w_dof + wc.w_M;
+    if (w_sum <= 0.0) w_sum = 1.0;
+    const double nw_eta = wc.w_eta / w_sum;
+    const double nw_Q   = wc.w_Q   / w_sum;
+    const double nw_dof = wc.w_dof / w_sum;
+    const double nw_M   = wc.w_M   / w_sum;
+
     for (auto& c : configs) {
         double eta_n = c.eta       / eta_max;
         double Q_n   = c.Q         / Q_max;
         double dof_n = c.DoF       / DoF_max;
         double M_n   = c.M_abs_err / M_err_max;
-        c.Mtot = wc.w_eta * eta_n - wc.w_Q * Q_n + wc.w_dof * dof_n - wc.w_M * M_n;
+        c.Mtot = nw_eta * eta_n + nw_Q * (1.0 - Q_n) + nw_dof * dof_n + nw_M * (1.0 - M_n);
     }
 }
 

@@ -176,7 +176,7 @@ static void apply_style() {
     gStyle->SetLabelSize(0.038, "XYZ");
     gStyle->SetTitleSize(0.044, "XYZ");
     gStyle->SetTitleSize(0.046, "");
-    gStyle->SetTitleOffset(1.55, "Y");
+    gStyle->SetTitleOffset(1.10, "Y");
     gStyle->SetTitleOffset(1.20, "X");
     gStyle->SetTickLength(0.018, "X");
     gStyle->SetTickLength(0.018, "Y");
@@ -224,12 +224,18 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, const std::str
     ax->SetLabelSize(0.18);
     ax->SetTickSize(0.35);
     ax->SetLabelOffset(0.03);
-    ax->SetTitle(title.c_str());
-    ax->SetTitleFont(42);
-    ax->SetTitleSize(0.20);
-    ax->CenterTitle(kTRUE);
-    ax->SetTitleOffset(1.8);
     ax->Draw();
+
+    TLatex lbl;
+    lbl.SetNDC();
+    lbl.SetTextFont(42);
+    lbl.SetTextSize(0.1);
+    lbl.SetTextColor(kWhite);
+    lbl.SetTextAlign(22);
+    lbl.SetTextAngle(90.0);
+    double cx = (cb_x0 + cb_x1) / 2.0;
+    double cy = (cb_y0 + cb_y1) / 2.0;
+    lbl.DrawLatex(cx, cy, title.c_str());
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -444,6 +450,13 @@ int main(int argc, char** argv) {
     }
 
     // ── 5. Calcolo Mtot e fronte di Pareto ──────────────────────────────────
+    {
+        double w_sum = cli.wc.w_eta + cli.wc.w_Q + cli.wc.w_dof + cli.wc.w_M;
+        if (std::abs(w_sum - 1.0) > 0.01)
+            std::cerr << "[WARN] Pesi non sommano a 1.0 (somma=" << std::fixed
+                      << std::setprecision(3) << w_sum
+                      << "); normalizzati internamente.\n\n";
+    }
     compute_pareto_front(configs, cli.wc);
 
     // Fronte ordinato per rank
@@ -470,14 +483,17 @@ int main(int argc, char** argv) {
 
     // Normalizzatori per assi e TSV
     double eta_max = 0.0, Q_max = 0.0, DoF_max = 0.0;
+    double Q_min   = std::numeric_limits<double>::max();
     for (const auto& c : configs) {
         eta_max = std::max(eta_max, c.eta);
         Q_max   = std::max(Q_max,   c.Q);
         DoF_max = std::max(DoF_max,  c.DoF);
+        if (c.Q > 0.0) Q_min = std::min(Q_min, c.Q);
     }
     if (eta_max <= 0.0) eta_max = 1.0;
     if (Q_max   <= 0.0) Q_max   = 1.0;
     if (DoF_max <= 0.0) DoF_max = 1.0;
+    if (Q_min >= 1e30 || Q_min <= 0.0) Q_min = 1.0;
 
     // ── 6. TSV output ─────────────────────────────────────────────────────────
     {
@@ -512,19 +528,19 @@ int main(int argc, char** argv) {
     canvas->SetTopMargin(0.0);
     canvas->SetBottomMargin(0.0);
 
-    TPad* pad_top = new TPad("pad_top", "", 0.00, 0.30, 0.88, 1.0);
-    TPad* pad_cb  = new TPad("pad_cb",  "", 0.88, 0.30, 0.96, 1.0);
+    TPad* pad_top = new TPad("pad_top", "", 0.00, 0.30, 0.84, 1.0);
+    TPad* pad_cb  = new TPad("pad_cb",  "", 0.84, 0.30, 1.00, 1.0);
     TPad* pad_bot = new TPad("pad_bot", "", 0.00, 0.00, 1.00, 0.30);
 
     pad_top->SetLeftMargin(0.12);
-    pad_top->SetRightMargin(0.05);
+    pad_top->SetRightMargin(0.02);
     pad_top->SetTopMargin(0.12);
     pad_top->SetBottomMargin(0.14);
     pad_top->SetGridx();
     pad_top->SetGridy();
 
-    pad_cb->SetLeftMargin(0.25);
-    pad_cb->SetRightMargin(0.30);
+    pad_cb->SetLeftMargin(0.10);
+    pad_cb->SetRightMargin(0.38);
     pad_cb->SetTopMargin(0.08);
     pad_cb->SetBottomMargin(0.14);
 
@@ -554,7 +570,7 @@ int main(int argc, char** argv) {
     for (const auto& c : configs) {
         if (c.Q <= 0.0) continue;
         double xv = c.eta / eta_max;
-        double yv = Q_max  / c.Q;
+        double yv = Q_min  / c.Q;
         xmin_p = std::min(xmin_p, xv);
         xmax_p = std::max(xmax_p, xv);
         ymin_p = std::min(ymin_p, yv);
@@ -572,9 +588,9 @@ int main(int argc, char** argv) {
     // Frame vuoto per assi
     TH2D* frame = new TH2D("frame", "", 100, xlo, xhi, 100, ylo, yhi);
     frame->GetXaxis()->SetTitle("#eta/#eta_{max}  [a.d.]");
-    frame->GetYaxis()->SetTitle("Q_{max}/Q  [a.d.]");
+    frame->GetYaxis()->SetTitle("#DeltaQ_{min}/#DeltaQ  [a.d.]");
     frame->GetXaxis()->SetTitleOffset(1.2);
-    frame->GetYaxis()->SetTitleOffset(1.5);
+    frame->GetYaxis()->SetTitleOffset(1.10);
     frame->Draw("AXIS");
 
     // Punti di background (non sul fronte) — marker size proporzionale a DoF
@@ -584,7 +600,7 @@ int main(int argc, char** argv) {
         double sz = 0.6 + 1.4 * (c.DoF / DoF_max);
         sz = std::max(0.6, std::min(2.0, sz));
         TGraph* gp = new TGraph(1);
-        gp->SetPoint(0, c.eta / eta_max, Q_max / c.Q);
+        gp->SetPoint(0, c.eta / eta_max, Q_min / c.Q);
         gp->SetMarkerStyle(kOpenCircle);
         gp->SetMarkerColor(kGray + 1);
         gp->SetLineColor(kGray + 1);
@@ -611,7 +627,7 @@ int main(int argc, char** argv) {
         Int_t  root_col  = gStyle->GetColorPalette(cidx);
 
         TGraph* gp = new TGraph(1);
-        gp->SetPoint(0, p->eta / eta_max, Q_max / p->Q);
+        gp->SetPoint(0, p->eta / eta_max, Q_min / p->Q);
         gp->SetMarkerStyle(kFullCircle);
         gp->SetMarkerColor(root_col);
         gp->SetLineColor(kRed);
@@ -626,7 +642,7 @@ int main(int argc, char** argv) {
     if (!front.empty() && front[0]->Q > 0.0) {
         const ConfigData& best = *front[0];
         g_best = new TGraph(1);
-        g_best->SetPoint(0, best.eta / eta_max, Q_max / best.Q);
+        g_best->SetPoint(0, best.eta / eta_max, Q_min / best.Q);
         g_best->SetMarkerStyle(kFullStar);
         g_best->SetMarkerColor(kRed);
         g_best->SetMarkerSize(3.0);
@@ -637,7 +653,7 @@ int main(int argc, char** argv) {
                         (best.eta / eta_max - xlo) / (xhi - xlo) *
                         (1.0 - pad_top->GetLeftMargin() - pad_top->GetRightMargin());
         double by_ndc = pad_top->GetBottomMargin() +
-                        (Q_max / best.Q - ylo) / (yhi - ylo) *
+                        (Q_min / best.Q - ylo) / (yhi - ylo) *
                         (1.0 - pad_top->GetBottomMargin() - pad_top->GetTopMargin());
         double pw = 0.20, ph = 0.10;
         double px1 = bx_ndc + 0.02;
@@ -659,7 +675,7 @@ int main(int argc, char** argv) {
     }
 
     // Legenda
-    TLegend* leg = new TLegend(0.60, 0.68, 0.93, 0.91);
+    TLegend* leg = new TLegend(0.13, 0.14, 0.45, 0.36);
     leg->SetTextFont(42);
     leg->SetTextSize(0.030);
     leg->SetBorderSize(0);
@@ -673,7 +689,7 @@ int main(int argc, char** argv) {
     leg->Draw();
 
     // ── Color bar |M−1| ───────────────────────────────────────────────────────
-    draw_colorbar(pad_cb, 0.0, M_diff_max, "|M#minus{}M_{tgt}|  [a.d.]");
+    draw_colorbar(pad_cb, 0.0, M_diff_max, "|M#minusM_{tgt}|  [a.d.]");
     pad_top->cd();
 
     // ── Pad inferiore: tabella top-5 ──────────────────────────────────────────
@@ -683,18 +699,22 @@ int main(int argc, char** argv) {
     table->SetFillColor(0);
     table->SetBorderSize(0);
     table->SetTextFont(42);
-    table->SetTextSize(0.085);
+    table->SetTextSize(0.070);
     table->SetTextAlign(12);
-    table->AddText("Top-3 configurazioni sul fronte di Pareto (per M_{tot}):");
+    table->AddText("Top-3 configurazioni sul fronte di Pareto (per Mtot):");
 
     int shown = 0;
     for (const auto* p : front) {
         if (shown >= 3) break;
         table->AddText(Form(
-            "#%d  x1=%5.1f mm  x2=%6.1f mm  |  #eta=%.3f [a.d.]  Q=%.3f [a.d.]  #chi^{2}=%.2f"
-            "  DoF=%.1f mm  M=%.3f  #DeltaM=%.4f  |  Mtot=%.3f",
-            p->pareto_rank, p->x1, p->x2,
-            p->eta, p->Q, p->chi2, p->DoF, p->M, p->M_abs_err, p->Mtot));
+            "#%d  x1=%.1f mm  x2=%.1f mm  |  Mtot=%.3f",
+            p->pareto_rank, p->x1, p->x2, p->Mtot));
+        std::string row2 = Form(
+            "    #eta=%.3f  #DeltaQ/min=%.3f  DoF=%.1f mm  M=%.3f  #DeltaM=%.4f",
+            p->eta, p->Q / Q_min, p->DoF, p->M, p->M_abs_err);
+        if (std::isfinite(p->EE80))
+            row2 += Form("  EE80=%.3f mm", p->EE80);
+        table->AddText(row2.c_str());
         ++shown;
     }
     table->Draw();
