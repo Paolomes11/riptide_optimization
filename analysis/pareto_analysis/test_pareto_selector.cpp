@@ -141,15 +141,20 @@ static void test_T4() {
     // Valori già nell'intervallo [0,1] con massimo = 1.0 per ogni dimensione
     // → normalizzazione interna non altera i valori attesi
     //
-    // P1: eta=1.0, Q=1.0, DoF=0.5, M_abs_err=0.0
-    //   Mtot = 0.35*1.0 - 0.40*1.0 + 0.15*0.5 - 0.10*0.0 = 0.025
-    // P2: eta=0.8, Q=0.6, DoF=1.0, M_abs_err=0.5
-    //   Mtot = 0.35*0.8 - 0.40*0.6 + 0.15*1.0 - 0.10*0.5 = 0.140
-    // P3: eta=0.6, Q=0.3, DoF=0.8, M_abs_err=1.0
-    //   Mtot = 0.35*0.6 - 0.40*0.3 + 0.15*0.8 - 0.10*1.0 = 0.110
+    // Formula: Mtot = nw_eta*(η/η_max) + nw_Q*(1−Q/Q_max) + nw_dof*(DoF/DoF_max) + nw_M*(1−M/M_max)
+    // Tutti i termini ∈ [0,1]; Mtot ∈ [0,1].  [vecchia formula con sottrazione: RIMOSSA]
     //
-    // Ordine atteso: P2 (0.140) > P3 (0.110) > P1 (0.025)
-    // Tutti e 3 sono sul fronte (nessuno domina l'altro in (eta, Q))
+    // max values across {P1,P2,P3}: eta_max=1.0, Q_max=1.0, DoF_max=1.0, M_max=1.0
+    //
+    // P1: eta=1.0, Q=1.0, DoF=0.5, M_abs_err=0.0
+    //   Mtot = 0.35*1.0 + 0.40*(1−1.0) + 0.15*0.5 + 0.10*(1−0.0) = 0.525
+    // P2: eta=0.8, Q=0.6, DoF=1.0, M_abs_err=0.5
+    //   Mtot = 0.35*0.8 + 0.40*(1−0.6) + 0.15*1.0 + 0.10*(1−0.5) = 0.640
+    // P3: eta=0.6, Q=0.3, DoF=0.8, M_abs_err=1.0
+    //   Mtot = 0.35*0.6 + 0.40*(1−0.3) + 0.15*0.8 + 0.10*(1−1.0) = 0.610
+    //
+    // Ordine atteso: P2 (0.640) > P3 (0.610) > P1 (0.525)
+    // Tutti e 3 sono sul fronte (nessuno domina l'altro in (eta, Q, ΔM))
 
     std::vector<ConfigData> cfgs;
     cfgs.push_back(make_config(1.0, 1.0, 1.0, 1.0, 180.0, 0.5, 1.0, 0.0));  // P1
@@ -161,9 +166,9 @@ static void test_T4() {
     compute_mtot(cfgs, wc);
 
     // Verifica Mtot calcolati (tolleranza 1e-9)
-    near(cfgs[0].Mtot, 0.025, 1e-9, "Mtot P1 = 0.025");
-    near(cfgs[1].Mtot, 0.140, 1e-9, "Mtot P2 = 0.140");
-    near(cfgs[2].Mtot, 0.110, 1e-9, "Mtot P3 = 0.110");
+    near(cfgs[0].Mtot, 0.525, 1e-9, "Mtot P1 = 0.525");
+    near(cfgs[1].Mtot, 0.640, 1e-9, "Mtot P2 = 0.640");
+    near(cfgs[2].Mtot, 0.610, 1e-9, "Mtot P3 = 0.610");
 
     compute_pareto_front(cfgs, wc);
 
@@ -172,10 +177,10 @@ static void test_T4() {
     check(cfgs[1].on_pareto, "P2 sul fronte");
     check(cfgs[2].on_pareto, "P3 sul fronte");
 
-    // Ranking: P2=1, P3=2, P1=3
-    check(cfgs[1].pareto_rank == 1, "P2 ha rank 1 (Mtot massimo)");
-    check(cfgs[2].pareto_rank == 2, "P3 ha rank 2");
-    check(cfgs[0].pareto_rank == 3, "P1 ha rank 3 (Mtot minimo)");
+    // Ranking: P2=1 (0.640), P3=2 (0.610), P1=3 (0.525)
+    check(cfgs[1].pareto_rank == 1, "P2 ha rank 1 (Mtot massimo = 0.640)");
+    check(cfgs[2].pareto_rank == 2, "P3 ha rank 2 (Mtot = 0.610)");
+    check(cfgs[0].pareto_rank == 3, "P1 ha rank 3 (Mtot minimo = 0.525)");
 }
 
 // ── T5: coords_match con tolleranza ──────────────────────────────────────────

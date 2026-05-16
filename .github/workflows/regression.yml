@@ -1,0 +1,32 @@
+name: Regression Tests
+
+on:
+  push:
+    branches: ["main", "dev"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  regression:
+    name: Physics regression suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Run regression tests
+        # All tests in this suite are static source-inspection tests or wrap
+        # pre-compiled binaries. They do not require Geant4 or ROOT at runtime.
+        # Tests that wrap binaries call pytest.skip() automatically if the
+        # binary is absent (e.g. on a fresh checkout without a build step).
+        run: python -m pytest tests/ -v --tb=short
+        working-directory: ${{ github.workspace }}

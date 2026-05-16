@@ -3,3 +3,12 @@ build/
 output/
 debug/
 analysis/exp1/data
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Editor / session notes
+exp.txt
+.claude/
