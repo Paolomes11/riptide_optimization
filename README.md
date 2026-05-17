@@ -18,27 +18,30 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
    - [lens\_cutter\_main](#lens_cutter_main)
 6. [Esecuzione Parallela e Dashboard](#esecuzione-parallela-e-dashboard)
 7. [Output su SSD esterna](#output-su-ssd-esterna)
-8. [Strumenti di analisi](#strumenti-di-analisi)
-   - [plot2D](#plot2d)
-   - [plot3D](#plot3d)
-   - [beam\_scan\_plot](#beam_scan_plot)
-   - [m\_c\_creator](#m_c_creator)
-   - [psf\_extractor](#psf_extractor)
-   - [dof\_map](#dof_map)
-   - [resolution\_map](#resolution_map)
-   - [pareto\_selector](#pareto_selector)
-   - [exp1\_main](#exp1_main)
-   - [exp2\_main](#exp2_main)
-   - [exp3\_main](#exp3_main)
-9. [Libreria psf\_analysis](#libreria-psf_analysis)
-10. [Temporal Unfolding](#temporal-unfolding)
-11. [Importance Sampling](#importance-sampling)
-12. [Test unitari](#test-unitari)
-13. [Configurazione raccomandata per `q_map`](#configurazione-raccomandata-per-q_map)
-14. [File di configurazione](#file-di-configurazione)
-15. [Formato dei file ROOT](#formato-dei-file-root)
-16. [Workflow completo](#workflow-completo)
-17. [Riferimenti metodologici](#riferimenti-metodologici)
+8. [Log delle simulazioni](#log-delle-simulazioni)
+9. [Ottimizzazione autonoma](#ottimizzazione-autonoma)
+10. [Strumenti di analisi](#strumenti-di-analisi)
+    - [plot2D](#plot2d)
+    - [plot3D](#plot3d)
+    - [beam\_scan\_plot](#beam_scan_plot)
+    - [m\_c\_creator](#m_c_creator)
+    - [psf\_extractor](#psf_extractor)
+    - [dof\_map](#dof_map)
+    - [resolution\_map](#resolution_map)
+    - [pareto\_selector](#pareto_selector)
+    - [exp1\_main](#exp1_main)
+    - [exp2\_main](#exp2_main)
+    - [exp3\_main](#exp3_main)
+11. [Libreria psf\_analysis](#libreria-psf_analysis)
+12. [Temporal Unfolding](#temporal-unfolding)
+13. [Importance Sampling](#importance-sampling)
+14. [Test unitari](#test-unitari)
+    - [Regression testing (pytest)](#regression-testing-pytest)
+15. [Configurazione raccomandata per `q_map`](#configurazione-raccomandata-per-q_map)
+16. [File di configurazione](#file-di-configurazione)
+17. [Formato dei file ROOT](#formato-dei-file-root)
+18. [Workflow completo](#workflow-completo)
+19. [Riferimenti metodologici](#riferimenti-metodologici)
 
 ---
 
@@ -60,6 +63,7 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 ```
 riptide_optimization/
 ├── scripts/
+│   ├── autonomous_optimizer.py              # Driver autonomo per sweep parametrico completo (two-phase, Pareto)
 │   ├── run.sh                               # Lancia lens_simulation, optimization o dof_simulation (locale o SSD)
 │   ├── monitor.sh                           # Monitoraggio progresso chunk paralleli (bash)
 │   └── dashboard.py                         # Dashboard Python/rich (prioritario su monitor.sh)
@@ -154,9 +158,12 @@ riptide_optimization/
 │   └── structure.xml
 │
 ├── macros/
+├── tests/                                   # Regression testing (pytest) — verifica 10 bug storici
+│
 ├── config/
 │   ├── config.json
 │   ├── config_profile.json
+│   ├── analysis_params.json                 # Parametri di tuning per autonomous_optimizer (non tracciato da git)
 │   └── exp3/                                # Configurazione exp3
 │
 ├── external/
@@ -275,6 +282,8 @@ build/analysis/exp3/Release/test_exp3_homography
 | `--ssd-mount` | path | Mount point SSD (default: `/mnt/external_ssd`) |
 
 **Output**: `events.root` — TTree `Configurations` + `Efficiency` (vedi [Formato dei file ROOT](#formato-dei-file-root)).
+
+> **`--all-lenses` e cataloghi pre-definiti**: il flag legge a runtime i cataloghi TSV in `lens_cutter/lens_data/` (`thorlabs_biconvex.tsv`, 9 lenti; `thorlabs_planoconvex.tsv`, 7 lenti) e genera il **prodotto cartesiano completo** di tutte le coppie disponibili. Il catalogo è fisso al contenuto dei TSV: non è limitabile a un sottoinsieme senza modificare quei file. La stessa logica vale per `dof_simulation_main`.
 
 ---
 
@@ -425,6 +434,95 @@ Il path di output viene generato automaticamente con timestamp:
 /mnt/external_ssd/riptide/runs/run_20260315_094512/lens.root
 /mnt/external_ssd/riptide/runs/run_20260315_094512/focal.root
 ```
+
+---
+
+## Log delle simulazioni
+
+**Simulazioni Geant4 via `run.sh` (modalità parallela):** spdlog scrive esclusivamente su stdout/stderr. Durante l'esecuzione i log per-chunk vengono catturati in:
+```
+/tmp/riptide_chunks_<timestamp>/chunk_N.log
+```
+Questi file vengono rimossi al termine della run (o su Ctrl+C insieme ai ROOT parziali). **Non esiste un log persistente per simulazioni già concluse**: l'artefatto durevole è il file ROOT prodotto (`lens.root`, `events.root`, `focal.root`, `psf_dof.root`).
+
+**Autonomous optimizer:** crea un log strutturato persistente per ogni variante sweep in:
+```
+output/sweep/<tag>/optimizer_<timestamp>.log
+```
+Il log include stdout/stderr di ogni step della pipeline, con timestamp e livello spdlog.
+
+---
+
+## Ottimizzazione autonoma
+
+`scripts/autonomous_optimizer.py` è il driver autonomo per lo sweep parametrico completo del design space RIPTIDE. Esegue la pipeline di analisi in modalità **two-phase** su un insieme di varianti geometriche, con recovery da fallimento, validazione post-run e ranking Pareto finale.
+
+### Varianti sweep
+
+Di default l'ottimizzatore genera **9 varianti** (3 geometrie × 3 valori di margine):
+
+| Geometria | `source_dx` [mm] | Note |
+|-----------|-----------------|------|
+| `nominal` | 0.5 | Griglia fine standard |
+| `coarse` | 1.0 | Griglia rada |
+| `extended` | 1.0 | Range sorgente esteso |
+
+| `lens_gap_margin` [mm] | 0.5 | 1.0 | 2.0 |
+
+### Strategia two-phase
+
+**Fase 1 (fast):** tutte le 9 varianti con `x_max = 150 mm`. Al termine, ogni variante viene classificata per Mtot medio (colonna `Mtot` di `pareto_results.tsv`).
+
+**Fase 2 (full):** le top-k varianti (default k = 3) vengono ri-eseguite con `x_max` illimitato. Dopo ogni run viene applicata una validazione di 3 invarianti; in caso di fallimento viene eseguito un auto-fix (ricompilazione selettiva del target CMake coinvolto) e la run viene ripetuta fino a 3 volte.
+
+### Pipeline per variante (10 step sequenziali)
+
+| Step | Binario | Input → Output |
+|------|---------|----------------|
+| 1 | `run.sh opt ssd --jobs N` | config → `events.root` |
+| 2 | `run.sh lens ssd --jobs N` | config → `lens.root` |
+| 3 | `psf_extractor` | `lens.root` → `psf_data.root` |
+| 4 | `q_map` | `psf_data.root` → `q_map.tsv` |
+| 5 | `chi2_map` | `psf_data.root` → `chi2_map.tsv` |
+| 6 | `run.sh dof ssd --jobs N` | config → `focal.root` |
+| 7 | `dof_map` | `focal.root` → `dof_map.tsv` |
+| 8 | `run.sh psf-dof ssd --jobs N` | config → `psf_dof.root` |
+| 9 | `resolution_map` | `psf_dof.root` → `resolution_map.tsv` |
+| 10 | `pareto_selector` | tutti i TSV → `pareto_results.tsv` |
+
+I parametri di ogni step di analisi (min_hits, n_tracks, pesi Pareto, ecc.) sono letti da `config/analysis_params.json` (vedi [File di configurazione](#file-di-configurazione)).
+
+### Recovery
+
+Un file registry JSON in `output/sweep/` registra i path dei file ROOT prodotti. Se il processo viene interrotto e riavviato, i passi già completati vengono saltati.
+
+### Output
+
+```
+output/sweep/<tag>/optimizer_<timestamp>.log    # log strutturato per variante
+output/sweep/report_<timestamp>.md              # report Markdown finale con top-10 Pareto
+```
+
+### Utilizzo
+
+```bash
+python3 scripts/autonomous_optimizer.py [opzioni]
+```
+
+| Flag | Default | Descrizione |
+|------|---------|-------------|
+| `--fast` | off | Solo fase 1 (tutte le varianti, `x_max=150 mm`) |
+| `--no-two-phase` | off | Disabilita fase 2 |
+| `--top-k N` | 3 | Varianti promosse a fase 2 |
+| `--geom` | tutte | Filtra geometria: `nominal`/`coarse`/`extended` |
+| `--margin` | tutti | Filtra margine: `0.5`/`1.0`/`2.0` |
+| `--lens75-id`, `--lens60-id` | — | ID lenti specifici (bypassa sweep multi-variante) |
+| `--ssd-mount` | `/mnt/external_ssd` | Mount point SSD |
+| `--analysis-params` | `config/analysis_params.json` | Override file parametri analisi |
+| `--max-hours` | 48 | Budget tempo totale |
+| `--jobs` | nproc | Job Geant4 paralleli per step |
+| `--dry-run` | off | Stampa comandi senza eseguirli |
+| `--no-commit` | off | Disabilita git commit automatici dei risultati |
 
 ---
 
@@ -1033,6 +1131,32 @@ Test unitari per `pareto_core.hpp`: filtri hard (η, DoF, EE80), calcolo Mtot co
 
 ---
 
+### Regression testing (pytest)
+
+Suite Python in `tests/` che verifica 10 bug storici regressi. Richiede i binari compilati in `build/Release/` e `build/analysis/`.
+
+```bash
+cd tests && pytest -v            # tutta la suite
+cd tests && pytest -v -k scan_min  # singolo test per nome
+```
+
+| Test | Bug verificato |
+|------|----------------|
+| `test_nhits_type` | `n_hits` deve essere `Double_t`, non `Int_t` (mismatch writer/reader) |
+| `test_mtot_normalization` | `Mtot` ∈ [0, 1] dopo normalizzazione Pareto |
+| `test_scan_min_bug` | `scan_min` non deve escludere il punto di fuoco (`max(scan_min, x_virtual)` rimosso) |
+| `test_ee80_mean_column` | Colonna `EE80_mean` presente in `resolution_map.tsv` |
+| `test_delta_m_column` | Colonna `M_abs_err` presente in `dof_map.tsv` |
+| `test_margin_consistency` | `lens_gap_margin` letto da config, non hardcodato |
+| `test_all_lenses_catalog` | `--all-lenses` legge entrambi i cataloghi TSV |
+| `test_registry_recovery` | Il registry JSON permette di saltare step già completati |
+| `test_focus_tsv_passthrough` | `--focus-tsv` viene propagato da `run.sh` a `lens_simulation_main` |
+| `test_pareto_join_tolerance` | Join (x1, x2) con tolleranza 1e-3 mm |
+
+CI: `.github/workflows/regression.yml` esegue la suite ad ogni push su `main`.
+
+---
+
 ## Configurazione raccomandata per `q_map`
 ```bash
 ./build/analysis/psf_analysis/Release/q_map \
@@ -1145,6 +1269,52 @@ Configurazione ridotta per profiling rapido (`dx = 30 mm`):
   "lower_percentile": 0.45, "upper_percentile": 0.0
 }
 ```
+
+### `config/analysis_params.json`
+
+Parametri di tuning usati esclusivamente da `autonomous_optimizer.py` per configurare ogni step della pipeline di analisi. **Non tracciato da git** (specifico per macchina/campagna): va creato manualmente alla prima esecuzione dell'ottimizzatore. Valori di riferimento:
+
+```json
+{
+  "psf_extractor": {
+    "min_hits": 50
+  },
+  "q_map": {
+    "n_tracks": 1000,
+    "dt": 0.5,
+    "min_hits": 50,
+    "trace_frac": 0.75,
+    "dist_to_target": true
+  },
+  "chi2_map": {
+    "min_hits": 50,
+    "p_low": 0.0,
+    "p_high": 100.0,
+    "adaptive_target": true
+  },
+  "dof_map": {
+    "core_fraction": 1.0,
+    "m_target": 0.2
+  },
+  "resolution_map": {},
+  "pareto_selector": {
+    "ee80_max": 10.0,
+    "w_eta": 0.1,
+    "w_Q": 0.1,
+    "w_dof": 0.3,
+    "w_M": 0.5
+  }
+}
+```
+
+| Chiave | Descrizione |
+|--------|-------------|
+| `psf_extractor.min_hits` | Hit minime per marcare un run `on_detector = true` |
+| `q_map.n_tracks` | Tracce casuali per configurazione nel calcolo di Q |
+| `q_map.dist_to_target` | Se `true`, Q è la distanza al target invece di χ²/ndof grezzo |
+| `chi2_map.adaptive_target` | Target χ² adattivo per range configurabile con `p_low`/`p_high` |
+| `dof_map.m_target` | Magnificazione target per calcolo `M_abs_err` |
+| `pareto_selector.w_*` | Pesi per Mtot: `w_eta` (η), `w_Q` (qualità), `w_dof` (DoF), `w_M` (magnificazione) |
 
 ---
 

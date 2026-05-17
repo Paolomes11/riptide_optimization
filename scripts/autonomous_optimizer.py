@@ -1,0 +1,896 @@
+#!/usr/bin/env python3
+"""
+autonomous_optimizer.py — Driver autonomo per sweep parametrico RIPTIDE.
+
+Esegue pipeline completa (opt → lens → psf_extractor → q_map → chi2_map →
+dof → dof_map → psf-dof → resolution_map → pareto_selector) con strategia
+a due fasi, registry di resume, validazione output e fix automatici.
+"""
+
+import argparse
+import datetime
+import json
+import logging
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import textwrap
+import time
+from pathlib import Path
+
+# ─── Costanti ────────────────────────────────────────────────────────────────
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BUILD        = PROJECT_ROOT / "build"
+
+BINARIES = {
+    "run_sh":          PROJECT_ROOT / "scripts" / "run.sh",
+    "psf_extractor":   BUILD / "analysis" / "Release" / "psf_extractor",
+    "q_map":           BUILD / "analysis" / "psf_analysis" / "Release" / "q_map",
+    "chi2_map":        BUILD / "analysis" / "psf_analysis" / "Release" / "chi2_map",
+    "dof_map":         BUILD / "analysis" / "dof_analysis" / "Release" / "dof_map",
+    "resolution_map":  BUILD / "analysis" / "resolution_analysis" / "Release" / "resolution_map",
+    "pareto_selector": BUILD / "analysis" / "pareto_analysis" / "Release" / "pareto_selector",
+}
+
+# Timeout in secondi per ogni step
+TIMEOUTS_SEC = {
+    "opt":            60  * 60,
+    "lens":           210 * 60,
+    "dof":            90  * 60,
+    "psf-dof":        90  * 60,
+    "resolution_map": 30  * 60,
+    "analysis":       10  * 60,   # psf_extractor, q_map, chi2_map, dof_map, pareto_selector
+}
+
+SWEEP_GEOM = [
+    {"name": "nominal",  "source_dx": 0.5, "source_dy": 0.5,
+     "source_x_min": -30.0, "source_x_max": 30.0, "source_y_max": 14.14},
+    {"name": "coarse",   "source_dx": 1.0, "source_dy": 1.0,
+     "source_x_min": -30.0, "source_x_max": 30.0, "source_y_max": 14.14},
+    {"name": "extended", "source_dx": 1.0, "source_dy": 1.0,
+     "source_x_min": -45.0, "source_x_max": 45.0, "source_y_max": 20.0},
+]
+MARGIN_VALUES = [0.5, 1.0, 2.0]
+
+# ─── Stato globale per cleanup su SIGINT ────────────────────────────────────
+
+_active_proc: subprocess.Popen | None = None
+_registry_path: Path | None           = None
+_registry: dict                       = {}
+
+
+def _save_registry() -> None:
+    if _registry_path is None:
+        return
+    _registry_path.parent.mkdir(parents=True, exist_ok=True)
+    _registry_path.write_text(json.dumps(_registry, indent=2))
+
+
+def _sigint_handler(sig, frame):
+    logging.warning("SIGINT ricevuto — terminazione processi e salvataggio registry...")
+    if _active_proc is not None:
+        try:
+            _active_proc.terminate()
+        except Exception:
+            pass
+    _save_registry()
+    sys.exit(130)
+
+
+signal.signal(signal.SIGINT,  _sigint_handler)
+signal.signal(signal.SIGTERM, _sigint_handler)
+
+# ─── Logging ─────────────────────────────────────────────────────────────────
+
+def setup_logging(sweep_dir: Path, timestamp: str) -> logging.Logger:
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    log_path = sweep_dir / f"optimizer_{timestamp}.log"
+    fmt = "%(asctime)s [%(levelname)s] %(message)s"
+    logging.basicConfig(level=logging.INFO, format=fmt,
+                        handlers=[logging.FileHandler(log_path),
+                                  logging.StreamHandler(sys.stdout)])
+    return logging.getLogger("optimizer")
+
+# ─── Binari & config ─────────────────────────────────────────────────────────
+
+def find_binary(name: str) -> Path:
+    p = BINARIES[name]
+    if not p.exists():
+        raise FileNotFoundError(f"Binario '{name}' non trovato: {p}")
+    return p
+
+
+def load_base_config() -> dict:
+    path = PROJECT_ROOT / "config" / "config.json"
+    return json.loads(path.read_text())
+
+
+def load_analysis_params(override_path: str | None) -> dict:
+    path = Path(override_path) if override_path else PROJECT_ROOT / "config" / "analysis_params.json"
+    return json.loads(path.read_text())
+
+
+def generate_sweep_config(base: dict, geom: dict, margin: float,
+                          fast: bool, tag: str) -> Path:
+    cfg = dict(base)
+    cfg.update({
+        "source_dx":       geom["source_dx"],
+        "source_dy":       geom["source_dy"],
+        "source_x_min":    geom["source_x_min"],
+        "source_x_max":    geom["source_x_max"],
+        "source_y_max":    geom["source_y_max"],
+        "lens_gap_margin": margin,
+    })
+    if fast:
+        cfg["x_max"] = 150.0
+    path = PROJECT_ROOT / "config" / f"config_sweep_{tag}.json"
+    path.write_text(json.dumps(cfg, indent=2))
+    return path
+
+# ─── SSD discovery ───────────────────────────────────────────────────────────
+
+def find_ssd_root_from_stdout(stdout: str, prefix: str) -> Path | None:
+    """Estrae il path dal messaggio '[DONE]  Output finale: ...' di run.sh."""
+    for line in stdout.splitlines():
+        if "[DONE]" in line and "Output finale:" in line:
+            parts = line.split("Output finale:")
+            if len(parts) == 2:
+                candidate = Path(parts[1].strip())
+                if candidate.exists():
+                    return candidate
+    return None
+
+
+def find_latest_ssd_root(ssd_mount: Path, prefix: str) -> Path | None:
+    runs_dir = ssd_mount / "riptide" / "runs"
+    if not runs_dir.exists():
+        return None
+    candidates = sorted(
+        runs_dir.glob(f"run_*/{prefix}.root"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+# ─── Esecuzione comandi ───────────────────────────────────────────────────────
+
+def run_cmd(cmd: list[str], log_path: Path, timeout_sec: int,
+            dry_run: bool = False, env: dict | None = None) -> tuple[bool, str, str]:
+    """Esegue un comando, tee su log_path. Restituisce (ok, stdout, stderr)."""
+    global _active_proc
+    cmd_str = " ".join(str(c) for c in cmd)
+    logging.info(f"CMD: {cmd_str}")
+    if dry_run:
+        logging.info("[DRY-RUN] (non eseguito)")
+        return True, "", ""
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a") as lf:
+        lf.write(f"\n{'='*60}\nCMD: {cmd_str}\n{'='*60}\n")
+        try:
+            proc = subprocess.Popen(
+                [str(c) for c in cmd],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, env=env
+            )
+            _active_proc = proc
+            stdout_lines = []
+            for line in proc.stdout:
+                lf.write(line)
+                stdout_lines.append(line)
+            proc.wait(timeout=timeout_sec)
+            _active_proc = None
+            stdout = "".join(stdout_lines)
+            ok = proc.returncode == 0
+            if not ok:
+                logging.error(f"FALLITO (rc={proc.returncode}): {cmd_str}")
+            return ok, stdout, ""
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _active_proc = None
+            logging.error(f"TIMEOUT ({timeout_sec}s): {cmd_str}")
+            return False, "", "timeout"
+        except Exception as e:
+            _active_proc = None
+            logging.error(f"ECCEZIONE: {e}")
+            return False, "", str(e)
+
+# ─── Pre-flight checks ───────────────────────────────────────────────────────
+
+def check_margin_consistency() -> tuple[bool, str, str]:
+    key = 'config.value("lens_gap_margin"'
+    for rel in ["src/lens_simulation/lens_scan.cpp",
+                "src/optimization/optimizer.cpp"]:
+        path = PROJECT_ROOT / rel
+        if not path.exists():
+            continue
+        if key not in path.read_text():
+            return False, "margin_mismatch", f"{rel}: lens_gap_margin non letto da config"
+    return True, "", ""
+
+
+def check_nhits_branch_type() -> tuple[bool, str, str]:
+    bad_key = 'CreateNtupleIColumn("n_hits"'
+    for rel in ["src/lens_simulation/lens_scan.cpp",
+                "src/optimization/optimizer.cpp",
+                "src/psf_dof_scan/psf_dof_scan.cpp"]:
+        path = PROJECT_ROOT / rel
+        if not path.exists():
+            continue
+        if bad_key in path.read_text():
+            return False, "nhits_type_mismatch", f"{rel}: n_hits è IColumn (deve essere DColumn)"
+    return True, "", ""
+
+
+def preflight_checks() -> list[str]:
+    failures = []
+    for checker in [check_margin_consistency, check_nhits_branch_type]:
+        ok, fid, msg = checker()
+        if not ok:
+            logging.error(f"Pre-flight FAIL [{fid}]: {msg}")
+            failures.append(fid)
+        else:
+            logging.info(f"Pre-flight OK: {checker.__name__}")
+    return failures
+
+# ─── Validazione output ───────────────────────────────────────────────────────
+
+def _read_tsv_header(tsv: Path) -> list[str]:
+    if not tsv.exists():
+        return []
+    with open(tsv) as f:
+        header = f.readline().strip()
+    return [h.strip() for h in header.split("\t")]
+
+
+def check_ee80_mean_column(tsv: Path) -> tuple[bool, str, str]:
+    if not tsv.exists():
+        return False, "ee80_missing", f"{tsv}: file non trovato"
+    cols = _read_tsv_header(tsv)
+    if "EE80_mean" not in cols:
+        return False, "ee80_missing", f"{tsv}: colonna EE80_mean assente (trovate: {cols})"
+    return True, "", ""
+
+
+def check_delta_m_column(tsv: Path) -> tuple[bool, str, str]:
+    if not tsv.exists():
+        return False, "delta_m_missing", f"{tsv}: file non trovato"
+    cols = _read_tsv_header(tsv)
+    if "M_abs_err" not in cols:
+        return False, "delta_m_missing", f"{tsv}: colonna M_abs_err assente (trovate: {cols})"
+    return True, "", ""
+
+
+def check_mtot_normalization(tsv: Path) -> tuple[bool, str, str]:
+    if not tsv.exists():
+        return False, "mtot_unnormalized", f"{tsv}: file non trovato"
+    with open(tsv) as f:
+        lines = f.readlines()
+    if len(lines) < 2:
+        return True, "", ""   # nessuna riga dati, non validabile
+    header = [h.strip() for h in lines[0].split("\t")]
+    if "Mtot" not in header:
+        return False, "mtot_unnormalized", f"{tsv}: colonna Mtot assente"
+    idx = header.index("Mtot")
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if idx >= len(parts):
+            continue
+        try:
+            val = float(parts[idx].strip())
+        except ValueError:
+            continue
+        if not (0.0 <= val <= 1.0 + 1e-6):
+            return False, "mtot_unnormalized", f"{tsv}: Mtot={val} fuori [0,1]"
+    return True, "", ""
+
+
+def validate_outputs(sweep_dir: Path) -> list[str]:
+    failures = []
+    checks = [
+        (check_ee80_mean_column,    sweep_dir / "resolution_map.tsv"),
+        (check_delta_m_column,      sweep_dir / "dof_map.tsv"),
+        (check_mtot_normalization,  sweep_dir / "pareto_results.tsv"),
+    ]
+    for checker, tsv in checks:
+        ok, fid, msg = checker(tsv)
+        if not ok:
+            logging.error(f"Validazione FAIL [{fid}]: {msg}")
+            failures.append(fid)
+        else:
+            logging.info(f"Validazione OK: {tsv.name}")
+    return failures
+
+# ─── Fix dispatch ─────────────────────────────────────────────────────────────
+
+FIX_TARGETS = {
+    "ee80_missing":        ["resolution_map"],
+    "delta_m_missing":     ["dof_map"],
+    "mtot_unnormalized":   ["pareto_selector"],
+    "margin_mismatch":     ["lens_simulation_main", "optimization_main"],
+    "nhits_type_mismatch": ["lens_simulation_main", "optimization_main", "psf_dof_scan_main"],
+}
+
+
+def _patch_margin_in_source() -> None:
+    """Placeholder: se margin_mismatch, segnala all'utente quale riga correggere."""
+    logging.warning("margin_mismatch: verificare manualmente lens_gap_margin nei sorgenti C++.")
+
+
+def _patch_nhits_to_double() -> None:
+    """Placeholder: se nhits_type_mismatch, segnala all'utente quale branch correggere."""
+    logging.warning("nhits_type_mismatch: sostituire CreateNtupleIColumn->DColumn per n_hits.")
+
+
+def apply_fix(failure_id: str, dry_run: bool = False) -> bool:
+    if failure_id == "margin_mismatch":
+        _patch_margin_in_source()
+    if failure_id == "nhits_type_mismatch":
+        _patch_nhits_to_double()
+
+    targets = FIX_TARGETS.get(failure_id, [])
+    for target in targets:
+        cmd = ["cmake", "--build", str(BUILD), "--config", "Release", "--target", target]
+        logging.info(f"Ricompilo target: {target}")
+        if dry_run:
+            logging.info(f"[DRY-RUN] {' '.join(cmd)}")
+            continue
+        r = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+        if r.returncode != 0:
+            logging.error(f"Build fallita per {target}:\n{r.stdout}\n{r.stderr}")
+            return False
+        logging.info(f"Build OK: {target}")
+    return True
+
+# ─── Pipeline per variante ───────────────────────────────────────────────────
+
+def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
+                        sweep_dir: Path, ssd_mount: Path, jobs: int,
+                        lens75_id: str, lens60_id: str,
+                        dry_run: bool) -> Path | None:
+    """Esegue run.sh per la modalità indicata e restituisce il path del file ROOT su SSD."""
+    out_names = {"opt": "events", "lens": "lens", "dof": "focal", "psf-dof": "psf_dof"}
+    prefix = out_names[mode]
+
+    reg_key = tag
+    if reg_key in _registry and prefix in _registry[reg_key]:
+        candidate = Path(_registry[reg_key][prefix])
+        if candidate.exists():
+            logging.info(f"Registry hit [{mode}]: {candidate}")
+            return candidate
+        else:
+            logging.warning(f"Registry entry obsoleta per {mode} ({candidate}), rieseguo.")
+
+    cmd = [
+        find_binary("run_sh"), mode, "ssd",
+        "--jobs", str(jobs),
+        "--ssd-mount", str(ssd_mount),
+        "--config", str(sweep_cfg_path),
+    ]
+    if lens75_id:
+        cmd += ["--lens75-id", lens75_id]
+    if lens60_id:
+        cmd += ["--lens60-id", lens60_id]
+
+    log_path = sweep_dir / "pipeline.log"
+    ok, stdout, _ = run_cmd(cmd, log_path, TIMEOUTS_SEC[mode], dry_run)
+    if not ok:
+        return None
+
+    # Trova il path dall'output di run.sh
+    if dry_run:
+        return Path(f"/dev/null/{prefix}.root")   # sentinel per dry-run
+
+    root_path = find_ssd_root_from_stdout(stdout, prefix)
+    if root_path is None:
+        root_path = find_latest_ssd_root(ssd_mount, prefix)
+    if root_path is None:
+        logging.error(f"File ROOT '{prefix}.root' non trovato su SSD dopo {mode}")
+        return None
+
+    # Aggiorna registry
+    if reg_key not in _registry:
+        _registry[reg_key] = {}
+    _registry[reg_key][prefix] = str(root_path)
+    _save_registry()
+
+    # Copia locale (riferimento, non duplicato pesante)
+    local_link = sweep_dir / f"{prefix}.root"
+    if not dry_run and not local_link.exists():
+        try:
+            local_link.symlink_to(root_path)
+        except Exception:
+            pass  # se symlink fallisce, ok — usiamo il path SSD direttamente
+
+    return root_path
+
+
+def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
+                 ssd_mount: Path, jobs: int, lens75_id: str, lens60_id: str,
+                 ap: dict, dry_run: bool) -> dict | None:
+    """
+    Esegue i 10 step della pipeline per una variante.
+    Restituisce dict con i path dei TSV/ROOT prodotti, o None se step critico fallisce.
+    """
+    out = {}
+    log = sweep_dir / "pipeline.log"
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: opt
+    events_root = run_simulation_step("opt", sweep_cfg, tag, sweep_dir,
+                                      ssd_mount, jobs, lens75_id, lens60_id, dry_run)
+    if events_root is None:
+        return None
+    out["events"] = events_root
+
+    # Step 2: lens
+    lens_root = run_simulation_step("lens", sweep_cfg, tag, sweep_dir,
+                                    ssd_mount, jobs, lens75_id, lens60_id, dry_run)
+    if lens_root is None:
+        return None
+    out["lens"] = lens_root
+
+    # Step 3: psf_extractor
+    psf_data = sweep_dir / "psf_data.root"
+    min_hits = ap["psf_extractor"]["min_hits"]
+    cmd = [find_binary("psf_extractor"), str(lens_root), str(psf_data), str(min_hits)]
+    ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
+    if not ok:
+        return None
+    out["psf_data"] = psf_data
+
+    # Step 4: q_map
+    q_tsv = sweep_dir / "q_map.tsv"
+    qp = ap["q_map"]
+    cmd = [
+        find_binary("q_map"),
+        "--psf", str(psf_data),
+        "--n-tracks", str(qp["n_tracks"]),
+        "--dt", str(qp["dt"]),
+        "--min-hits", str(qp["min_hits"]),
+        "--trace-frac", str(qp["trace_frac"]),
+        "--tsv", str(q_tsv),
+    ]
+    if qp.get("dist_to_target"):
+        cmd.append("--dist-to-target")
+    ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
+    if not ok:
+        return None
+    out["q_tsv"] = q_tsv
+
+    # Step 5: chi2_map
+    chi2_tsv = sweep_dir / "chi2_map.tsv"
+    cp = ap["chi2_map"]
+    cmd = [
+        find_binary("chi2_map"),
+        "--psf", str(psf_data),
+        "--config", str(sweep_cfg),
+        "--min-hits", str(cp["min_hits"]),
+        "--p-low", str(cp["p_low"]),
+        "--p-high", str(cp["p_high"]),
+        "--tsv", str(chi2_tsv),
+    ]
+    if cp.get("adaptive_target"):
+        cmd.append("--adaptive-target")
+    ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
+    if not ok:
+        return None
+    out["chi2_tsv"] = chi2_tsv
+
+    # Step 6: dof
+    focal_root = run_simulation_step("dof", sweep_cfg, tag, sweep_dir,
+                                     ssd_mount, jobs, lens75_id, lens60_id, dry_run)
+    if focal_root is None:
+        return None
+    out["focal"] = focal_root
+
+    # Step 7: dof_map
+    dof_tsv = sweep_dir / "dof_map.tsv"
+    dp = ap["dof_map"]
+    cmd = [
+        find_binary("dof_map"),
+        "--input", str(focal_root),
+        "--config", str(sweep_cfg),
+        "--core-fraction", str(dp["core_fraction"]),
+        "--m-target", str(dp["m_target"]),
+        "--tsv", str(dof_tsv),
+    ]
+    ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
+    if not ok:
+        return None
+    out["dof_tsv"] = dof_tsv
+
+    # Step 8: psf-dof
+    psf_dof_root = run_simulation_step("psf-dof", sweep_cfg, tag, sweep_dir,
+                                       ssd_mount, jobs, lens75_id, lens60_id, dry_run)
+    if psf_dof_root is None:
+        return None
+    out["psf_dof"] = psf_dof_root
+
+    # Step 9: resolution_map
+    res_tsv = sweep_dir / "resolution_map.tsv"
+    cmd = [
+        find_binary("resolution_map"),
+        "--input", str(psf_dof_root),
+        "--config", str(sweep_cfg),
+        "--tsv", str(res_tsv),
+    ]
+    ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["resolution_map"], dry_run)
+    if not ok:
+        return None
+    out["res_tsv"] = res_tsv
+
+    # Step 10: pareto_selector
+    pareto_tsv = sweep_dir / "pareto_results.tsv"
+    pp = ap["pareto_selector"]
+    cmd = [
+        find_binary("pareto_selector"),
+        "--events", str(events_root),
+        "--qmap", str(q_tsv),
+        "--chi2map", str(chi2_tsv),
+        "--dofmap", str(dof_tsv),
+        "--resolution", str(res_tsv),
+        "--tsv", str(pareto_tsv),
+        "--ee80-max", str(pp["ee80_max"]),
+        "--w-eta", str(pp["w_eta"]),
+        "--w-Q", str(pp["w_Q"]),
+        "--w-dof", str(pp["w_dof"]),
+        "--w-M", str(pp["w_M"]),
+    ]
+    if lens75_id:
+        cmd += ["--lens75-id", lens75_id]
+    if lens60_id:
+        cmd += ["--lens60-id", lens60_id]
+    ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
+    if not ok:
+        return None
+    out["pareto_tsv"] = pareto_tsv
+
+    return out
+
+# ─── Ranking Pareto ───────────────────────────────────────────────────────────
+
+def _mean_mtot(pareto_tsv: Path) -> float:
+    if not pareto_tsv.exists():
+        return -1.0
+    with open(pareto_tsv) as f:
+        lines = f.readlines()
+    if len(lines) < 2:
+        return -1.0
+    header = [h.strip() for h in lines[0].split("\t")]
+    if "Mtot" not in header:
+        return -1.0
+    idx = header.index("Mtot")
+    vals = []
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if idx < len(parts):
+            try:
+                vals.append(float(parts[idx].strip()))
+            except ValueError:
+                pass
+    return sum(vals) / len(vals) if vals else -1.0
+
+
+def top_k_variants(results: dict, k: int) -> list[str]:
+    """Ordina i tag per Mtot medio decrescente e restituisce i top-k."""
+    ranked = sorted(results.keys(),
+                    key=lambda t: _mean_mtot(results[t].get("pareto_tsv", Path("/dev/null"))),
+                    reverse=True)
+    return ranked[:k]
+
+# ─── Report Markdown ──────────────────────────────────────────────────────────
+
+def _load_pareto_rows(tsv: Path) -> list[dict]:
+    if not tsv or not tsv.exists():
+        return []
+    with open(tsv) as f:
+        lines = f.readlines()
+    if len(lines) < 2:
+        return []
+    header = [h.strip() for h in lines[0].split("\t")]
+    rows = []
+    for line in lines[1:]:
+        parts = [p.strip() for p in line.split("\t")]
+        if len(parts) == len(header):
+            rows.append(dict(zip(header, parts)))
+    return rows
+
+
+def generate_report(fast_results: dict, full_results: dict,
+                    sweep_dir: Path, timestamp: str,
+                    lens75_id: str, lens60_id: str,
+                    t_start: float) -> Path:
+    elapsed = time.time() - t_start
+    h, rem = divmod(int(elapsed), 3600)
+    m = rem // 60
+    duration = f"{h}h {m}m"
+
+    n_done = len(fast_results) + len(full_results)
+    report_path = sweep_dir / f"report_{timestamp}.md"
+
+    # Raccoglie tutte le righe Pareto da full (poi fast) con tag variante
+    all_rows: list[tuple[str, dict]] = []
+    for tag, out in full_results.items():
+        tsv = out.get("pareto_tsv")
+        for row in _load_pareto_rows(tsv):
+            all_rows.append((tag, row))
+    for tag, out in fast_results.items():
+        if tag in full_results:
+            continue
+        tsv = out.get("pareto_tsv")
+        for row in _load_pareto_rows(tsv):
+            all_rows.append((tag, row))
+
+    # Ordina per Mtot
+    def _mtot(pair):
+        try:
+            return float(pair[1].get("Mtot", -1))
+        except ValueError:
+            return -1.0
+
+    all_rows.sort(key=_mtot, reverse=True)
+    top10 = all_rows[:10]
+
+    lines = [
+        "# RIPTIDE Autonomous Optimization Report",
+        "",
+        f"Generated: {datetime.datetime.now().isoformat(timespec='seconds')}  "
+        f"|  Duration: {duration}  |  Variants: {n_done}/9",
+        f"Lenti: L1={lens75_id or 'N/A'}  L2={lens60_id or 'N/A'}",
+        "",
+        "## Sweep Matrix",
+        "",
+        "| Variante | source_dx | margin | Tipo | Status |",
+        "|----------|-----------|--------|------|--------|",
+    ]
+    for tag, out in {**fast_results, **full_results}.items():
+        phase = "full" if tag in full_results else "fast"
+        parts = tag.split("_")
+        # tag formato: {geom_name}_m{margin}_{fast|full}
+        status = "OK" if out else "FAIL"
+        margin_str = tag.split("_m")[1].split("_")[0] if "_m" in tag else "?"
+        geom_name  = tag.split("_m")[0]       if "_m" in tag else tag
+        try:
+            geom = next(g for g in SWEEP_GEOM if g["name"] == geom_name)
+            dx = geom["source_dx"]
+        except StopIteration:
+            dx = "?"
+        lines.append(f"| {tag} | {dx} | {margin_str} | {phase} | {status} |")
+
+    lines += [
+        "",
+        "## Top-10 Pareto Configurations (ranked by Mtot)",
+        "",
+        "| Rank | x1 | x2 | η | Q | M_abs_err | EE80_mean | DoF | Mtot | Variante |",
+        "|------|----|----|---|---|-----------|-----------|-----|------|----------|",
+    ]
+    for rank, (tag, row) in enumerate(top10, 1):
+        x1   = row.get("x1",       "—")
+        x2   = row.get("x2",       "—")
+        eta  = row.get("eta",      "—")
+        Q    = row.get("Q",        "—")
+        merr = row.get("M_abs_err","—")
+        ee80 = row.get("EE80_mean","—")
+        dof  = row.get("dof",      "—")
+        mtot = row.get("Mtot",     "—")
+        lines.append(f"| {rank} | {x1} | {x2} | {eta} | {Q} | {merr} | {ee80} | {dof} | {mtot} | {tag} |")
+
+    lines += [
+        "",
+        "## Interpretazione fisica",
+        "",
+        "M ≈ (x_det − x2) / x1 (regime telescopio).  ",
+        "η = efficienza di raccolta fotoni.  ",
+        "M_abs_err = errore assoluto di magnificazione rispetto al target.  ",
+        "EE80_mean = raggio del cerchio che contiene l'80% dell'energia (mm).  ",
+        "DoF = profondità di campo (mm).  ",
+        "",
+        "Le configurazioni Pareto-ottimali massimizzano Mtot = w_eta·η̃ + w_Q·Q̃ + w_dof·DoF̃ + w_M·M̃.",
+        "",
+    ]
+
+    report_path.write_text("\n".join(lines))
+    logging.info(f"Report scritto: {report_path}")
+    return report_path
+
+# ─── Loop principale ──────────────────────────────────────────────────────────
+
+def build_variants(geom_filter: str | None, margin_filter: float | None) -> list[tuple[dict, float]]:
+    variants = []
+    for geom in SWEEP_GEOM:
+        if geom_filter and geom["name"] != geom_filter:
+            continue
+        for margin in MARGIN_VALUES:
+            if margin_filter is not None and abs(margin - margin_filter) > 1e-9:
+                continue
+            variants.append((geom, margin))
+    return variants
+
+
+def make_tag(geom: dict, margin: float, phase: str) -> str:
+    return f"{geom['name']}_m{margin}_{phase}"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Autonomous optimization driver per RIPTIDE",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent("""\
+            Esempi:
+              # Dry-run singola variante
+              python3 scripts/autonomous_optimizer.py --fast --geom nominal --margin 1.0 \\
+                  --lens75-id LA4464 --lens60-id LA4464R --dry-run
+
+              # Run completo
+              python3 scripts/autonomous_optimizer.py --lens75-id LA4464 --lens60-id LA4464R
+        """),
+    )
+    parser.add_argument("--fast",         action="store_true",
+                        help="Solo fase 1 (x_max=150), senza fase 2")
+    parser.add_argument("--two-phase",    dest="two_phase", action="store_true",  default=True)
+    parser.add_argument("--no-two-phase", dest="two_phase", action="store_false")
+    parser.add_argument("--top-k",        type=int,   default=3,
+                        help="Varianti da promuovere in fase 2 (default: 3)")
+    parser.add_argument("--geom",         type=str,   default=None,
+                        help="Esegui solo la geometria specificata (nominal|coarse|extended)")
+    parser.add_argument("--margin",       type=float, default=None,
+                        help="Esegui solo il margin specificato (0.5|1.0|2.0)")
+    parser.add_argument("--lens75-id",    type=str,   default="",
+                        help="ID lente L1 Thorlabs (es. LA4464)")
+    parser.add_argument("--lens60-id",    type=str,   default="",
+                        help="ID lente L2 Thorlabs (es. LA4464R)")
+    parser.add_argument("--ssd-mount",    type=str,   default="/mnt/external_ssd",
+                        help="Override SSD mount (default: /mnt/external_ssd)")
+    parser.add_argument("--analysis-params", type=str, default=None,
+                        help="Override config/analysis_params.json")
+    parser.add_argument("--max-hours",    type=float, default=48.0,
+                        help="Budget tempo totale in ore (default: 48)")
+    parser.add_argument("--jobs",         type=int,   default=os.cpu_count() or 1,
+                        help="Numero di job paralleli per run.sh")
+    parser.add_argument("--dry-run",      action="store_true",
+                        help="Stampa comandi senza eseguire")
+    parser.add_argument("--no-commit",    action="store_true",
+                        help="Disabilita git commit automatici")
+    args = parser.parse_args()
+
+    timestamp  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    sweep_dir  = PROJECT_ROOT / "output" / "sweep"
+    t_start    = time.time()
+    max_sec    = args.max_hours * 3600
+    ssd_mount  = Path(args.ssd_mount)
+
+    global _registry_path, _registry
+    _registry_path = sweep_dir / "registry.json"
+    if _registry_path.exists():
+        _registry = json.loads(_registry_path.read_text())
+
+    setup_logging(sweep_dir, timestamp)
+    logging.info(f"=== RIPTIDE Autonomous Optimizer — {timestamp} ===")
+    logging.info(f"dry_run={args.dry_run}  two_phase={args.two_phase and not args.fast}  "
+                 f"jobs={args.jobs}  max_hours={args.max_hours}")
+
+    base_cfg = load_base_config()
+    ap       = load_analysis_params(args.analysis_params)
+
+    # Pre-flight
+    pf_failures = preflight_checks()
+    for fid in pf_failures:
+        if not apply_fix(fid, args.dry_run):
+            logging.error(f"Fix pre-flight [{fid}] fallito — interrotto.")
+            return 1
+
+    variants = build_variants(args.geom, args.margin)
+    if not variants:
+        logging.error("Nessuna variante selezionata con i filtri forniti.")
+        return 1
+    logging.info(f"Varianti selezionate: {len(variants)}")
+
+    fast_results: dict[str, dict | None] = {}
+    full_results: dict[str, dict | None] = {}
+
+    # ── FASE 1: fast su tutte le varianti ────────────────────────────────────
+    for geom, margin in variants:
+        if time.time() - t_start > max_sec:
+            logging.warning(f"Budget tempo ({args.max_hours}h) esaurito — interruzione fase 1.")
+            break
+
+        tag       = make_tag(geom, margin, "fast")
+        sweep_sub = sweep_dir / tag
+        logging.info(f"--- Fase 1: {tag} ---")
+
+        sweep_cfg = generate_sweep_config(base_cfg, geom, margin, fast=True, tag=tag)
+        out = run_pipeline(tag, sweep_cfg, sweep_sub, ssd_mount,
+                           args.jobs, args.lens75_id, args.lens60_id, ap, args.dry_run)
+        fast_results[tag] = out or {}
+
+    # ── FASE 2: full sui top-k (se abilitata) ────────────────────────────────
+    if not args.fast and args.two_phase and fast_results:
+        top_tags = top_k_variants(fast_results, args.top_k)
+        logging.info(f"Top-{args.top_k} da fase 1: {top_tags}")
+
+        for fast_tag in top_tags:
+            if time.time() - t_start > max_sec:
+                logging.warning("Budget tempo esaurito — interruzione fase 2.")
+                break
+
+            # Ricostruisce geom e margin dal tag
+            geom_name  = fast_tag.split("_m")[0]
+            margin_str = fast_tag.split("_m")[1].split("_")[0]
+            try:
+                geom   = next(g for g in SWEEP_GEOM if g["name"] == geom_name)
+                margin = float(margin_str)
+            except (StopIteration, ValueError):
+                logging.error(f"Impossibile decodificare tag: {fast_tag}")
+                continue
+
+            full_tag  = make_tag(geom, margin, "full")
+            sweep_sub = sweep_dir / full_tag
+            logging.info(f"--- Fase 2: {full_tag} ---")
+
+            sweep_cfg = generate_sweep_config(base_cfg, geom, margin, fast=False, tag=full_tag)
+
+            retries = 0
+            success = False
+            while retries < 3 and not success:
+                out = run_pipeline(full_tag, sweep_cfg, sweep_sub, ssd_mount,
+                                   args.jobs, args.lens75_id, args.lens60_id, ap, args.dry_run)
+                if out is None:
+                    retries += 1
+                    logging.warning(f"Pipeline fallita per {full_tag} (tentativo {retries}/3)")
+                    continue
+
+                failures = validate_outputs(sweep_sub)
+                if not failures:
+                    success = True
+                    full_results[full_tag] = out
+                    logging.info(f"Variante {full_tag} completata con successo.")
+
+                    if not args.no_commit and not args.dry_run:
+                        subprocess.run(
+                            ["git", "add", str(sweep_sub / "pareto_results.tsv")],
+                            cwd=PROJECT_ROOT, check=False
+                        )
+                        subprocess.run(
+                            ["git", "commit", "--allow-empty", "-m",
+                             f"sweep: {full_tag} completato"],
+                            cwd=PROJECT_ROOT, check=False
+                        )
+                else:
+                    for fid in failures:
+                        apply_fix(fid, args.dry_run)
+                    retries += 1
+                    logging.warning(f"Validazione fallita per {full_tag}, retry {retries}/3")
+
+            if not success:
+                logging.error(f"Variante {full_tag} fallita dopo 3 tentativi.")
+                full_results[full_tag] = {}
+
+    # ── Report finale ─────────────────────────────────────────────────────────
+    report = generate_report(fast_results, full_results, sweep_dir, timestamp,
+                             args.lens75_id, args.lens60_id, t_start)
+
+    if not args.no_commit and not args.dry_run:
+        subprocess.run(
+            ["git", "add", str(report)],
+            cwd=PROJECT_ROOT, check=False
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m",
+             f"sweep: report finale {timestamp}"],
+            cwd=PROJECT_ROOT, check=False
+        )
+
+    _save_registry()
+    elapsed = time.time() - t_start
+    h, rem  = divmod(int(elapsed), 3600)
+    m       = rem // 60
+    logging.info(f"=== Completato in {h}h {m}m. Report: {report} ===")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
