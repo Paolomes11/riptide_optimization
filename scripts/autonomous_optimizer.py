@@ -27,6 +27,7 @@ BUILD        = PROJECT_ROOT / "build"
 
 BINARIES = {
     "run_sh":          PROJECT_ROOT / "scripts" / "run.sh",
+    "plot2D":          BUILD / "analysis" / "Release" / "plot2D",
     "psf_extractor":   BUILD / "analysis" / "Release" / "psf_extractor",
     "q_map":           BUILD / "analysis" / "psf_analysis" / "Release" / "q_map",
     "chi2_map":        BUILD / "analysis" / "psf_analysis" / "Release" / "chi2_map",
@@ -356,7 +357,9 @@ def apply_fix(failure_id: str, dry_run: bool = False) -> bool:
 def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
                         sweep_dir: Path, ssd_mount: Path, jobs: int,
                         lens75_id: str, lens60_id: str,
-                        dry_run: bool) -> Path | None:
+                        dry_run: bool,
+                        all_lenses: bool = False,
+                        lens_subset: str = "") -> Path | None:
     """Esegue run.sh per la modalità indicata e restituisce il path del file ROOT su SSD."""
     out_names = {"opt": "events", "lens": "lens", "dof": "focal", "psf-dof": "psf_dof"}
     prefix = out_names[mode]
@@ -380,6 +383,10 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
         cmd += ["--lens75-id", lens75_id]
     if lens60_id:
         cmd += ["--lens60-id", lens60_id]
+    if all_lenses:
+        cmd.append("--all-lenses")
+    if lens_subset:
+        cmd += ["--lens-subset", lens_subset]
 
     log_path = sweep_dir / "pipeline.log"
     step_start = time.time()
@@ -417,7 +424,8 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
 
 def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
                  ssd_mount: Path, jobs: int, lens75_id: str, lens60_id: str,
-                 ap: dict, dry_run: bool) -> dict | None:
+                 ap: dict, dry_run: bool,
+                 prebuilt_events: Path | None = None) -> dict | None:
     """
     Esegue i 10 step della pipeline per una variante.
     Restituisce dict con i path dei TSV/ROOT prodotti, o None se step critico fallisce.
@@ -427,10 +435,14 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
     sweep_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 1: opt
-    events_root = run_simulation_step("opt", sweep_cfg, tag, sweep_dir,
-                                      ssd_mount, jobs, lens75_id, lens60_id, dry_run)
-    if events_root is None:
-        return None
+    if prebuilt_events is not None:
+        events_root = prebuilt_events
+        logging.info(f"[opt] Uso events pre-costruito: {events_root}")
+    else:
+        events_root = run_simulation_step("opt", sweep_cfg, tag, sweep_dir,
+                                          ssd_mount, jobs, lens75_id, lens60_id, dry_run)
+        if events_root is None:
+            return None
     out["events"] = events_root
 
     # Step 2: lens
@@ -704,6 +716,99 @@ def generate_report(fast_results: dict, full_results: dict,
     logging.info(f"Report scritto: {report_path}")
     return report_path
 
+# ─── Screening lenti ─────────────────────────────────────────────────────────
+
+def generate_screening_config(base_cfg: dict, n_photons: int) -> Path:
+    import copy
+    cfg = copy.deepcopy(base_cfg)
+    cfg["n_photons"] = n_photons
+    path = PROJECT_ROOT / "config" / "config_screening.json"
+    path.write_text(json.dumps(cfg, indent=2))
+    return path
+
+
+def run_plot2d(events_root: Path, cfg_path: Path, out_dir: Path,
+               dry_run: bool) -> Path | None:
+    out_png  = out_dir / "screening_efficiency2D.png"
+    out_rank = out_dir / "screening_efficiency2D_ranking.csv"
+    cmd = [find_binary("plot2D"),
+           "--input",  str(events_root),
+           "--config", str(cfg_path),
+           "--output", str(out_png)]
+    log_path = out_dir / "plot2d_screening.log"
+    ok, _, _ = run_cmd(cmd, log_path, TIMEOUTS_SEC["analysis"], dry_run)
+    if not ok:
+        return None
+    return out_rank if (dry_run or out_rank.exists()) else None
+
+
+def parse_ranking_csv(ranking_csv: Path, top_n: int) -> list[tuple[str, str]]:
+    import csv as csv_mod
+    pairs: list[tuple[str, str]] = []
+    with open(ranking_csv, newline="") as f:
+        for row in csv_mod.DictReader(f):
+            pairs.append((row["lens1_id"], row["lens2_id"]))
+            if len(pairs) == top_n:
+                break
+    return pairs
+
+
+def filter_events_root(events_root: Path, selected_pairs: list[tuple[str, str]],
+                       out_path: Path, dry_run: bool) -> bool:
+    if dry_run:
+        logging.info(f"[DRY-RUN] filter {events_root} → {out_path}")
+        return True
+
+    conds = " || ".join(
+        f'(strcmp(lens75_id,"{l75}")==0 && strcmp(lens60_id,"{l60}")==0)'
+        for l75, l60 in selected_pairs
+    )
+
+    macro = f"""
+void do_filter() {{
+  TFile *fin  = TFile::Open("{events_root}");
+  TTree *cfg  = (TTree*)fin->Get("Configurations");
+  TTree *eff  = (TTree*)fin->Get("Efficiency");
+
+  TFile *fout = new TFile("{out_path}", "RECREATE");
+  fout->SetCompressionAlgorithm(ROOT::kLZ4);
+  fout->SetCompressionLevel(4);
+
+  TTree *cfg2 = cfg->CopyTree("{conds}");
+  std::set<int> keep_ids;
+  int cid;
+  cfg2->SetBranchAddress("config_id", &cid);
+  for (long long i = 0; i < cfg2->GetEntries(); ++i) {{
+    cfg2->GetEntry(i);
+    keep_ids.insert(cid);
+  }}
+  cfg2->Write("Configurations");
+
+  int eid;
+  eff->SetBranchAddress("config_id", &eid);
+  TTree *eff2 = eff->CloneTree(0);
+  for (long long i = 0; i < eff->GetEntries(); ++i) {{
+    eff->GetEntry(i);
+    if (keep_ids.count(eid)) eff2->Fill();
+  }}
+  eff2->Write("Efficiency");
+  fout->Close();
+  fin->Close();
+}}
+"""
+    macro_path = out_path.parent / "_filter_lens.C"
+    macro_path.write_text(macro)
+    r = subprocess.run(
+        ["root", "-b", "-q", str(macro_path)],
+        cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=120
+    )
+    macro_path.unlink(missing_ok=True)
+    if r.returncode != 0:
+        logging.error(f"Filtraggio ROOT fallito:\n{r.stderr}")
+        return False
+    return True
+
+
 # ─── Loop principale ──────────────────────────────────────────────────────────
 
 def build_variants(geom_filter: str | None, margin_filter: float | None) -> list[tuple[dict, float]]:
@@ -720,6 +825,10 @@ def build_variants(geom_filter: str | None, margin_filter: float | None) -> list
 
 def make_tag(geom: dict, margin: float, phase: str) -> str:
     return f"{geom['name']}_m{margin}_{phase}"
+
+
+def make_tag_lens(geom: dict, margin: float, lens75: str, lens60: str, phase: str) -> str:
+    return f"{geom['name']}_m{margin}_{lens75}_{lens60}_{phase}"
 
 
 def main() -> int:
@@ -761,6 +870,14 @@ def main() -> int:
                         help="Stampa comandi senza eseguire")
     parser.add_argument("--no-commit",    action="store_true",
                         help="Disabilita git commit automatici")
+    parser.add_argument("--all-lenses",        action="store_true",
+                        help="Fase 0: screening su tutte le coppie di lenti")
+    parser.add_argument("--lens-subset",       type=str, default="",
+                        help="IDs lenti comma-separated per lo screening (es. LB4592,LB4553)")
+    parser.add_argument("--top-n-lenses",      type=int, default=3,
+                        help="Top-N coppie da selezionare dallo screening (default: 3)")
+    parser.add_argument("--screening-photons", type=int, default=1000,
+                        help="n_photons per la fase 0 di screening (default: 1000)")
     args = parser.parse_args()
 
     timestamp  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -798,20 +915,62 @@ def main() -> int:
     fast_results: dict[str, dict | None] = {}
     full_results: dict[str, dict | None] = {}
 
-    # ── FASE 1: fast su tutte le varianti ────────────────────────────────────
-    for geom, margin in variants:
-        if time.time() - t_start > max_sec:
-            logging.warning(f"Budget tempo ({args.max_hours}h) esaurito — interruzione fase 1.")
-            break
+    # ── FASE 0: screening lenti (opzionale) ──────────────────────────────────
+    prebuilt_events: Path | None = None
+    lens_pairs: list[tuple[str, str]]
 
-        tag       = make_tag(geom, margin, "fast")
-        sweep_sub = sweep_dir / tag
-        logging.info(f"--- Fase 1: {tag} ---")
+    if args.all_lenses:
+        screen_dir = sweep_dir / "lens_screening"
+        screen_dir.mkdir(parents=True, exist_ok=True)
+        screen_cfg = generate_screening_config(base_cfg, args.screening_photons)
 
-        sweep_cfg = generate_sweep_config(base_cfg, geom, margin, fast=True, tag=tag)
-        out = run_pipeline(tag, sweep_cfg, sweep_sub, ssd_mount,
-                           args.jobs, args.lens75_id, args.lens60_id, ap, args.dry_run)
-        fast_results[tag] = out or {}
+        events_all = run_simulation_step(
+            "opt", screen_cfg, "screening", screen_dir, ssd_mount,
+            args.jobs, "", "", args.dry_run,
+            all_lenses=True, lens_subset=args.lens_subset)
+        if events_all is None:
+            logging.error("Screening lenti fallito.")
+            return 1
+
+        ranking_csv = run_plot2d(events_all, screen_cfg, screen_dir, args.dry_run)
+        if ranking_csv is None:
+            logging.error("plot2D fallito nel calcolo del ranking.")
+            return 1
+
+        if args.dry_run:
+            top_pairs = [("DRY_L75", "DRY_L60")] * args.top_n_lenses
+            logging.info(f"[DRY-RUN] top_pairs sentinel: {top_pairs}")
+        else:
+            top_pairs = parse_ranking_csv(ranking_csv, args.top_n_lenses)
+        logging.info(f"Top-{args.top_n_lenses} coppie: {top_pairs}")
+
+        events_top = screen_dir / "events_top.root"
+        if not filter_events_root(events_all, top_pairs, events_top, args.dry_run):
+            logging.warning("Filtraggio ROOT fallito — uso file completo")
+            events_top = events_all
+
+        prebuilt_events = events_top
+        lens_pairs = top_pairs
+    else:
+        lens_pairs = [(args.lens75_id, args.lens60_id)]
+
+    # ── FASE 1: fast su tutte le varianti, per ogni coppia ───────────────────
+    for lens75, lens60 in lens_pairs:
+        for geom, margin in variants:
+            if time.time() - t_start > max_sec:
+                logging.warning(f"Budget tempo ({args.max_hours}h) esaurito — interruzione fase 1.")
+                break
+
+            tag = (make_tag_lens(geom, margin, lens75, lens60, "fast")
+                   if args.all_lenses else make_tag(geom, margin, "fast"))
+            sweep_sub = sweep_dir / tag
+            logging.info(f"--- Fase 1: {tag} ---")
+
+            sweep_cfg = generate_sweep_config(base_cfg, geom, margin, fast=True, tag=tag)
+            out = run_pipeline(tag, sweep_cfg, sweep_sub, ssd_mount,
+                               args.jobs, lens75, lens60, ap, args.dry_run,
+                               prebuilt_events=prebuilt_events)
+            fast_results[tag] = out or {}
 
     # ── FASE 2: full sui top-k (se abilitata) ────────────────────────────────
     if not args.fast and args.two_phase and fast_results:
@@ -833,7 +992,18 @@ def main() -> int:
                 logging.error(f"Impossibile decodificare tag: {fast_tag}")
                 continue
 
-            full_tag  = make_tag(geom, margin, "full")
+            # Ricostruisce lens_ids dal tag (se in modalità multi-lens)
+            if args.all_lenses:
+                parts = fast_tag.split("_m")[1].split("_")
+                # formato: {margin}_{lens75}_{lens60}_{phase}
+                tag_lens75 = parts[1] if len(parts) > 2 else ""
+                tag_lens60 = parts[2] if len(parts) > 3 else ""
+                full_tag  = make_tag_lens(geom, margin, tag_lens75, tag_lens60, "full")
+            else:
+                tag_lens75 = args.lens75_id
+                tag_lens60 = args.lens60_id
+                full_tag  = make_tag(geom, margin, "full")
+
             sweep_sub = sweep_dir / full_tag
             logging.info(f"--- Fase 2: {full_tag} ---")
 
@@ -843,7 +1013,8 @@ def main() -> int:
             success = False
             while retries < 3 and not success:
                 out = run_pipeline(full_tag, sweep_cfg, sweep_sub, ssd_mount,
-                                   args.jobs, args.lens75_id, args.lens60_id, ap, args.dry_run)
+                                   args.jobs, tag_lens75, tag_lens60, ap, args.dry_run,
+                                   prebuilt_events=prebuilt_events)
                 if out is None:
                     retries += 1
                     logging.warning(f"Pipeline fallita per {full_tag} (tentativo {retries}/3)")
@@ -876,8 +1047,10 @@ def main() -> int:
                 full_results[full_tag] = {}
 
     # ── Report finale ─────────────────────────────────────────────────────────
+    rep_l75 = lens_pairs[0][0] if lens_pairs else args.lens75_id
+    rep_l60 = lens_pairs[0][1] if lens_pairs else args.lens60_id
     report = generate_report(fast_results, full_results, sweep_dir, timestamp,
-                             args.lens75_id, args.lens60_id, t_start)
+                             rep_l75, rep_l60, t_start)
 
     if not args.no_commit and not args.dry_run:
         subprocess.run(

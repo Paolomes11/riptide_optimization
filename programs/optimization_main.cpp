@@ -53,6 +53,7 @@ int main(int argc, char** argv) {
   bool        show_help  = false;
   bool        use_ssd    = false;
   std::string focus_tsv;
+  std::string lens_subset;
 
   // Path di output: default locale, sovrascrivibile da CLI o --ssd
   std::string root_output_file = "output/events.root";
@@ -77,7 +78,9 @@ int main(int argc, char** argv) {
                  "Simulate all combinations of Thorlabs lenses (may use a lot of disk space!)")
            | lyra::opt(focus_tsv, "tsv")["--focus-tsv"](
                  "TSV file from dof_map with per-(x1,x2) focus positions; enables moving detector "
-                 "to focus (requires x_focus >= x2 + lens_det_gap)");
+                 "to focus (requires x_focus >= x2 + lens_det_gap)")
+           | lyra::opt(lens_subset, "ids")["--lens-subset"](
+                 "Comma-separated lens IDs to include with --all-lenses (e.g. LB4592,LB4553)");
 
   auto result = cli.parse({argc, argv});
   if (!result) {
@@ -150,7 +153,7 @@ int main(int argc, char** argv) {
       }
       spdlog::info("Running optimization");
       riptide::run_optimization(&run_manager, macro_file, root_output_file, config_file, all_lenses,
-                                lens75_id, lens60_id, focus_tsv);
+                                lens75_id, lens60_id, focus_tsv, lens_subset);
       return EXIT_SUCCESS;
     }
 

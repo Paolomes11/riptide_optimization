@@ -30,6 +30,7 @@
 #include <chrono>
 #include <fstream>
 #include <iomanip>
+#include <set>
 #include <sstream>
 
 namespace riptide {
@@ -37,7 +38,7 @@ namespace riptide {
 void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                       const std::string& root_output_file, const std::filesystem::path& config_file,
                       bool all_lenses, const std::string& lens75_id, const std::string& lens60_id,
-                      const std::string& focus_tsv) {
+                      const std::string& focus_tsv, const std::string& lens_subset) {
   using json = nlohmann::json;
 
   // Crea la directory di output se non esiste
@@ -76,8 +77,17 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
   if (all_lenses) {
     LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
     const auto& lenses = cutter.get_lenses();
+    std::set<std::string> subset_ids;
+    if (!lens_subset.empty()) {
+      std::istringstream ss(lens_subset);
+      std::string tok;
+      while (std::getline(ss, tok, ','))
+        if (!tok.empty()) subset_ids.insert(tok);
+    }
     for (const auto& l1 : lenses) {
+      if (!subset_ids.empty() && !subset_ids.count(l1.id)) continue;
       for (const auto& l2 : lenses) {
+        if (!subset_ids.empty() && !subset_ids.count(l2.id)) continue;
         models.push_back({l1.id, l2.id});
       }
     }
