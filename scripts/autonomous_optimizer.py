@@ -144,12 +144,12 @@ def find_ssd_root_from_stdout(stdout: str, prefix: str) -> Path | None:
     return None
 
 
-def find_latest_ssd_root(ssd_mount: Path, prefix: str) -> Path | None:
+def find_latest_ssd_root(ssd_mount: Path, prefix: str, after: float = 0.0) -> Path | None:
     runs_dir = ssd_mount / "riptide" / "runs"
     if not runs_dir.exists():
         return None
     candidates = sorted(
-        runs_dir.glob(f"run_*/{prefix}.root"),
+        (p for p in runs_dir.glob(f"run_*/{prefix}.root") if p.stat().st_mtime > after),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -315,21 +315,27 @@ FIX_TARGETS = {
 }
 
 
-def _patch_margin_in_source() -> None:
-    """Placeholder: se margin_mismatch, segnala all'utente quale riga correggere."""
-    logging.warning("margin_mismatch: verificare manualmente lens_gap_margin nei sorgenti C++.")
-
-
-def _patch_nhits_to_double() -> None:
-    """Placeholder: se nhits_type_mismatch, segnala all'utente quale branch correggere."""
-    logging.warning("nhits_type_mismatch: sostituire CreateNtupleIColumn->DColumn per n_hits.")
+_MANUAL_FIX_MSG = {
+    "margin_mismatch": (
+        "Correzione manuale richiesta: lens_gap_margin deve essere letto da config "
+        "(config.value(\"lens_gap_margin\", ...)) in:\n"
+        "  src/lens_simulation/lens_scan.cpp\n"
+        "  src/optimization/optimizer.cpp"
+    ),
+    "nhits_type_mismatch": (
+        "Correzione manuale richiesta: sostituire CreateNtupleIColumn(\"n_hits\" con "
+        "CreateNtupleDColumn(\"n_hits\" in:\n"
+        "  src/lens_simulation/lens_scan.cpp\n"
+        "  src/optimization/optimizer.cpp\n"
+        "  src/psf_dof_scan/psf_dof_scan.cpp"
+    ),
+}
 
 
 def apply_fix(failure_id: str, dry_run: bool = False) -> bool:
-    if failure_id == "margin_mismatch":
-        _patch_margin_in_source()
-    if failure_id == "nhits_type_mismatch":
-        _patch_nhits_to_double()
+    if failure_id in _MANUAL_FIX_MSG:
+        logging.error(f"[{failure_id}] Fix automatico non disponibile.\n{_MANUAL_FIX_MSG[failure_id]}")
+        return False
 
     targets = FIX_TARGETS.get(failure_id, [])
     for target in targets:
@@ -376,6 +382,7 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
         cmd += ["--lens60-id", lens60_id]
 
     log_path = sweep_dir / "pipeline.log"
+    step_start = time.time()
     ok, stdout, _ = run_cmd(cmd, log_path, TIMEOUTS_SEC[mode], dry_run)
     if not ok:
         return None
@@ -386,7 +393,7 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
 
     root_path = find_ssd_root_from_stdout(stdout, prefix)
     if root_path is None:
-        root_path = find_latest_ssd_root(ssd_mount, prefix)
+        root_path = find_latest_ssd_root(ssd_mount, prefix, after=step_start)
     if root_path is None:
         logging.error(f"File ROOT '{prefix}.root' non trovato su SSD dopo {mode}")
         return None
@@ -731,8 +738,7 @@ def main() -> int:
     )
     parser.add_argument("--fast",         action="store_true",
                         help="Solo fase 1 (x_max=150), senza fase 2")
-    parser.add_argument("--two-phase",    dest="two_phase", action="store_true",  default=True)
-    parser.add_argument("--no-two-phase", dest="two_phase", action="store_false")
+    parser.add_argument("--no-two-phase", dest="two_phase", action="store_false", default=True)
     parser.add_argument("--top-k",        type=int,   default=3,
                         help="Varianti da promuovere in fase 2 (default: 3)")
     parser.add_argument("--geom",         type=str,   default=None,

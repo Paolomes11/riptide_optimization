@@ -163,7 +163,7 @@ riptide_optimization/
 ├── config/
 │   ├── config.json
 │   ├── config_profile.json
-│   ├── analysis_params.json                 # Parametri di tuning per autonomous_optimizer (non tracciato da git)
+│   ├── analysis_params.json                 # Parametri di tuning per autonomous_optimizer
 │   └── exp3/                                # Configurazione exp3
 │
 ├── external/
@@ -1272,7 +1272,7 @@ Configurazione ridotta per profiling rapido (`dx = 30 mm`):
 
 ### `config/analysis_params.json`
 
-Parametri di tuning usati esclusivamente da `autonomous_optimizer.py` per configurare ogni step della pipeline di analisi. **Non tracciato da git** (specifico per macchina/campagna): va creato manualmente alla prima esecuzione dell'ottimizzatore. Valori di riferimento:
+Parametri di tuning usati esclusivamente da `autonomous_optimizer.py` per configurare ogni step della pipeline di analisi. Tracciato da git con i valori di riferimento; modificare localmente senza commit per campagne specifiche. Valori di riferimento:
 
 ```json
 {
