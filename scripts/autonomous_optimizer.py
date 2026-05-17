@@ -718,6 +718,11 @@ def generate_report(fast_results: dict, full_results: dict,
 
 # ─── Screening lenti ─────────────────────────────────────────────────────────
 
+def _escape_root_path(p: Path) -> str:
+    """Escape path for inline use in a ROOT C-macro string literal."""
+    return str(p).replace("\\", "\\\\").replace('"', '\\"')
+
+
 def generate_screening_config(base_cfg: dict, n_photons: int) -> Path:
     import copy
     cfg = copy.deepcopy(base_cfg)
@@ -764,13 +769,15 @@ def filter_events_root(events_root: Path, selected_pairs: list[tuple[str, str]],
         for l75, l60 in selected_pairs
     )
 
+    events_root_s = _escape_root_path(events_root)
+    out_path_s    = _escape_root_path(out_path)
     macro = f"""
 void do_filter() {{
-  TFile *fin  = TFile::Open("{events_root}");
+  TFile *fin  = TFile::Open("{events_root_s}");
   TTree *cfg  = (TTree*)fin->Get("Configurations");
   TTree *eff  = (TTree*)fin->Get("Efficiency");
 
-  TFile *fout = new TFile("{out_path}", "RECREATE");
+  TFile *fout = new TFile("{out_path_s}", "RECREATE");
   fout->SetCompressionAlgorithm(ROOT::kLZ4);
   fout->SetCompressionLevel(4);
 
@@ -955,6 +962,7 @@ def main() -> int:
         lens_pairs = [(args.lens75_id, args.lens60_id)]
 
     # ── FASE 1: fast su tutte le varianti, per ogni coppia ───────────────────
+    fast_tag_lens: dict[str, tuple[str, str]] = {}
     for lens75, lens60 in lens_pairs:
         for geom, margin in variants:
             if time.time() - t_start > max_sec:
@@ -963,6 +971,7 @@ def main() -> int:
 
             tag = (make_tag_lens(geom, margin, lens75, lens60, "fast")
                    if args.all_lenses else make_tag(geom, margin, "fast"))
+            fast_tag_lens[tag] = (lens75, lens60)
             sweep_sub = sweep_dir / tag
             logging.info(f"--- Fase 1: {tag} ---")
 
@@ -992,17 +1001,10 @@ def main() -> int:
                 logging.error(f"Impossibile decodificare tag: {fast_tag}")
                 continue
 
-            # Ricostruisce lens_ids dal tag (se in modalità multi-lens)
-            if args.all_lenses:
-                parts = fast_tag.split("_m")[1].split("_")
-                # formato: {margin}_{lens75}_{lens60}_{phase}
-                tag_lens75 = parts[1] if len(parts) > 2 else ""
-                tag_lens60 = parts[2] if len(parts) > 3 else ""
-                full_tag  = make_tag_lens(geom, margin, tag_lens75, tag_lens60, "full")
-            else:
-                tag_lens75 = args.lens75_id
-                tag_lens60 = args.lens60_id
-                full_tag  = make_tag(geom, margin, "full")
+            tag_lens75, tag_lens60 = fast_tag_lens.get(
+                fast_tag, (args.lens75_id, args.lens60_id))
+            full_tag = (make_tag_lens(geom, margin, tag_lens75, tag_lens60, "full")
+                        if args.all_lenses else make_tag(geom, margin, "full"))
 
             sweep_sub = sweep_dir / full_tag
             logging.info(f"--- Fase 2: {full_tag} ---")
@@ -1047,8 +1049,13 @@ def main() -> int:
                 full_results[full_tag] = {}
 
     # ── Report finale ─────────────────────────────────────────────────────────
-    rep_l75 = lens_pairs[0][0] if lens_pairs else args.lens75_id
-    rep_l60 = lens_pairs[0][1] if lens_pairs else args.lens60_id
+    if len(lens_pairs) == 1:
+        rep_l75, rep_l60 = lens_pairs[0]
+    elif lens_pairs:
+        rep_l75 = "multi_lens"
+        rep_l60 = f"{len(lens_pairs)}_pairs"
+    else:
+        rep_l75, rep_l60 = args.lens75_id, args.lens60_id
     report = generate_report(fast_results, full_results, sweep_dir, timestamp,
                              rep_l75, rep_l60, t_start)
 

@@ -18,7 +18,7 @@
   "source_y_min": 0.0,
   "source_y_max": 14.14,
   "source_dy": 0.5,
-  "n_photons": 500,
+  "n_photons": 1000,
   "lens_n_photons": 1000,
   "dof_n_photons": 100000,
   "psf_dof_n_photons": 1000,

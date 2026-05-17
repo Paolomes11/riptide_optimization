@@ -21,10 +21,11 @@
 #include <TStyle.h>
 #include <TTree.h>
 
+#include "lens_ranking.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <map>
 #include <vector>
@@ -321,68 +322,15 @@ int main(int argc, char** argv) {
   // ===============================
   // Ranking coppie di lenti
   // ===============================
-  struct PairStats {
-    std::string lens1_id, lens2_id;
-    double mean     = 0.0;
-    double variance = 0.0;
-    size_t n_points = 0;
-  };
-
-  std::map<std::pair<std::string, std::string>, std::vector<double>> pair_effs;
-  for (auto const& [id, sum] : efficiency_sum) {
-    auto const& cfg = config_map[id];
-    if (cfg.focus_valid == 0) continue;
-    double eff = sum;
-    if (!is_opt_mode) eff /= n_entries[id];
-    pair_effs[{cfg.lens1_id, cfg.lens2_id}].push_back(eff);
-  }
-
-  std::vector<PairStats> pair_stats;
-  for (auto const& [pair, ev] : pair_effs) {
-    PairStats ps;
-    ps.lens1_id = pair.first;
-    ps.lens2_id = pair.second;
-    ps.n_points = ev.size();
-    double s    = 0.0;
-    for (double e : ev) s += e;
-    ps.mean     = s / ev.size();
-    double vs   = 0.0;
-    for (double e : ev) vs += (e - ps.mean) * (e - ps.mean);
-    ps.variance = vs / ev.size();
-    pair_stats.push_back(ps);
-  }
-
-  std::sort(pair_stats.begin(), pair_stats.end(), [](const PairStats& a, const PairStats& b) {
-    if (std::abs(a.mean - b.mean) > 1e-12) return a.mean > b.mean;
-    return a.variance < b.variance;
-  });
-
+  auto pair_stats = compute_pair_ranking(efficiency_sum, n_entries, config_map, !is_opt_mode);
   {
     std::string csv_path = cli.output_png;
     auto pos             = csv_path.rfind('.');
     if (pos != std::string::npos) csv_path = csv_path.substr(0, pos);
     csv_path += "_ranking.csv";
-    std::ofstream csv_out(csv_path);
-    csv_out << "rank,lens1_id,lens2_id,mean_eta,std_eta,variance,n_grid_points\n";
-    csv_out << std::fixed << std::setprecision(6);
-    for (size_t r = 0; r < pair_stats.size(); ++r) {
-      auto const& ps = pair_stats[r];
-      csv_out << (r + 1) << "," << ps.lens1_id << "," << ps.lens2_id << "," << ps.mean << ","
-              << std::sqrt(ps.variance) << "," << ps.variance << "," << ps.n_points << "\n";
-    }
+    write_ranking_csv(pair_stats, csv_path);
     std::cout << "Ranking salvato in " << csv_path << "\n";
-    size_t top = std::min(pair_stats.size(), size_t(5));
-    std::cout << "\nRanking coppie di lenti (top " << top << "):\n";
-    std::cout << std::left << std::setw(6) << "rank" << std::setw(22) << "lens1"
-              << std::setw(22) << "lens2" << std::right << std::setw(12) << "mean_eta"
-              << std::setw(12) << "std_eta" << std::setw(8) << "N\n";
-    for (size_t r = 0; r < top; ++r) {
-      auto const& ps = pair_stats[r];
-      std::cout << std::left << std::setw(6) << (r + 1) << std::setw(22) << ps.lens1_id
-                << std::setw(22) << ps.lens2_id << std::right << std::fixed
-                << std::setprecision(6) << std::setw(12) << ps.mean << std::setw(12)
-                << std::sqrt(ps.variance) << std::setw(8) << ps.n_points << "\n";
-    }
+    print_ranking_summary(pair_stats);
   }
 
   double actual_min = 1e9;
