@@ -16,9 +16,12 @@
 #include <spdlog/spdlog.h>
 
 #include <CLHEP/Random/Random.h>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -28,7 +31,8 @@ namespace riptide {
 
 void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                   const std::string& root_output_file, const std::filesystem::path& config_file,
-                  bool all_lenses, const std::string& lens75_id, const std::string& lens60_id) {
+                  bool all_lenses, const std::string& lens75_id, const std::string& lens60_id,
+                  const std::string& lens_subset) {
   using json = nlohmann::json;
 
   std::filesystem::path output_path(root_output_file);
@@ -83,6 +87,24 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
       }
     }
     spdlog::warn("DoF scan of ALL lens combinations enabled ({} combinations)", models.size());
+
+    if (!lens_subset.empty()) {
+      std::set<std::string> allowed;
+      std::istringstream ss(lens_subset);
+      std::string tok;
+      while (std::getline(ss, tok, ',')) {
+        tok.erase(tok.find_last_not_of(" \t\n") + 1);
+        tok.erase(0, tok.find_first_not_of(" \t\n"));
+        if (!tok.empty()) allowed.insert(tok);
+      }
+      models.erase(std::remove_if(models.begin(), models.end(),
+                       [&](const LensModel& m) {
+                         return allowed.find(m.id75) == allowed.end() ||
+                                allowed.find(m.id60) == allowed.end();
+                       }),
+                   models.end());
+      spdlog::info("Subset filter applicato: {} modelli rimasti", models.size());
+    }
   } else if (!lens75_id.empty() && !lens60_id.empty()) {
     models.push_back({lens75_id, lens60_id});
   } else {

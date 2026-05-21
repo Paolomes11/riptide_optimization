@@ -12,7 +12,8 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
                   const std::string& root_output_file,
                   const std::filesystem::path& config_file = "config/config.json",
                   bool all_lenses = false, const std::string& lens75_id = "",
-                  const std::string& lens60_id = "");
+                  const std::string& lens60_id = "",
+                  const std::string& lens_subset = "");
 
 } // namespace riptide
 

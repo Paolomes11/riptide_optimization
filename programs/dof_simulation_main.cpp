@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
   std::filesystem::path config_file = "config/config.json";
   std::string lens75_id;
   std::string lens60_id;
+  std::string lens_subset;
   bool visualize  = false;
   bool batch      = false;
   bool dof_scan   = false;
@@ -46,6 +47,7 @@ int main(int argc, char** argv) {
            | lyra::opt(lens75_id, "id")["--lens75-id"]("Thorlabs ID for lens 1 (75mm)")
            | lyra::opt(lens60_id, "id")["--lens60-id"]("Thorlabs ID for lens 2 (60mm)")
            | lyra::opt(all_lenses)["--all-lenses"]("Simulate all combinations of Thorlabs lenses")
+           | lyra::opt(lens_subset, "ids")["--lens-subset"]("Comma-separated lens IDs to include in DoF scan")
            | lyra::opt(root_output_file, "output")["--output"]("Path to ROOT output file")
            | lyra::opt(ssd_mount, "ssd-mount")["--ssd-mount"](
                  "Mount point of external SSD (default: /mnt/external_ssd)")
@@ -120,7 +122,7 @@ int main(int argc, char** argv) {
     if (dof_scan) {
       spdlog::info("Running DoF simulation");
       riptide::run_dof_scan(&run_manager, macro_file, root_output_file, config_file, all_lenses,
-                            lens75_id, lens60_id);
+                            lens75_id, lens60_id, lens_subset);
       return EXIT_SUCCESS;
     }
 
