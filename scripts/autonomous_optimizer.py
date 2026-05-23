@@ -518,6 +518,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         "--trace-frac", str(qp["trace_frac"]),
         "--tsv", str(q_tsv),
         "--jobs", str(jobs),
+        "--output", str(sweep_dir / "plots" / "q_map.png"),
     ]
     if qp.get("dist_to_target"):
         cmd.append("--dist-to-target")
@@ -538,6 +539,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         "--p-high", str(cp["p_high"]),
         "--tsv", str(chi2_tsv),
         "--jobs", str(jobs),
+        "--output", str(sweep_dir / "plots" / "chi2_map.png"),
     ]
     if cp.get("adaptive_target"):
         cmd.append("--adaptive-target")
@@ -550,6 +552,9 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
     if prebuilt_dof_tsv is not None:
         dof_tsv = prebuilt_dof_tsv
         logging.info(f"[dof] Uso dof_tsv pre-costruito: {dof_tsv}")
+        local_dof = sweep_dir / "dof_map.tsv"
+        if not local_dof.exists():
+            local_dof.symlink_to(prebuilt_dof_tsv)
     else:
         focal_root = run_simulation_step("dof", sweep_cfg, tag, sweep_dir,
                                          ssd_mount, jobs, lens75_id, lens60_id, dry_run,
@@ -568,6 +573,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
             "--m-target", str(dp["m_target"]),
             "--tsv", str(dof_tsv),
             "--jobs", str(jobs),
+            "--output", str(sweep_dir / "plots"),
         ]
         ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
         if not ok:
@@ -590,6 +596,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         "--config", str(sweep_cfg),
         "--tsv", str(res_tsv),
         "--jobs", str(jobs),
+        "--output", str(sweep_dir / "plots"),
     ]
     ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["resolution_map"], dry_run)
     if not ok:
@@ -612,6 +619,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         "--w-Q", str(pp["w_Q"]),
         "--w-dof", str(pp["w_dof"]),
         "--w-M", str(pp["w_M"]),
+        "--output", str(sweep_dir / "plots" / "pareto_plot.png"),
     ]
     if lens75_id:
         cmd += ["--lens75-id", lens75_id]

@@ -445,7 +445,13 @@ int main(int argc, char** argv) {
     std::cout << "\n";
 
     if (configs.empty()) {
-        std::cerr << "[WARN] Nessuna configurazione sopravvissuta ai filtri. Nessun output prodotto.\n";
+        std::cerr << "[WARN] Nessuna configurazione sopravvissuta ai filtri.\n";
+        std::filesystem::create_directories(
+            std::filesystem::path(cli.tsv_path).parent_path());
+        std::ofstream tsv(cli.tsv_path);
+        if (tsv.is_open())
+            tsv << "x1\tx2\teta\teta_norm\tQ\tchi2\tDoF\tM\tM_abs_err\t"
+                   "x_focus\tEE80\ton_pareto\tMtot\tpareto_rank\n";
         return 0;
     }
 
@@ -576,8 +582,8 @@ int main(int argc, char** argv) {
         ymin_p = std::min(ymin_p, yv);
         ymax_p = std::max(ymax_p, yv);
     }
-    if (xmin_p > xmax_p) { xmin_p = 0.0; xmax_p = 1.0; }
-    if (ymin_p > ymax_p) { ymin_p = 0.5; ymax_p = 1.5; }
+    if (xmin_p >= xmax_p) { xmin_p = 0.0; xmax_p = 1.0; }
+    if (ymin_p >= ymax_p) { ymin_p = 0.5; ymax_p = 1.5; }
     double xpad = 0.08 * (xmax_p - xmin_p);
     double ypad = 0.10 * (ymax_p - ymin_p);
     double xlo = std::max(0.0, xmin_p - xpad);
