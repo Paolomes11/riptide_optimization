@@ -87,15 +87,19 @@
 #include <TStyle.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include <omp.h>
 
 // Parsing CLI
 struct CliConfig {
@@ -125,6 +129,8 @@ struct CliConfig {
 
   bool log_scale = false;
   bool normalize = false;
+
+  int n_jobs = 0; // 0 = tutti i core disponibili
 };
 
 static CliConfig parse_args(int argc, char** argv) {
@@ -181,6 +187,8 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.log_scale = true;
     else if (key == "--norm")
       cfg.normalize = true;
+    else if (key == "--jobs")
+      cfg.n_jobs = std::stoi(next());
     else {
       std::cerr << "Opzione sconosciuta: " << key << "\n";
       std::exit(1);
@@ -485,6 +493,11 @@ int main(int argc, char** argv) {
   qcfg.min_hits_per_point   = cli.min_hits;
   qcfg.trace_valid_fraction = cli.trace_frac;
 
+  // Numero di thread OpenMP
+  if (cli.n_jobs > 0)
+    omp_set_num_threads(cli.n_jobs);
+  int n_omp_threads = (cli.n_jobs > 0) ? cli.n_jobs : omp_get_max_threads();
+
   // Diagnostica console
   if (cli.coverage_mode) {
     std::cout << "Modalità: MAPPA DI COPERTURA (--coverage)\n";
@@ -499,6 +512,7 @@ int main(int argc, char** argv) {
     std::cout << "Soglie: min_hits=" << qcfg.min_hits_per_point
               << ", trace_frac=" << qcfg.trace_valid_fraction << "\n";
   }
+  std::cout << "Thread OpenMP: " << n_omp_threads << "\n";
 
   // 3. Carica PSF database
   riptide::PSFDatabase db;
@@ -550,33 +564,44 @@ int main(int argc, char** argv) {
       int n_evaluated;
       bool config_valid;
     };
-    std::vector<CovEntry> entries;
-    entries.reserve(db.size());
+    std::vector<riptide::LensConfig> cov_configs;
+    cov_configs.reserve(db.size());
+    for (const auto& [k, _] : db) cov_configs.push_back(k);
+
+    std::vector<CovEntry> entries(total_cfgs);
 
     int n_cfg_invalid = 0;
-    int config_idx    = 0;
     int print_step    = std::max(1, total_cfgs / 20);
 
-    for (const auto& [cfg, _] : db) {
+    std::atomic<int> cov_n_invalid{0};
+    std::atomic<int> cov_processed{0};
+    std::mutex cov_log_mtx;
+
+#pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < total_cfgs; ++i) {
+      const auto& cfg = cov_configs[i];
       riptide::CoverageResult res;
+      bool failed = false;
       try {
         res = riptide::compute_coverage(cfg, db, qcfg);
       } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lk(cov_log_mtx);
         std::cerr << "  [WARN] compute_coverage failed x1=" << cfg.x1 << " x2=" << cfg.x2 << ": "
                   << e.what() << "\n";
-        entries.push_back({cfg.x1, cfg.x2, -1.0, 0, false});
-        ++n_cfg_invalid;
-        ++config_idx;
-        continue;
+        entries[i] = {cfg.x1, cfg.x2, -1.0, 0, false};
+        ++cov_n_invalid;
+        failed = true;
       }
+      if (failed) { ++cov_processed; continue; }
 
-      if (!res.config_valid)
-        ++n_cfg_invalid;
+      if (!res.config_valid) ++cov_n_invalid;
       double cov_pct = res.config_valid ? res.coverage : -1.0;
-      entries.push_back({cfg.x1, cfg.x2, cov_pct, res.n_y0_evaluated, res.config_valid});
+      entries[i] = {cfg.x1, cfg.x2, cov_pct, res.n_y0_evaluated, res.config_valid};
 
-      if ((config_idx + 1) % print_step == 0 || config_idx + 1 == total_cfgs) {
-        std::cout << "  [" << std::setw(3) << config_idx + 1 << "/" << total_cfgs << "]"
+      int done = ++cov_processed;
+      if (done % print_step == 0 || done == total_cfgs) {
+        std::lock_guard<std::mutex> lk(cov_log_mtx);
+        std::cout << "  [" << std::setw(3) << done << "/" << total_cfgs << "]"
                   << "  x1=" << fmt(cfg.x1) << "  x2=" << fmt(cfg.x2);
         if (res.config_valid)
           std::cout << "  cov=" << fmt(res.coverage * 100.0, 1) << "%";
@@ -584,8 +609,8 @@ int main(int argc, char** argv) {
           std::cout << "  [INVALIDA]";
         std::cout << "\n";
       }
-      ++config_idx;
     }
+    n_cfg_invalid = cov_n_invalid.load();
 
     std::cout << "\nConfigurazioni valide:   " << total_cfgs - n_cfg_invalid << "\n";
     std::cout << "Configurazioni invalide: " << n_cfg_invalid << "\n";
@@ -732,37 +757,52 @@ int main(int argc, char** argv) {
     int n_invalid;
     bool config_valid;
   };
-  std::vector<QEntry> entries;
-  entries.reserve(db.size());
+  std::vector<riptide::LensConfig> q_configs;
+  q_configs.reserve(db.size());
+  for (const auto& [k, _] : db) q_configs.push_back(k);
 
-  int config_idx    = 0;
+  std::vector<QEntry> entries(total_cfgs);
+
   int print_step    = std::max(1, total_cfgs / 20);
   int n_cfg_invalid = 0;
 
-  for (const auto& [cfg, _] : db) {
+  std::atomic<int> q_n_invalid{0};
+  std::atomic<int> q_processed{0};
+  std::mutex q_log_mtx;
+
+#pragma omp parallel for schedule(dynamic)
+  for (int i = 0; i < total_cfgs; ++i) {
+    const auto& cfg = q_configs[i];
+
+    // Seed deterministico e distinto per configurazione (costante di Knuth)
+    riptide::QConfig qcfg_local = qcfg;
+    qcfg_local.seed = qcfg.seed ^ (static_cast<unsigned>(i) * 2654435761u);
+
     riptide::QResult res;
+    bool failed = false;
     try {
-      res = riptide::compute_Q(cfg, db, qcfg);
+      res = riptide::compute_Q(cfg, db, qcfg_local);
     } catch (const std::exception& e) {
+      std::lock_guard<std::mutex> lk(q_log_mtx);
       std::cerr << "  [WARN] compute_Q failed x1=" << cfg.x1 << " x2=" << cfg.x2 << ": " << e.what()
                 << "\n";
-      entries.push_back({cfg.x1, cfg.x2, 0.0, 0.0, 1.0, 0.0, 0, 0, 0, false});
-      ++n_cfg_invalid;
-      ++config_idx;
-      continue;
+      entries[i] = {cfg.x1, cfg.x2, 0.0, 0.0, 1.0, 0.0, 0, 0, 0, false};
+      ++q_n_invalid;
+      failed = true;
     }
+    if (failed) { ++q_processed; continue; }
 
     double target = (cli.dist_target > 0.0) ? cli.dist_target : res.Q_target;
     double metric = cli.dist_to_target ? std::abs(res.Q - target) : res.Q;
 
-    if (!res.config_valid)
-      ++n_cfg_invalid;
+    if (!res.config_valid) ++q_n_invalid;
+    entries[i] = {cfg.x1, cfg.x2, metric, res.Q, target, res.rho_estimate, res.n_traces,
+                  res.n_failed, res.n_invalid, res.config_valid};
 
-    entries.push_back({cfg.x1, cfg.x2, metric, res.Q, target, res.rho_estimate, res.n_traces,
-                       res.n_failed, res.n_invalid, res.config_valid});
-
-    if ((config_idx + 1) % print_step == 0 || config_idx + 1 == total_cfgs) {
-      std::cout << "  [" << std::setw(3) << config_idx + 1 << "/" << total_cfgs << "]"
+    int done = ++q_processed;
+    if (done % print_step == 0 || done == total_cfgs) {
+      std::lock_guard<std::mutex> lk(q_log_mtx);
+      std::cout << "  [" << std::setw(3) << done << "/" << total_cfgs << "]"
                 << "  x1=" << fmt(cfg.x1) << "  x2=" << fmt(cfg.x2);
       if (res.config_valid) {
         if (cli.dist_to_target) {
@@ -778,8 +818,8 @@ int main(int argc, char** argv) {
       }
       std::cout << std::defaultfloat << "\n";
     }
-    ++config_idx;
   }
+  n_cfg_invalid = q_n_invalid.load();
 
   std::cout << "\nConfigurazioni valide:   " << total_cfgs - n_cfg_invalid << "\n";
   std::cout << "Configurazioni invalide: " << n_cfg_invalid << "\n";

@@ -10,13 +10,17 @@
 #include <TStyle.h>
 #include <TTree.h>
 
+#include <omp.h>
+
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -35,6 +39,7 @@ struct CliConfig {
   std::optional<double> core_fraction;
   std::optional<double> m_target;
   std::string tsv_out;
+  int n_jobs = 0; // 0 = tutti i core disponibili
 };
 
 static CliConfig parse_args(int argc, char** argv) {
@@ -69,6 +74,8 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.m_target = std::stod(next());
     else if (arg == "--tsv")
       cfg.tsv_out = next();
+    else if (arg == "--jobs")
+      cfg.n_jobs = std::stoi(next());
     else if (arg == "--help" || arg == "-h") {
       std::cout << "Uso:\n"
                 << "  dof_map --input focal.root --config config/config.json [--output dir/]\n"
@@ -619,42 +626,50 @@ int main(int argc, char** argv) {
   tree_rays->SetBranchAddress("weight_hits", &w_hits_f);
   tree_rays->SetBranchAddress("y_source_hits", &ysrc_hits_f);
 
-  std::vector<ResultRow> results;
-  results.reserve(static_cast<size_t>(tree_rays->GetEntries()));
+  if (cli.n_jobs > 0)
+    omp_set_num_threads(cli.n_jobs);
 
-  std::vector<double> y0, z0, dy, dz, w, ysrc;
+  struct RayData {
+    ConfigInfo cfg;
+    double n_rays_val;
+    std::vector<double> y0, z0, dy, dz, w, ysrc;
+  };
+  std::vector<RayData> all_rays;
+  all_rays.reserve(static_cast<size_t>(tree_rays->GetEntries()));
+
+  // Fase 1: pre-caricamento sequenziale (GetEntry non è thread-safe)
   for (int i = 0; i < tree_rays->GetEntries(); ++i) {
     tree_rays->GetEntry(i);
 
     auto it = config_map.find(config_id_rays);
-    if (it == config_map.end()) {
+    if (it == config_map.end())
       continue;
-    }
 
     if (!y_hits_f || !z_hits_f || !dy_hits_f || !dz_hits_f || !w_hits_f || !ysrc_hits_f) {
       std::cerr << "Errore: uno o piu' branch vettoriali non sono disponibili in FocalRays\n";
       return 1;
     }
 
-    size_t n = y_hits_f ? y_hits_f->size() : 0;
-    y0.resize(n);
-    z0.resize(n);
-    dy.resize(n);
-    dz.resize(n);
-    w.resize(n);
-    ysrc.resize(n);
-    for (size_t k = 0; k < n; ++k) {
-      y0[k]   = (*y_hits_f)[k];
-      z0[k]   = (*z_hits_f)[k];
-      dy[k]   = (*dy_hits_f)[k];
-      dz[k]   = (*dz_hits_f)[k];
-      w[k]    = (*w_hits_f)[k];
-      ysrc[k] = (*ysrc_hits_f)[k];
-    }
+    RayData rd;
+    rd.cfg       = it->second;
+    rd.n_rays_val = n_rays;
+    rd.y0.assign(y_hits_f->begin(), y_hits_f->end());
+    rd.z0.assign(z_hits_f->begin(), z_hits_f->end());
+    rd.dy.assign(dy_hits_f->begin(), dy_hits_f->end());
+    rd.dz.assign(dz_hits_f->begin(), dz_hits_f->end());
+    rd.w.assign(w_hits_f->begin(), w_hits_f->end());
+    rd.ysrc.assign(ysrc_hits_f->begin(), ysrc_hits_f->end());
+    all_rays.push_back(std::move(rd));
+  }
 
-    results.push_back(analyze_config(it->second, n_rays, y0, z0, dy, dz, w, ysrc, x_scan,
-                                     k_threshold, core_fraction, m_target, sigma_y_src_theory,
-                                     lens_det_gap));
+  // Fase 2: calcolo parallelo
+  std::vector<ResultRow> results(all_rays.size());
+#pragma omp parallel for schedule(dynamic)
+  for (int i = 0; i < static_cast<int>(all_rays.size()); ++i) {
+    const auto& rd = all_rays[i];
+    results[i]     = analyze_config(rd.cfg, rd.n_rays_val, rd.y0, rd.z0, rd.dy, rd.dz, rd.w,
+                                    rd.ysrc, x_scan, k_threshold, core_fraction, m_target,
+                                    sigma_y_src_theory, lens_det_gap);
   }
 
   if (!cli.tsv_out.empty()) {

@@ -25,9 +25,13 @@ GEOMETRY="$PROJECT_ROOT/geometry/main.gdml"
 GEOMETRY_DOF="$PROJECT_ROOT/geometry/dof_geometry.gdml"
 SSD_MOUNT="/mnt/external_ssd"
 BINARY_LENS="$BUILD_DIR/Release/lens_simulation_main"
+[[ ! -f "$BINARY_LENS"    ]] && BINARY_LENS="$BUILD_DIR/lens_simulation_main"
 BINARY_OPT="$BUILD_DIR/Release/optimization_main"
+[[ ! -f "$BINARY_OPT"     ]] && BINARY_OPT="$BUILD_DIR/optimization_main"
 BINARY_DOF="$BUILD_DIR/Release/dof_simulation_main"
+[[ ! -f "$BINARY_DOF"     ]] && BINARY_DOF="$BUILD_DIR/dof_simulation_main"
 BINARY_PSF_DOF="$BUILD_DIR/Release/psf_dof_scan_main"
+[[ ! -f "$BINARY_PSF_DOF" ]] && BINARY_PSF_DOF="$BUILD_DIR/psf_dof_scan_main"
 N_JOBS=1
 CONFIG_FILE="$PROJECT_ROOT/config/config.json"
 LENS75_ID=""
@@ -149,7 +153,18 @@ trap cleanup SIGINT SIGTERM
 
 # Python: calcola tutte le coppie, le divide in N chunk con lo stesso numero di coppie
 python3 - <<EOF
-import json, numpy as np, os
+import json, os, math
+
+def arange(start, stop, step):
+    result = []
+    i = 0
+    while True:
+        val = start + i * step
+        if val > stop + 1e-9:
+            break
+        result.append(val)
+        i += 1
+    return result
 
 with open('$CONFIG_FILE') as f:
     c = json.load(f)
@@ -197,11 +212,11 @@ if mode in ('lens', 'psf-dof'):
     s_dx    = c.get('source_dx', 5.0)
     
     s_y_min = c.get('source_y_min', 0.0)
-    s_y_max = c.get('source_y_max', 10.0 * np.sqrt(2.0))
+    s_y_max = c.get('source_y_max', 10.0 * math.sqrt(2.0))
     s_dy    = c.get('source_dy', 1.0)
 
-    nx = len(np.arange(s_x_min, s_x_max + 1e-9, s_dx))
-    ny = len(np.arange(s_y_min, s_y_max + 1e-9, s_dy))
+    nx = len(arange(s_x_min, s_x_max, s_dx))
+    ny = len(arange(s_y_min, s_y_max, s_dy))
     n_runs_per_pair = nx * ny
 else:
     n_runs_per_pair = 1    # una sola esecuzione per configurazione
@@ -219,15 +234,15 @@ if lens75_id in thorlabs_data:
 if lens60_id in thorlabs_data:
     h2 = thorlabs_data[lens60_id]['h']
 
-for x1 in np.arange(x_min, x_max + 1e-9, dx):
+for x1 in arange(x_min, x_max, dx):
     # x2_min per evitare collisioni: x1 + h1/2 + margin < x2 - h2/2
     # Poiché x1 e x2 sono i centri geometrici, la collisione è solo sulla somma dei semi-spessori.
     x2_min_collision = x1 + (h1 + h2) / 2.0 + margin
     # Align x2_start to the dx grid relative to x_min
     x2_start_raw = max(x1 + dx, x2_min_collision)
-    x2_start = x_min + np.ceil(round((x2_start_raw - x_min) / dx, 8)) * dx
-    
-    for x2 in np.arange(x2_start, x_max + 1e-9, dx):
+    x2_start = x_min + math.ceil(round((x2_start_raw - x_min) / dx, 8)) * dx
+
+    for x2 in arange(x2_start, x_max, dx):
         pairs.append((round(float(x1), 6), round(float(x2), 6)))
 
 total_pairs = len(pairs)

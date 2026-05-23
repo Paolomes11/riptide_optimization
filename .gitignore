@@ -3,6 +3,7 @@ build/
 output/
 debug/
 analysis/exp1/data
+config/config_sweep*
 
 # Python
 __pycache__/
@@ -12,3 +13,11 @@ __pycache__/
 # Editor / session notes
 exp.txt
 .claude/
+CNAF_CHEATSHEET.md
+
+# Script outputs
+scripts/cnaf_sbatch.sh
+scripts/fetch_any_from_cnaf.sh
+scripts/fetch_from_cnaf.sh
+scripts/sync_to_cnaf.sh
+cnaf_fetch/

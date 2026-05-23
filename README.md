@@ -473,22 +473,34 @@ Di default l'ottimizzatore genera **9 varianti** (3 geometrie × 3 valori di mar
 
 **Fase 1 (fast):** tutte le 9 varianti con `x_max = 150 mm`. Al termine, ogni variante viene classificata per Mtot medio (colonna `Mtot` di `pareto_results.tsv`).
 
-**Fase 2 (full):** le top-k varianti (default k = 3) vengono ri-eseguite con `x_max` illimitato. Dopo ogni run viene applicata una validazione di 3 invarianti; in caso di fallimento viene eseguito un auto-fix (ricompilazione selettiva del target CMake coinvolto) e la run viene ripetuta fino a 3 volte.
+**Fase 2 (full):** le top-k varianti (default k = 3) vengono ri-eseguite con `x_max` pieno. In modalità fuoco fisso, se `x_max > x_det - lens_det_gap`, `x_max` viene clampato al limite geometrico. Dopo ogni run viene applicata una validazione di 3 invarianti; in caso di fallimento viene eseguito un auto-fix (ricompilazione selettiva del target CMake coinvolto) e la run viene ripetuta fino a 3 volte.
 
-### Pipeline per variante (10 step sequenziali)
+### Modalità detector
 
-| Step | Binario | Input → Output |
-|------|---------|----------------|
-| 1 | `run.sh opt ssd --jobs N` | config → `events.root` |
-| 2 | `run.sh lens ssd --jobs N` | config → `lens.root` |
-| 3 | `psf_extractor` | `lens.root` → `psf_data.root` |
-| 4 | `q_map` | `psf_data.root` → `q_map.tsv` |
-| 5 | `chi2_map` | `psf_data.root` → `chi2_map.tsv` |
-| 6 | `run.sh dof ssd --jobs N` | config → `focal.root` |
-| 7 | `dof_map` | `focal.root` → `dof_map.tsv` |
-| 8 | `run.sh psf-dof ssd --jobs N` | config → `psf_dof.root` |
-| 9 | `resolution_map` | `psf_dof.root` → `resolution_map.tsv` |
-| 10 | `pareto_selector` | tutti i TSV → `pareto_results.tsv` |
+**Fuoco fisso (default):** il rivelatore rimane a `x_det` per tutte le configurazioni. Adatto a sistemi in cui la distanza detector–ottica è fissa.
+
+**Fuoco mobile (`--mobile-focus`):** il rivelatore si sposta sul piano focale di ogni coppia (x₁, x₂). Richiede `--all-lenses` con `--lens75-id`/`--lens60-id` come lenti di riferimento per la stima thin-lens iniziale. La pipeline di screening è:
+
+1. Stima thin-lens del piano focale per ogni (x₁, x₂) → `thin_focus.tsv`
+2. `opt --all-lenses` con `thin_focus.tsv` → classifica preliminare
+3. `plot2D --ranking-only` → CSV ranking senza immagini
+4. `dof` per le top-N coppie → `focus_accurate.tsv` via simulazione reale
+5. `opt` con `focus_accurate.tsv` (fotoni da `--refine-photons` o `config.json`) → classifica precisa con immagini
+
+### Pipeline per variante
+
+| Step | Binario | Input → Output | Note |
+|------|---------|----------------|------|
+| 1 | `run.sh opt` | config → `events.root` + `plots/efficiency2D.png` | |
+| 2 | `run.sh lens` | config → `lens.root` | con `--focus-tsv` se fuoco mobile |
+| 3 | `psf_extractor` | `lens.root` → `psf_data.root` | min_hits ≥ 50 |
+| 4 | `q_map` | `psf_data.root` → `q_map.tsv` | |
+| 5 | `chi2_map` | `psf_data.root` → `chi2_map.tsv` | |
+| 6 | `run.sh dof` | config → `focal.root` | solo fuoco fisso; fuoco mobile usa screening |
+| 7 | `dof_map` | `focal.root` → `dof_map.tsv` | solo fuoco fisso |
+| 8 | `run.sh psf-dof` | config → `psf_dof.root` | |
+| 9 | `resolution_map` | `psf_dof.root` → `resolution_map.tsv` | |
+| 10 | `pareto_selector` | tutti i TSV → `pareto_results.tsv` | |
 
 I parametri di ogni step di analisi (min_hits, n_tracks, pesi Pareto, ecc.) sono letti da `config/analysis_params.json` (vedi [File di configurazione](#file-di-configurazione)).
 
@@ -500,6 +512,8 @@ Un file registry JSON in `output/sweep/` registra i path dei file ROOT prodotti.
 
 ```
 output/sweep/<tag>/optimizer_<timestamp>.log    # log strutturato per variante
+output/sweep/<tag>/plots/efficiency2D.png       # mappa efficienza per variante
+output/sweep/lens_screening/plots/              # plot screening (fuoco mobile)
 output/sweep/report_<timestamp>.md              # report Markdown finale con top-10 Pareto
 ```
 
@@ -516,7 +530,14 @@ python3 scripts/autonomous_optimizer.py [opzioni]
 | `--top-k N` | 3 | Varianti promosse a fase 2 |
 | `--geom` | tutte | Filtra geometria: `nominal`/`coarse`/`extended` |
 | `--margin` | tutti | Filtra margine: `0.5`/`1.0`/`2.0` |
-| `--lens75-id`, `--lens60-id` | — | ID lenti specifici (bypassa sweep multi-variante) |
+| `--lens75-id`, `--lens60-id` | — | ID lenti specifici |
+| `--all-lenses` | off | Fase 0: screening su tutte le coppie del catalogo |
+| `--lens-subset` | — | IDs comma-separated per limitare lo screening |
+| `--top-n-lenses` | 3 | Top-N coppie selezionate dallo screening |
+| `--screening-photons` | 1000 | Fotoni per la fase di screening |
+| `--mobile-focus` | off | Fuoco mobile: thin-lens + DOF accurato per posizionare il detector |
+| `--refine-photons` | 0 | Fotoni per il re-run opt con fuoco accurato (0 = usa `config.json`) |
+| `--local` | off | Output in `output/sweep/` locale anziché SSD esterna |
 | `--ssd-mount` | `/mnt/external_ssd` | Mount point SSD |
 | `--analysis-params` | `config/analysis_params.json` | Override file parametri analisi |
 | `--max-hours` | 48 | Budget tempo totale |

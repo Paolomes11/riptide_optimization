@@ -6,6 +6,7 @@ Esegue pipeline completa (opt → lens → psf_extractor → q_map → chi2_map 
 dof → dof_map → psf-dof → resolution_map → pareto_selector) con strategia
 a due fasi, registry di resume, validazione output e fix automatici.
 """
+from __future__ import annotations
 
 import argparse
 import datetime
@@ -99,9 +100,17 @@ def setup_logging(sweep_dir: Path, timestamp: str) -> logging.Logger:
 
 def find_binary(name: str) -> Path:
     p = BINARIES[name]
-    if not p.exists():
-        raise FileNotFoundError(f"Binario '{name}' non trovato: {p}")
-    return p
+    if p.exists():
+        return p
+    # Fallback: single-config build (Unix Makefiles, nessun subdir Release/)
+    alt = Path(str(p).replace("/Release/", "/"))
+    if alt.exists():
+        return alt
+    raise FileNotFoundError(
+        f"Binario '{name}' non trovato: {p}\n"
+        f"  Alternativa cercata: {alt}\n"
+        f"  Esegui il build su questa macchina."
+    )
 
 
 def load_base_config() -> dict:
@@ -115,7 +124,7 @@ def load_analysis_params(override_path: str | None) -> dict:
 
 
 def generate_sweep_config(base: dict, geom: dict, margin: float,
-                          fast: bool, tag: str) -> Path:
+                          fast: bool, tag: str, mobile_focus: bool = False) -> Path:
     cfg = dict(base)
     cfg.update({
         "source_dx":       geom["source_dx"],
@@ -127,6 +136,10 @@ def generate_sweep_config(base: dict, geom: dict, margin: float,
     })
     if fast:
         cfg["x_max"] = 150.0
+    elif not mobile_focus and "x_det" in cfg:
+        limit = cfg["x_det"] - cfg.get("lens_det_gap", 0.0)
+        if cfg.get("x_max", limit) > limit:
+            cfg["x_max"] = limit
     path = PROJECT_ROOT / "config" / f"config_sweep_{tag}.json"
     path.write_text(json.dumps(cfg, indent=2))
     return path
@@ -188,6 +201,12 @@ def run_cmd(cmd: list[str], log_path: Path, timeout_sec: int,
             ok = proc.returncode == 0
             if not ok:
                 logging.error(f"FALLITO (rc={proc.returncode}): {cmd_str}")
+                tail = stdout_lines[-30:] if len(stdout_lines) > 30 else stdout_lines
+                if tail:
+                    logging.error("--- Output (ultime righe) ---")
+                    for line in tail:
+                        logging.error("  | %s", line.rstrip())
+                    logging.error("--- Fine output ---")
             return ok, stdout, ""
         except subprocess.TimeoutExpired:
             proc.kill()
@@ -359,8 +378,10 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
                         lens75_id: str, lens60_id: str,
                         dry_run: bool,
                         all_lenses: bool = False,
-                        lens_subset: str = "") -> Path | None:
-    """Esegue run.sh per la modalità indicata e restituisce il path del file ROOT su SSD."""
+                        lens_subset: str = "",
+                        use_local: bool = False,
+                        focus_tsv: Path | None = None) -> Path | None:
+    """Esegue run.sh per la modalità indicata e restituisce il path del file ROOT prodotto."""
     out_names = {"opt": "events", "lens": "lens", "dof": "focal", "psf-dof": "psf_dof"}
     prefix = out_names[mode]
 
@@ -373,12 +394,14 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
         else:
             logging.warning(f"Registry entry obsoleta per {mode} ({candidate}), rieseguo.")
 
+    run_target = "local" if use_local else "ssd"
     cmd = [
-        find_binary("run_sh"), mode, "ssd",
+        find_binary("run_sh"), mode, run_target,
         "--jobs", str(jobs),
-        "--ssd-mount", str(ssd_mount),
         "--config", str(sweep_cfg_path),
     ]
+    if not use_local:
+        cmd += ["--ssd-mount", str(ssd_mount)]
     if lens75_id:
         cmd += ["--lens75-id", lens75_id]
     if lens60_id:
@@ -387,6 +410,8 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
         cmd.append("--all-lenses")
     if lens_subset:
         cmd += ["--lens-subset", lens_subset]
+    if focus_tsv and mode in ("opt", "lens"):
+        cmd += ["--focus-tsv", str(focus_tsv)]
 
     log_path = sweep_dir / "pipeline.log"
     step_start = time.time()
@@ -399,10 +424,10 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
         return Path(f"/dev/null/{prefix}.root")   # sentinel per dry-run
 
     root_path = find_ssd_root_from_stdout(stdout, prefix)
-    if root_path is None:
+    if root_path is None and not use_local:
         root_path = find_latest_ssd_root(ssd_mount, prefix, after=step_start)
     if root_path is None:
-        logging.error(f"File ROOT '{prefix}.root' non trovato su SSD dopo {mode}")
+        logging.error(f"File ROOT '{prefix}.root' non trovato dopo {mode}")
         return None
 
     # Aggiorna registry
@@ -425,7 +450,10 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
 def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
                  ssd_mount: Path, jobs: int, lens75_id: str, lens60_id: str,
                  ap: dict, dry_run: bool,
-                 prebuilt_events: Path | None = None) -> dict | None:
+                 prebuilt_events: Path | None = None,
+                 use_local: bool = False,
+                 focus_tsv: Path | None = None,
+                 prebuilt_dof_tsv: Path | None = None) -> dict | None:
     """
     Esegue i 10 step della pipeline per una variante.
     Restituisce dict con i path dei TSV/ROOT prodotti, o None se step critico fallisce.
@@ -440,14 +468,30 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         logging.info(f"[opt] Uso events pre-costruito: {events_root}")
     else:
         events_root = run_simulation_step("opt", sweep_cfg, tag, sweep_dir,
-                                          ssd_mount, jobs, lens75_id, lens60_id, dry_run)
+                                          ssd_mount, jobs, lens75_id, lens60_id, dry_run,
+                                          use_local=use_local)
         if events_root is None:
             return None
     out["events"] = events_root
 
+    # Salva mappa efficienza (non-ranking)
+    plots_dir = sweep_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    eff_png = plots_dir / "efficiency2D.png"
+    cmd_p2d = [find_binary("plot2D"),
+               "--input",  str(events_root),
+               "--config", str(sweep_cfg),
+               "--output", str(eff_png)]
+    ok_p2d, _, _ = run_cmd(cmd_p2d, log, TIMEOUTS_SEC["analysis"], dry_run)
+    if ok_p2d:
+        out["efficiency_png"] = eff_png
+    else:
+        logging.warning("plot2D per mappa efficienza fallito — continuo")
+
     # Step 2: lens
     lens_root = run_simulation_step("lens", sweep_cfg, tag, sweep_dir,
-                                    ssd_mount, jobs, lens75_id, lens60_id, dry_run)
+                                    ssd_mount, jobs, lens75_id, lens60_id, dry_run,
+                                    use_local=use_local, focus_tsv=focus_tsv)
     if lens_root is None:
         return None
     out["lens"] = lens_root
@@ -467,11 +511,13 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
     cmd = [
         find_binary("q_map"),
         "--psf", str(psf_data),
+        "--config", str(sweep_cfg),
         "--n-tracks", str(qp["n_tracks"]),
         "--dt", str(qp["dt"]),
         "--min-hits", str(qp["min_hits"]),
         "--trace-frac", str(qp["trace_frac"]),
         "--tsv", str(q_tsv),
+        "--jobs", str(jobs),
     ]
     if qp.get("dist_to_target"):
         cmd.append("--dist-to-target")
@@ -491,6 +537,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         "--p-low", str(cp["p_low"]),
         "--p-high", str(cp["p_high"]),
         "--tsv", str(chi2_tsv),
+        "--jobs", str(jobs),
     ]
     if cp.get("adaptive_target"):
         cmd.append("--adaptive-target")
@@ -499,32 +546,38 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         return None
     out["chi2_tsv"] = chi2_tsv
 
-    # Step 6: dof
-    focal_root = run_simulation_step("dof", sweep_cfg, tag, sweep_dir,
-                                     ssd_mount, jobs, lens75_id, lens60_id, dry_run)
-    if focal_root is None:
-        return None
-    out["focal"] = focal_root
+    # Step 6: dof  /  Step 7: dof_map
+    if prebuilt_dof_tsv is not None:
+        dof_tsv = prebuilt_dof_tsv
+        logging.info(f"[dof] Uso dof_tsv pre-costruito: {dof_tsv}")
+    else:
+        focal_root = run_simulation_step("dof", sweep_cfg, tag, sweep_dir,
+                                         ssd_mount, jobs, lens75_id, lens60_id, dry_run,
+                                         use_local=use_local)
+        if focal_root is None:
+            return None
+        out["focal"] = focal_root
 
-    # Step 7: dof_map
-    dof_tsv = sweep_dir / "dof_map.tsv"
-    dp = ap["dof_map"]
-    cmd = [
-        find_binary("dof_map"),
-        "--input", str(focal_root),
-        "--config", str(sweep_cfg),
-        "--core-fraction", str(dp["core_fraction"]),
-        "--m-target", str(dp["m_target"]),
-        "--tsv", str(dof_tsv),
-    ]
-    ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
-    if not ok:
-        return None
+        dof_tsv = sweep_dir / "dof_map.tsv"
+        dp = ap["dof_map"]
+        cmd = [
+            find_binary("dof_map"),
+            "--input", str(focal_root),
+            "--config", str(sweep_cfg),
+            "--core-fraction", str(dp["core_fraction"]),
+            "--m-target", str(dp["m_target"]),
+            "--tsv", str(dof_tsv),
+            "--jobs", str(jobs),
+        ]
+        ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
+        if not ok:
+            return None
     out["dof_tsv"] = dof_tsv
 
     # Step 8: psf-dof
     psf_dof_root = run_simulation_step("psf-dof", sweep_cfg, tag, sweep_dir,
-                                       ssd_mount, jobs, lens75_id, lens60_id, dry_run)
+                                       ssd_mount, jobs, lens75_id, lens60_id, dry_run,
+                                       use_local=use_local)
     if psf_dof_root is None:
         return None
     out["psf_dof"] = psf_dof_root
@@ -536,6 +589,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         "--input", str(psf_dof_root),
         "--config", str(sweep_cfg),
         "--tsv", str(res_tsv),
+        "--jobs", str(jobs),
     ]
     ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["resolution_map"], dry_run)
     if not ok:
@@ -732,14 +786,137 @@ def generate_screening_config(base_cfg: dict, n_photons: int) -> Path:
     return path
 
 
+def read_efl(item_id: str) -> tuple[float, float]:
+    """Restituisce (focal_length_mm, center_thickness_mm) da planoconvex o biconvex."""
+    import csv as _csv
+    catalogs = [
+        PROJECT_ROOT / "lens_cutter" / "lens_data" / "thorlabs_planoconvex.tsv",
+        PROJECT_ROOT / "lens_cutter" / "lens_data" / "thorlabs_biconvex.tsv",
+    ]
+    for tsv in catalogs:
+        with open(tsv) as f:
+            for row in _csv.DictReader(f, delimiter='\t'):
+                if row['Item #'].strip() == item_id.strip():
+                    return float(row['Focal Length']), float(row['Center Thickness'])
+    raise KeyError(f"Lente {item_id!r} non trovata nei cataloghi")
+
+
+def compute_focus_tsv(cfg: dict, lens_subset: str, out_path: Path) -> Path:
+    """Stima thin-lens del piano focale per ogni (x1, x2) della griglia.
+
+    Per ogni coppia ordinata (lens_a, lens_b) nel subset, calcola x_focus con la
+    formula thin-lens. Per ogni punto (x1, x2) prende la mediana dei fuochi validi
+    su tutte le coppie, così la stima è rappresentativa dell'intero subset.
+    """
+    import math as _math, statistics as _stats
+    from collections import defaultdict as _dd
+
+    subset_ids = [s.strip() for s in lens_subset.split(",") if s.strip()]
+    if len(subset_ids) < 2:
+        raise ValueError(f"lens_subset deve contenere ≥2 lenti, ricevuto: {lens_subset!r}")
+
+    # Leggi EFL e spessore per tutte le lenti del subset (entrambi i cataloghi)
+    lens_data: dict[str, tuple[float, float]] = {}
+    for lid in subset_ids:
+        try:
+            lens_data[lid] = read_efl(lid)
+        except KeyError as e:
+            logging.warning(f"compute_focus_tsv: {e} — lente ignorata")
+
+    if len(lens_data) < 2:
+        raise ValueError("Meno di 2 lenti trovate nei cataloghi per il subset indicato")
+
+    found = list(lens_data.keys())
+    # Tutte le coppie ordinate (a come lens1, b come lens2 e viceversa)
+    pairs = [(a, b) for i, a in enumerate(found) for b in found if a != b]
+
+    x_min        = cfg['x_min']
+    x_max        = cfg['x_max']
+    dx           = cfg['dx']
+    lens_det_gap = cfg.get('lens_det_gap', 10.0)
+    margin_col   = 1.0  # margine collisione identico a run.sh
+
+    def arange_grid(start, stop, step):
+        vals, v = [], start
+        while v < stop - 1e-9:
+            vals.append(round(v, 6))
+            v = round(v + step, 9)
+        return vals
+
+    x1_vals = arange_grid(x_min, x_max, dx)
+    x2_vals = arange_grid(x_min, x_max, dx)
+
+    focus_map: dict[tuple[float, float], list[float]] = _dd(list)
+
+    for lid1, lid2 in pairs:
+        efl1, h1 = lens_data[lid1]
+        efl2, h2 = lens_data[lid2]
+        for x1 in x1_vals:
+            for x2 in x2_vals:
+                if x2 <= x1 + (h1 + h2) / 2.0 + margin_col:
+                    continue
+                try:
+                    if x1 < 1e-6 or abs(x1 - efl1) < 1e-6:
+                        continue
+                    v1 = 1.0 / (1.0/efl1 - 1.0/x1)
+                    u2 = v1 - (x2 - x1)
+                    if abs(u2) < 1e-6 or abs(u2 - efl2) < 1e-6:
+                        continue
+                    v2 = 1.0 / (1.0/efl2 - 1.0/u2)
+                    x_focus = x2 + v2
+                    if x_focus < x2 + lens_det_gap:
+                        continue
+                    focus_map[(x1, x2)].append(x_focus)
+                except (ZeroDivisionError, OverflowError):
+                    continue
+
+    rows = []
+    for (x1, x2), focuses in sorted(focus_map.items()):
+        rows.append((x1, x2, _stats.median(focuses)))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w") as f:
+        f.write("x1\tx2\tx_focus\n")
+        for r in rows:
+            f.write(f"{r[0]:.3f}\t{r[1]:.3f}\t{r[2]:.3f}\n")
+    logging.info(
+        f"focus TSV (thin-lens, {len(pairs)} coppie, {len(lens_data)} lenti): "
+        f"{len(rows)} punti griglia → {out_path}"
+    )
+    return out_path
+
+
+def extract_focus_tsv(dof_tsv: Path, out_path: Path, dry_run: bool = False) -> Path:
+    """Estrae (x1, x2, x_focus) da dof_map.tsv, filtrando focus_before_lens2=1."""
+    if dry_run:
+        logging.info(f"[DRY-RUN] extract_focus_tsv {dof_tsv} → {out_path}")
+        return out_path
+    import csv as _csv
+    rows = []
+    with open(dof_tsv) as f:
+        for row in _csv.DictReader(f, delimiter='\t'):
+            if row.get('focus_before_lens2', '0').strip() == '1':
+                continue
+            rows.append((float(row['x1']), float(row['x2']), float(row['x_focus'])))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, 'w') as f:
+        f.write("x1\tx2\tx_focus\n")
+        for r in rows:
+            f.write(f"{r[0]:.3f}\t{r[1]:.3f}\t{r[2]:.3f}\n")
+    logging.info(f"focus_accurate.tsv: {len(rows)} righe → {out_path}")
+    return out_path
+
+
 def run_plot2d(events_root: Path, cfg_path: Path, out_dir: Path,
-               dry_run: bool) -> Path | None:
+               dry_run: bool, ranking_only: bool = False) -> Path | None:
     out_png  = out_dir / "screening_efficiency2D.png"
     out_rank = out_dir / "screening_efficiency2D_ranking.csv"
     cmd = [find_binary("plot2D"),
            "--input",  str(events_root),
            "--config", str(cfg_path),
            "--output", str(out_png)]
+    if ranking_only:
+        cmd.append("--ranking-only")
     log_path = out_dir / "plot2d_screening.log"
     ok, _, _ = run_cmd(cmd, log_path, TIMEOUTS_SEC["analysis"], dry_run)
     if not ok:
@@ -865,6 +1042,8 @@ def main() -> int:
                         help="ID lente L1 Thorlabs (es. LA4464)")
     parser.add_argument("--lens60-id",    type=str,   default="",
                         help="ID lente L2 Thorlabs (es. LA4464R)")
+    parser.add_argument("--local",         action="store_true",
+                        help="Usa modalità local di run.sh (output in output/sweep/, nessuna SSD)")
     parser.add_argument("--ssd-mount",    type=str,   default="/mnt/external_ssd",
                         help="Override SSD mount (default: /mnt/external_ssd)")
     parser.add_argument("--analysis-params", type=str, default=None,
@@ -885,12 +1064,17 @@ def main() -> int:
                         help="Top-N coppie da selezionare dallo screening (default: 3)")
     parser.add_argument("--screening-photons", type=int, default=1000,
                         help="n_photons per la fase 0 di screening (default: 1000)")
+    parser.add_argument("--mobile-focus",      action="store_true",
+                        help="Fuoco mobile: thin-lens screening + DOF accurato per posizione detector")
+    parser.add_argument("--refine-photons",    type=int, default=0,
+                        help="n_photons per il re-run opt con fuoco accurato (0=usa config.json)")
     args = parser.parse_args()
 
     timestamp  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     sweep_dir  = PROJECT_ROOT / "output" / "sweep"
     t_start    = time.time()
     max_sec    = args.max_hours * 3600
+    use_local  = args.local
     ssd_mount  = Path(args.ssd_mount)
 
     global _registry_path, _registry
@@ -924,6 +1108,8 @@ def main() -> int:
 
     # ── FASE 0: screening lenti (opzionale) ──────────────────────────────────
     prebuilt_events: Path | None = None
+    prebuilt_dof_tsv: Path | None = None
+    focus_accurate_tsv: Path | None = None
     lens_pairs: list[tuple[str, str]]
 
     if args.all_lenses:
@@ -931,15 +1117,28 @@ def main() -> int:
         screen_dir.mkdir(parents=True, exist_ok=True)
         screen_cfg = generate_screening_config(base_cfg, args.screening_photons)
 
+        # Thin-lens focus TSV iniziale (solo modalità mobile)
+        thin_focus_tsv: Path | None = None
+        if args.mobile_focus and args.lens_subset:
+            try:
+                thin_focus_tsv = compute_focus_tsv(
+                    base_cfg, args.lens_subset,
+                    screen_dir / "thin_focus.tsv")
+            except (KeyError, ValueError) as e:
+                logging.warning(f"compute_focus_tsv: {e} — screening senza focus-tsv")
+
         events_all = run_simulation_step(
             "opt", screen_cfg, "screening", screen_dir, ssd_mount,
             args.jobs, "", "", args.dry_run,
-            all_lenses=True, lens_subset=args.lens_subset)
+            all_lenses=True, lens_subset=args.lens_subset, use_local=use_local,
+            focus_tsv=thin_focus_tsv)
         if events_all is None:
             logging.error("Screening lenti fallito.")
             return 1
 
-        ranking_csv = run_plot2d(events_all, screen_cfg, screen_dir, args.dry_run)
+        # Ranking-only: solo CSV, nessuna immagine
+        ranking_csv = run_plot2d(events_all, screen_cfg, screen_dir, args.dry_run,
+                                 ranking_only=True)
         if ranking_csv is None:
             logging.error("plot2D fallito nel calcolo del ranking.")
             return 1
@@ -951,13 +1150,67 @@ def main() -> int:
             top_pairs = parse_ranking_csv(ranking_csv, args.top_n_lenses)
         logging.info(f"Top-{args.top_n_lenses} coppie: {top_pairs}")
 
-        events_top = screen_dir / "events_top.root"
-        if not filter_events_root(events_all, top_pairs, events_top, args.dry_run):
-            logging.warning("Filtraggio ROOT fallito — uso file completo")
-            events_top = events_all
+        if args.mobile_focus:
+            # DOF per le top coppie → fuochi accurati
+            subset_ids = ",".join({l for pair in top_pairs for l in pair})
+            dof_screen_dir = screen_dir / "dof_screening"
+            dof_screen_dir.mkdir(parents=True, exist_ok=True)
+            focal_screen = run_simulation_step(
+                "dof", screen_cfg, "screening_dof", dof_screen_dir, ssd_mount,
+                args.jobs, "", "", args.dry_run,
+                all_lenses=True, lens_subset=subset_ids, use_local=use_local)
+            if focal_screen is None:
+                logging.error("DOF screening fallito.")
+                return 1
 
-        prebuilt_events = events_top
-        lens_pairs = top_pairs
+            dof_screen_tsv = dof_screen_dir / "dof_map.tsv"
+            dp = ap["dof_map"]
+            cmd_dm = [
+                find_binary("dof_map"),
+                "--input", str(focal_screen),
+                "--config", str(screen_cfg),
+                "--core-fraction", str(dp["core_fraction"]),
+                "--m-target", str(dp["m_target"]),
+                "--tsv", str(dof_screen_tsv),
+            ]
+            ok_dm, _, _ = run_cmd(cmd_dm, dof_screen_dir / "dof_map.log",
+                                  TIMEOUTS_SEC["analysis"], args.dry_run)
+            if not ok_dm:
+                logging.error("dof_map screening fallito.")
+                return 1
+
+            focus_accurate_tsv = extract_focus_tsv(
+                dof_screen_tsv, screen_dir / "focus_accurate.tsv", args.dry_run)
+            prebuilt_dof_tsv = dof_screen_tsv
+
+            # Re-run opt con fuoco accurato per efficienza precisa
+            n_refine = args.refine_photons if args.refine_photons > 0 else base_cfg.get("n_photons", 10000)
+            screen_cfg_refined = generate_screening_config(base_cfg, n_refine)
+            events_refined = run_simulation_step(
+                "opt", screen_cfg_refined, "screening_refined", screen_dir, ssd_mount,
+                args.jobs, "", "", args.dry_run,
+                all_lenses=True, lens_subset=subset_ids, use_local=use_local,
+                focus_tsv=focus_accurate_tsv)
+            if events_refined is None:
+                logging.warning("Re-run opt con fuoco accurato fallito — uso events_all")
+                events_refined = events_all
+
+            # Plot con immagini (salva in plots/)
+            plots_screen_dir = screen_dir / "plots"
+            plots_screen_dir.mkdir(parents=True, exist_ok=True)
+            run_plot2d(events_refined, screen_cfg_refined, plots_screen_dir,
+                       args.dry_run, ranking_only=False)
+
+            prebuilt_events = events_refined
+            lens_pairs = top_pairs
+        else:
+            # Fuoco fisso: filtra events per top coppie
+            events_top = screen_dir / "events_top.root"
+            if not filter_events_root(events_all, top_pairs, events_top, args.dry_run):
+                logging.warning("Filtraggio ROOT fallito — uso file completo")
+                events_top = events_all
+            prebuilt_events = events_top
+            lens_pairs = top_pairs
     else:
         lens_pairs = [(args.lens75_id, args.lens60_id)]
 
@@ -975,10 +1228,13 @@ def main() -> int:
             sweep_sub = sweep_dir / tag
             logging.info(f"--- Fase 1: {tag} ---")
 
-            sweep_cfg = generate_sweep_config(base_cfg, geom, margin, fast=True, tag=tag)
+            sweep_cfg = generate_sweep_config(base_cfg, geom, margin, fast=True, tag=tag,
+                                               mobile_focus=args.mobile_focus)
             out = run_pipeline(tag, sweep_cfg, sweep_sub, ssd_mount,
                                args.jobs, lens75, lens60, ap, args.dry_run,
-                               prebuilt_events=prebuilt_events)
+                               prebuilt_events=prebuilt_events, use_local=use_local,
+                               focus_tsv=focus_accurate_tsv,
+                               prebuilt_dof_tsv=prebuilt_dof_tsv)
             fast_results[tag] = out or {}
 
     # ── FASE 2: full sui top-k (se abilitata) ────────────────────────────────
@@ -1009,14 +1265,17 @@ def main() -> int:
             sweep_sub = sweep_dir / full_tag
             logging.info(f"--- Fase 2: {full_tag} ---")
 
-            sweep_cfg = generate_sweep_config(base_cfg, geom, margin, fast=False, tag=full_tag)
+            sweep_cfg = generate_sweep_config(base_cfg, geom, margin, fast=False, tag=full_tag,
+                                               mobile_focus=args.mobile_focus)
 
             retries = 0
             success = False
             while retries < 3 and not success:
                 out = run_pipeline(full_tag, sweep_cfg, sweep_sub, ssd_mount,
                                    args.jobs, tag_lens75, tag_lens60, ap, args.dry_run,
-                                   prebuilt_events=prebuilt_events)
+                                   prebuilt_events=prebuilt_events, use_local=use_local,
+                                   focus_tsv=focus_accurate_tsv,
+                                   prebuilt_dof_tsv=prebuilt_dof_tsv)
                 if out is None:
                     retries += 1
                     logging.warning(f"Pipeline fallita per {full_tag} (tentativo {retries}/3)")
@@ -1028,7 +1287,7 @@ def main() -> int:
                     full_results[full_tag] = out
                     logging.info(f"Variante {full_tag} completata con successo.")
 
-                    if not args.no_commit and not args.dry_run:
+                    if not args.no_commit and not args.dry_run and (PROJECT_ROOT / ".git").exists():
                         subprocess.run(
                             ["git", "add", str(sweep_sub / "pareto_results.tsv")],
                             cwd=PROJECT_ROOT, check=False
@@ -1059,7 +1318,7 @@ def main() -> int:
     report = generate_report(fast_results, full_results, sweep_dir, timestamp,
                              rep_l75, rep_l60, t_start)
 
-    if not args.no_commit and not args.dry_run:
+    if not args.no_commit and not args.dry_run and (PROJECT_ROOT / ".git").exists():
         subprocess.run(
             ["git", "add", str(report)],
             cwd=PROJECT_ROOT, check=False

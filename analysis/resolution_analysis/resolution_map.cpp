@@ -7,13 +7,17 @@
 #include <TStyle.h>
 #include <TTree.h>
 
+#include <omp.h>
+
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -35,6 +39,7 @@ struct CliConfig {
   int max_entries  = -1;
   int entry_stride = 1;
   int entry_offset = 0;
+  int n_jobs = 0; // 0 = tutti i core disponibili
 };
 
 static CliConfig parse_args(int argc, char** argv) {
@@ -77,6 +82,8 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.entry_stride = std::stoi(next());
     else if (arg == "--entry-offset")
       cfg.entry_offset = std::stoi(next());
+    else if (arg == "--jobs")
+      cfg.n_jobs = std::stoi(next());
     else if (arg == "--help" || arg == "-h") {
       std::cout << "Uso:\n"
                 << "  resolution_map --input psf_dof.root --config config/config.json\n"
@@ -398,23 +405,8 @@ int main(int argc, char** argv) {
   tree_runs->SetBranchAddress("sigma_dy", &rr.sigma_dy);
   tree_runs->SetBranchAddress("cov_y_dy", &rr.cov_y_dy);
 
-  std::unordered_map<int, Aggregated> agg;
-  agg.reserve(config_map.size());
-
-  std::ofstream dump_file;
-  bool do_dump = !cli.dump_csv.empty();
-  if (do_dump) {
-    std::filesystem::path dp(cli.dump_csv);
-    if (dp.has_parent_path()) {
-      std::filesystem::create_directories(dp.parent_path());
-    }
-    dump_file.open(cli.dump_csv);
-    dump_file << "config_id\tx1\tx2\tx_virtual\t"
-              << "run_id\ty_src\tn_hits\t"
-              << "sigma_z\tsigma_dz\tcov_z_dz\t"
-              << "x_focus_analytical\tfocus_in_scan\t"
-              << "sigma_min_computed\tdof\tdelta_y\tmag_M\n";
-  }
+  if (cli.n_jobs > 0)
+    omp_set_num_threads(cli.n_jobs);
 
   int total_entries = tree_runs->GetEntries();
   int stride        = std::max(1, cli.entry_stride);
@@ -424,76 +416,136 @@ int main(int argc, char** argv) {
                           ? std::min(i_start + cli.max_entries * stride, total_entries)
                           : total_entries;
 
+  // Fase 1: pre-caricamento sequenziale (GetEntry non è thread-safe)
+  struct PreloadedRow {
+    RunRow rr;
+    const ConfigInfo* cfg;
+    const std::vector<double>* x_scan;
+  };
+  std::vector<PreloadedRow> rows;
+  rows.reserve(static_cast<size_t>((n_to_process - i_start + stride - 1) / stride));
+
   for (int i = i_start; i < n_to_process; i += stride) {
     tree_runs->GetEntry(i);
-    if (!(rr.n_hits > 0.0)) {
+    if (!(rr.n_hits > 0.0))
       continue;
-    }
     auto it = config_map.find(rr.config_id);
-    if (it == config_map.end()) {
+    if (it == config_map.end())
       continue;
-    }
-
     auto scan_it = x_scan_per_cfg.find(rr.config_id);
-    if (scan_it == x_scan_per_cfg.end()) {
+    if (scan_it == x_scan_per_cfg.end())
       continue;
-    }
-    const auto& cfg_x_scan = scan_it->second;
+    rows.push_back({rr, &it->second, &scan_it->second});
+  }
 
-    double dof = compute_dof_from_curve(rr, it->second, cfg_x_scan, k);
-    if (std::isfinite(dof) && dof > 0.0) {
-      agg[rr.config_id].sum_dof += dof;
-      agg[rr.config_id].n_dof += 1;
-    }
+  // Fase 2: calcolo parallelo per riga
+  struct RowResult {
+    int config_id;
+    double dof;
+    bool dof_valid;
+    double focus;
+    bool focus_valid;
+    std::optional<double> delta;
+    std::optional<double> ee80;
+    // campi per --dump-csv
+    double x_focus_analytical;
+    bool focus_in_scan;
+    double sigma_min_comp;
+    double mag_M;
+  };
+  std::vector<RowResult> row_results(rows.size());
 
-    if (rr.sigma_dz > 1e-12) {
-      double xf = it->second.x_virtual - rr.cov_z_dz / (rr.sigma_dz * rr.sigma_dz);
+#pragma omp parallel for schedule(dynamic)
+  for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+    const auto& row = rows[i];
+    const RunRow& r = row.rr;
+    const ConfigInfo& c = *row.cfg;
+    const std::vector<double>& xs = *row.x_scan;
+    RowResult& res = row_results[i];
+
+    res.config_id = r.config_id;
+
+    double dof_val  = compute_dof_from_curve(r, c, xs, k);
+    res.dof         = dof_val;
+    res.dof_valid   = std::isfinite(dof_val) && dof_val > 0.0;
+
+    res.focus_valid = false;
+    res.focus       = std::numeric_limits<double>::quiet_NaN();
+    if (r.sigma_dz > 1e-12) {
+      double xf = c.x_virtual - r.cov_z_dz / (r.sigma_dz * r.sigma_dz);
       if (std::isfinite(xf)) {
-        agg[rr.config_id].sum_focus += xf;
-        agg[rr.config_id].n_focus  += 1;
+        res.focus       = xf;
+        res.focus_valid = true;
       }
     }
 
-    auto delta = compute_delta_y_min_at_focus(rr, it->second, cfg_x_scan, k);
-    if (delta.has_value() && std::isfinite(*delta) && *delta > 0.0) {
-      agg[rr.config_id].sum_delta_y += *delta;
-      agg[rr.config_id].n_delta_y += 1;
-    }
+    res.delta = compute_delta_y_min_at_focus(r, c, xs, k);
+    res.ee80  = compute_EE80_at_focus(r, c, xs);
 
-    auto ee80 = compute_EE80_at_focus(rr, it->second, cfg_x_scan);
-    if (ee80.has_value() && std::isfinite(*ee80) && *ee80 > 0.0) {
-      agg[rr.config_id].sum_EE80 += *ee80;
-      agg[rr.config_id].n_EE80 += 1;
+    res.x_focus_analytical = res.focus;
+    res.focus_in_scan      = res.focus_valid && res.focus >= scan_min && res.focus <= scan_max;
+
+    auto [sm, xf_comp] = compute_sigma_z_min_and_focus(r, c, xs);
+    res.sigma_min_comp  = sm;
+
+    res.mag_M = std::numeric_limits<double>::quiet_NaN();
+    if (std::isfinite(xf_comp) && std::abs(r.y_src) > 1e-12) {
+      double dx_f      = xf_comp - c.x_virtual;
+      double y_bar_foc = r.mu_y + r.mu_dy * dx_f;
+      if (std::isfinite(y_bar_foc))
+        res.mag_M = y_bar_foc / r.y_src;
+    }
+  }
+
+  // Fase 3: aggregazione sequenziale e dump CSV
+  std::unordered_map<int, Aggregated> agg;
+  agg.reserve(config_map.size());
+
+  std::ofstream dump_file;
+  bool do_dump = !cli.dump_csv.empty();
+  if (do_dump) {
+    std::filesystem::path dp(cli.dump_csv);
+    if (dp.has_parent_path())
+      std::filesystem::create_directories(dp.parent_path());
+    dump_file.open(cli.dump_csv);
+    dump_file << "config_id\tx1\tx2\tx_virtual\t"
+              << "run_id\ty_src\tn_hits\t"
+              << "sigma_z\tsigma_dz\tcov_z_dz\t"
+              << "x_focus_analytical\tfocus_in_scan\t"
+              << "sigma_min_computed\tdof\tdelta_y\tmag_M\n";
+  }
+
+  for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+    const RunRow& r     = rows[i].rr;
+    const ConfigInfo& c = *rows[i].cfg;
+    const RowResult& res = row_results[i];
+
+    if (res.dof_valid) {
+      agg[res.config_id].sum_dof += res.dof;
+      agg[res.config_id].n_dof  += 1;
+    }
+    if (res.focus_valid) {
+      agg[res.config_id].sum_focus += res.focus;
+      agg[res.config_id].n_focus  += 1;
+    }
+    if (res.delta.has_value() && std::isfinite(*res.delta) && *res.delta > 0.0) {
+      agg[res.config_id].sum_delta_y += *res.delta;
+      agg[res.config_id].n_delta_y  += 1;
+    }
+    if (res.ee80.has_value() && std::isfinite(*res.ee80) && *res.ee80 > 0.0) {
+      agg[res.config_id].sum_EE80 += *res.ee80;
+      agg[res.config_id].n_EE80  += 1;
     }
 
     if (do_dump) {
-      const auto& c = it->second;
-      double x_focus_analytical = std::numeric_limits<double>::quiet_NaN();
-      if (rr.sigma_dz > 1e-12) {
-        x_focus_analytical = c.x_virtual - rr.cov_z_dz / (rr.sigma_dz * rr.sigma_dz);
-      }
-      bool focus_in_scan = std::isfinite(x_focus_analytical)
-                           && x_focus_analytical >= scan_min
-                           && x_focus_analytical <= scan_max;
-      auto [sigma_min_comp, x_focus_comp] = compute_sigma_z_min_and_focus(rr, c, cfg_x_scan);
-
-      double mag_M = std::numeric_limits<double>::quiet_NaN();
-      if (std::isfinite(x_focus_comp) && std::abs(rr.y_src) > 1e-12) {
-        double dx         = x_focus_comp - c.x_virtual;
-        double y_bar_foc  = rr.mu_y + rr.mu_dy * dx;
-        if (std::isfinite(y_bar_foc)) {
-          mag_M = y_bar_foc / rr.y_src;
-        }
-      }
-
       dump_file << c.config_id << "\t" << c.x1 << "\t" << c.x2 << "\t" << c.x_virtual << "\t"
-                << rr.run_id << "\t" << rr.y_src << "\t" << rr.n_hits << "\t"
-                << rr.sigma_z << "\t" << rr.sigma_dz << "\t" << rr.cov_z_dz << "\t"
-                << x_focus_analytical << "\t" << (focus_in_scan ? 1 : 0) << "\t"
-                << sigma_min_comp << "\t"
-                << (std::isfinite(dof) ? dof : std::numeric_limits<double>::quiet_NaN()) << "\t"
-                << (delta.has_value() ? *delta : std::numeric_limits<double>::quiet_NaN()) << "\t"
-                << mag_M << "\n";
+                << r.run_id << "\t" << r.y_src << "\t" << r.n_hits << "\t"
+                << r.sigma_z << "\t" << r.sigma_dz << "\t" << r.cov_z_dz << "\t"
+                << res.x_focus_analytical << "\t" << (res.focus_in_scan ? 1 : 0) << "\t"
+                << res.sigma_min_comp << "\t"
+                << (std::isfinite(res.dof) ? res.dof : std::numeric_limits<double>::quiet_NaN()) << "\t"
+                << (res.delta.has_value() ? *res.delta : std::numeric_limits<double>::quiet_NaN()) << "\t"
+                << res.mag_M << "\n";
     }
   }
 

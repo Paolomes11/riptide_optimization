@@ -46,6 +46,7 @@ struct CliConfig {
   std::string lens2_id    = "";
   double lower_percentile = -1.0; // -1 significa "usa dal config"
   double upper_percentile = -1.0;
+  bool ranking_only       = false; // Solo CSV ranking, nessuna immagine
 };
 
 static CliConfig parse_args(int argc, char** argv) {
@@ -74,6 +75,8 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.lower_percentile = std::stod(next());
     else if (arg == "--high")
       cfg.upper_percentile = std::stod(next());
+    else if (arg == "--ranking-only")
+      cfg.ranking_only = true;
     else if (arg == "--help" || arg == "-h") {
       std::cout
           << "Uso: plot2D [opzioni]\n"
@@ -85,7 +88,8 @@ static CliConfig parse_args(int argc, char** argv) {
           << "  --lens1 <id>          ID della prima lente da plottare (default: prima trovata)\n"
           << "  --lens2 <id>          ID della seconda lente da plottare (default: prima trovata)\n"
           << "  --low <val>           Percentile inferiore (sovrascrive config)\n"
-          << "  --high <val>          Percentile superiore (sovrascrive config)\n";
+          << "  --high <val>          Percentile superiore (sovrascrive config)\n"
+          << "  --ranking-only        Genera solo il CSV di ranking, nessuna immagine PNG\n";
       std::exit(0);
     } else {
       std::cerr << "Opzione sconosciuta: " << arg << "\n";
@@ -401,12 +405,13 @@ int main(int argc, char** argv) {
     h_invalid.Draw("BOX SAME");
   }
 
-  // aggiorna canvas e salva
-  canvas.Modified();
-  canvas.Update();
-  canvas.SaveAs(cli.output_png.c_str());
-
-  std::cout << "Mappa salvata in " << cli.output_png << "\n";
+  // aggiorna canvas e salva (solo se non in modalità ranking-only)
+  if (!cli.ranking_only) {
+    canvas.Modified();
+    canvas.Update();
+    canvas.SaveAs(cli.output_png.c_str());
+    std::cout << "Mappa salvata in " << cli.output_png << "\n";
+  }
 
   file.Close();
   return 0;

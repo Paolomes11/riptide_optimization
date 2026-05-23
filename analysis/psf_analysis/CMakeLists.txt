@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.26)
 
 # ROOT
 find_package(ROOT REQUIRED COMPONENTS Core RIO Hist Graf)
+
+# OpenMP
+find_package(OpenMP REQUIRED)
 include(${ROOT_USE_FILE})
 
 # nlohmann/json (header-only; bundled con ROOT o installato separatamente)
@@ -40,7 +43,7 @@ add_executable(q_map
     q_map.cpp
 )
 target_link_libraries(q_map
-    PRIVATE psf_analysis ${ROOT_LIBRARIES} spdlog::spdlog
+    PRIVATE psf_analysis ${ROOT_LIBRARIES} spdlog::spdlog OpenMP::OpenMP_CXX
 )
 target_include_directories(q_map
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -54,7 +57,7 @@ add_executable(chi2_map
     chi2_map.cpp
 )
 target_link_libraries(chi2_map
-    PRIVATE psf_analysis ${ROOT_LIBRARIES} spdlog::spdlog
+    PRIVATE psf_analysis ${ROOT_LIBRARIES} spdlog::spdlog OpenMP::OpenMP_CXX
 )
 target_include_directories(chi2_map
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}

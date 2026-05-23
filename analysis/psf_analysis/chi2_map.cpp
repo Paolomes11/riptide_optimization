@@ -33,13 +33,17 @@
 #include <TMarker.h>
 #include <TStyle.h>
 
+#include <omp.h>
+
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -67,6 +71,8 @@ struct CliConfig {
   // Parametri percentili per la scala colori
   double perc_low  = 0.0;
   double perc_high = 95.0;
+
+  int n_jobs = 0; // 0 = tutti i core disponibili
 };
 
 static CliConfig parse_args(int argc, char** argv) {
@@ -114,6 +120,8 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.perc_low = std::stod(next());
     else if (key == "--p-high")
       cfg.perc_high = std::stod(next());
+    else if (key == "--jobs")
+      cfg.n_jobs = std::stoi(next());
     else {
       std::cerr << "Opzione sconosciuta: " << key << "\n";
       std::exit(1);
@@ -578,14 +586,26 @@ int main(int argc, char** argv) {
     double infl;
     bool valid;
   };
-  std::vector<Chi2Entry> entries;
-  entries.reserve(db.size());
+  if (cli.n_jobs > 0)
+    omp_set_num_threads(cli.n_jobs);
 
-  int config_idx = 0;
-  int total_cfgs = db.size();
+  std::vector<std::pair<riptide::LensConfig, const std::vector<riptide::PSFPoint>*>> db_vec;
+  db_vec.reserve(db.size());
+  for (const auto& [k, v] : db)
+    db_vec.push_back({k, &v});
+
+  int total_cfgs = static_cast<int>(db_vec.size());
   int print_step = std::max(1, total_cfgs / 20);
 
-  for (const auto& [cfg, points] : db) {
+  std::vector<Chi2Entry> entries(total_cfgs, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, false});
+  std::atomic<int> processed{0};
+  std::mutex log_mtx;
+
+#pragma omp parallel for schedule(dynamic)
+  for (int i = 0; i < total_cfgs; ++i) {
+    const auto& cfg    = db_vec[i].first;
+    const auto& points = *db_vec[i].second;
+
     std::vector<const riptide::PSFPoint*> valid_points;
     for (const auto& p : points) {
       if (p.on_detector && p.n_hits_count >= cli.min_hits)
@@ -593,7 +613,7 @@ int main(int argc, char** argv) {
     }
 
     if (valid_points.size() < 10) {
-      entries.push_back({cfg.x1, cfg.x2, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, false});
+      entries[i] = {cfg.x1, cfg.x2, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, false};
     } else {
       std::vector<double> xs, ys, mu_y_vec, mu_z_vec, sig_y_vec, sig_z_vec;
       xs.reserve(valid_points.size());
@@ -621,7 +641,7 @@ int main(int argc, char** argv) {
       const bool ok_z = solve_plane_wls(xs, ys, mu_z_vec, sig_z_vec, fit_z);
 
       if (!ok_y || !ok_z) {
-        entries.push_back({cfg.x1, cfg.x2, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, false});
+        entries[i] = {cfg.x1, cfg.x2, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, false};
       } else {
         const double c2_tot   = fit_y.chi2 + fit_z.chi2;
         const int ndof_tot_i  = fit_y.ndof + fit_z.ndof;
@@ -645,11 +665,11 @@ int main(int argc, char** argv) {
         if (dx_grid > 0.0 && dy_grid > 0.0 && fit_y.residuals.size() == xs.size()
             && fit_z.residuals.size() == xs.size()) {
           std::vector<double> rstd_y(xs.size()), rstd_z(xs.size());
-          for (size_t i = 0; i < xs.size(); ++i) {
-            const double sy = std::max(fit_y.residual_sig[i], 1e-30);
-            const double sz = std::max(fit_z.residual_sig[i], 1e-30);
-            rstd_y[i]       = fit_y.residuals[i] / sy;
-            rstd_z[i]       = fit_z.residuals[i] / sz;
+          for (size_t j = 0; j < xs.size(); ++j) {
+            const double sy = std::max(fit_y.residual_sig[j], 1e-30);
+            const double sz = std::max(fit_z.residual_sig[j], 1e-30);
+            rstd_y[j]       = fit_y.residuals[j] / sy;
+            rstd_z[j]       = fit_z.residuals[j] / sz;
           }
 
           int n_pairs_y = 0;
@@ -693,15 +713,16 @@ int main(int argc, char** argv) {
         const bool valid =
             cli.corr_map ? (corr_ok && std::isfinite(metric)) : std::isfinite(metric);
         if (!valid || !std::isfinite(c2_tot_red)) {
-          entries.push_back({cfg.x1, cfg.x2, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, false});
+          entries[i] = {cfg.x1, cfg.x2, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, false};
         } else {
-          entries.push_back(
-              {cfg.x1, cfg.x2, metric, c2_tot_red, c2_tot_red_raw, rho, chi2_target, infl, true});
+          entries[i] =
+              {cfg.x1, cfg.x2, metric, c2_tot_red, c2_tot_red_raw, rho, chi2_target, infl, true};
         }
       }
     }
 
-    if ((config_idx + 1) % print_step == 0 || config_idx + 1 == total_cfgs) {
+    int done = ++processed;
+    if (done % print_step == 0 || done == total_cfgs) {
       std::string metric_label = "chi2";
       if (cli.corr_map) {
         metric_label = "rho";
@@ -712,11 +733,11 @@ int main(int argc, char** argv) {
       } else if (cli.use_reduced) {
         metric_label = "chi2/ndof";
       }
-      std::cout << "  [" << std::setw(3) << config_idx + 1 << "/" << total_cfgs
+      std::lock_guard<std::mutex> lk(log_mtx);
+      std::cout << "  [" << std::setw(3) << done << "/" << total_cfgs
                 << "] x1=" << fmt(cfg.x1) << " " << metric_label << "="
-                << (entries.back().valid ? fmt(entries.back().metric, 4) : "N/A") << "\n";
+                << (entries[i].valid ? fmt(entries[i].metric, 4) : "N/A") << "\n";
     }
-    config_idx++;
   }
 
   auto it_best = cli.corr_map ? std::max_element(entries.begin(), entries.end(),

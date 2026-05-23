@@ -58,7 +58,13 @@ PSFDatabase load_psf_database(const std::string& root_path) {
   tree->SetBranchAddress("cov_zz", &cov_zz);
   tree->SetBranchAddress("n_hits_filtered", &n_hits_filtered);
   tree->SetBranchAddress("on_detector", &on_detector);
-  tree->SetBranchAddress("n_hits_filtered_count", &n_hits_filtered_count);
+  bool has_count_branch = (tree->GetBranch("n_hits_filtered_count") != nullptr);
+  if (has_count_branch) {
+    tree->SetBranchAddress("n_hits_filtered_count", &n_hits_filtered_count);
+  } else {
+    std::cerr << "[WARN] PSF file vecchio: branch n_hits_filtered_count assente. "
+                 "Rigenera il PSF con psf_extractor corrente.\n";
+  }
 
   PSFDatabase db;
   for (Long64_t i = 0; i < tree->GetEntries(); ++i) {
@@ -66,7 +72,8 @@ PSFDatabase load_psf_database(const std::string& root_path) {
     LensConfig cfg{x1, x2};
     db[cfg].push_back(
         {x_source_d, y_source_d, mean_y, mean_z, cov_yy, cov_yz, cov_zz, (bool)on_detector,
-         n_hits_filtered, static_cast<double>(n_hits_filtered_count)});
+         n_hits_filtered,
+         has_count_branch ? static_cast<double>(n_hits_filtered_count) : n_hits_filtered});
   }
 
   // Sort per x crescente, poi y crescente per facilitare l'interpolazione 2D
@@ -300,7 +307,7 @@ std::vector<TracePoint> build_trace_3d(const Point3D& p1, const Point3D& p2, con
                      mu_y_rot,
                      mu_z_rot,
                      {c_yy / n_count, c_yz / n_count, c_zz / n_count},
-                     psf0.on_detector,
+                     psf0.n_hits_count_interp >= 1.0,
                      psf0.n_hits_interp,
                      psf0.n_hits_count_interp});
   }
