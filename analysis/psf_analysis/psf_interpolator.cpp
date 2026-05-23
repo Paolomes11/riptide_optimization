@@ -687,14 +687,18 @@ CoverageResult compute_coverage(const LensConfig& cfg, const PSFDatabase& db, co
 
   double sum_frac = 0.0;
 
+  std::mt19937 rng(qcfg.seed);
+  std::uniform_int_distribution<int>    dist_face(0, 5);
+  std::uniform_real_distribution<double> dist_u(-1.0, 1.0);
+
   for (int i = 0; i < qcfg.n_tracks; ++i) {
     auto get_random_point = [&]() -> Point3D {
       double x_hl = qcfg.scint_x / 2.0;
       double y_hl = qcfg.scint_y / 2.0;
       double z_hl = qcfg.scint_z / 2.0;
-      int face    = std::rand() % 6;
-      double u    = (static_cast<double>(std::rand()) / RAND_MAX) * 2.0 - 1.0;
-      double v    = (static_cast<double>(std::rand()) / RAND_MAX) * 2.0 - 1.0;
+      int    face = dist_face(rng);
+      double u    = dist_u(rng);
+      double v    = dist_u(rng);
       if (face == 0)
         return {x_hl, u * y_hl, v * z_hl};
       if (face == 1)

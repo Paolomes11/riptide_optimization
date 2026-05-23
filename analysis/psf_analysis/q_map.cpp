@@ -580,10 +580,12 @@ int main(int argc, char** argv) {
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < total_cfgs; ++i) {
       const auto& cfg = cov_configs[i];
+      riptide::QConfig qcfg_local = qcfg;
+      qcfg_local.seed = qcfg.seed ^ (static_cast<unsigned>(i) * 2654435761u);
       riptide::CoverageResult res;
       bool failed = false;
       try {
-        res = riptide::compute_coverage(cfg, db, qcfg);
+        res = riptide::compute_coverage(cfg, db, qcfg_local);
       } catch (const std::exception& e) {
         std::lock_guard<std::mutex> lk(cov_log_mtx);
         std::cerr << "  [WARN] compute_coverage failed x1=" << cfg.x1 << " x2=" << cfg.x2 << ": "
