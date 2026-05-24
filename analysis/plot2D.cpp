@@ -175,9 +175,9 @@ int main(int argc, char** argv) {
   tree_config->SetBranchAddress("x1", &x1_val);
   tree_config->SetBranchAddress("x2", &x2_val);
   tree_config->SetBranchAddress("config_id", &config_id);
-  if (tree_config->GetBranch("lens75_id")) {
-    tree_config->SetBranchAddress("lens75_id", l1_id_buf);
-    tree_config->SetBranchAddress("lens60_id", l2_id_buf);
+  if (tree_config->GetBranch("l1_id")) {
+    tree_config->SetBranchAddress("l1_id", l1_id_buf);
+    tree_config->SetBranchAddress("l2_id", l2_id_buf);
   }
   if (has_fv_branch) {
     tree_config->SetBranchAddress("x_det",        &x_det_val);
@@ -201,8 +201,8 @@ int main(int argc, char** argv) {
 
   for (int i = 0; i < tree_config->GetEntries(); ++i) {
     tree_config->GetEntry(i);
-    std::string s1        = tree_config->GetBranch("lens75_id") ? l1_id_buf : "default";
-    std::string s2        = tree_config->GetBranch("lens60_id") ? l2_id_buf : "default";
+    std::string s1        = tree_config->GetBranch("l1_id") ? l1_id_buf : "default";
+    std::string s2        = tree_config->GetBranch("l2_id") ? l2_id_buf : "default";
     config_map[config_id] = {x1_val, x2_val, s1, s2, has_fv_branch ? fv_val : 1};
 
     bool found = false;

@@ -36,7 +36,7 @@ namespace riptide {
 
 void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                const std::string& root_output_file, const std::filesystem::path& config_file,
-               const std::string& lens75_id_arg, const std::string& lens60_id_arg,
+               const std::string& l1_id_arg, const std::string& l2_id_arg,
                const std::string& focus_tsv) {
   using json = nlohmann::json;
 
@@ -70,12 +70,12 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     throw std::runtime_error("Macro non trovata: " + macro_to_run.string());
 
   // Ottieni i modelli di lenti correnti dal detector o dagli argomenti
-  std::string lens75_id = !lens75_id_arg.empty() ? lens75_id_arg : det->GetLens75Id();
-  std::string lens60_id = !lens60_id_arg.empty() ? lens60_id_arg : det->GetLens60Id();
+  std::string l1_id = !l1_id_arg.empty() ? l1_id_arg : det->GetL1Id();
+  std::string l2_id = !l2_id_arg.empty() ? l2_id_arg : det->GetL2Id();
 
   // Se sono state passate lenti diverse da quelle attuali nel detector, aggiornale
-  if (lens75_id != det->GetLens75Id() || lens60_id != det->GetLens60Id()) {
-    det->SetLenses(lens75_id, lens60_id);
+  if (l1_id != det->GetL1Id() || l2_id != det->GetL2Id()) {
+    det->SetLenses(l1_id, l2_id);
   }
 
   // Apertura file ROOT e creazione delle Ntuple
@@ -92,8 +92,8 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   analysisManager->CreateNtupleIColumn("config_id");
   analysisManager->CreateNtupleDColumn("x1");
   analysisManager->CreateNtupleDColumn("x2");
-  analysisManager->CreateNtupleSColumn("lens75_id");
-  analysisManager->CreateNtupleSColumn("lens60_id");
+  analysisManager->CreateNtupleSColumn("l1_id");
+  analysisManager->CreateNtupleSColumn("l2_id");
   analysisManager->CreateNtupleDColumn("x_det");      // posizione detector per questa config
   analysisManager->CreateNtupleIColumn("focus_valid"); // 1=valida, 0=fuoco invalido
   analysisManager->FinishNtuple(0);
@@ -160,11 +160,11 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   int config_counter = config_id_offset;
   int run_counter    = run_id_offset;
 
-  spdlog::info("Simulating lens pair: {} & {}", lens75_id, lens60_id);
+  spdlog::info("Simulating lens pair: {} & {}", l1_id, l2_id);
 
   // Ricalcola h dopo il cambio lenti
-  double h1 = det->GetLens75Thickness();
-  double h2 = det->GetLens60Thickness();
+  double h1 = det->GetL1Thickness();
+  double h2 = det->GetL2Thickness();
 
   std::vector<std::pair<double, double>> pairs;
   if (config.contains("pairs")) {
@@ -234,8 +234,8 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     analysisManager->FillNtupleIColumn(0, 0, config_counter);
     analysisManager->FillNtupleDColumn(0, 1, x1);
     analysisManager->FillNtupleDColumn(0, 2, x2);
-    analysisManager->FillNtupleSColumn(0, 3, lens75_id);
-    analysisManager->FillNtupleSColumn(0, 4, lens60_id);
+    analysisManager->FillNtupleSColumn(0, 3, l1_id);
+    analysisManager->FillNtupleSColumn(0, 4, l2_id);
     analysisManager->FillNtupleDColumn(0, 5, x_det_config);
     analysisManager->FillNtupleIColumn(0, 6, focus_valid);
     analysisManager->AddNtupleRow(0);
@@ -252,7 +252,7 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
             G4ThreeVector pos(x_source, y_source, 0);
             G4ThreeVector axis;
             double maxTheta;
-            auto params = det->GetLens75Params();
+            auto params = det->GetL1Params();
             axis        = (G4ThreeVector(params.x, 0, 0) - pos).unit();
             ImportanceSamplingHelper::CalculateCone(pos, params, axis, maxTheta);
 

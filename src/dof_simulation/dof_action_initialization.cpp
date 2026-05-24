@@ -18,7 +18,7 @@ void DofActionInitialization::Build() const {
   if (m_useImportanceSampling) {
     auto* det = static_cast<const DetectorConstruction*>(
         G4RunManager::GetRunManager()->GetUserDetectorConstruction());
-    primaryGen->SetImportanceSampling(true, [det]() { return det->GetLens75Params(); });
+    primaryGen->SetImportanceSampling(true, [det]() { return det->GetL1Params(); });
   }
   SetUserAction(primaryGen);
 

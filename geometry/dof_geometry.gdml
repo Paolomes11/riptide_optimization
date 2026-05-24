@@ -19,14 +19,14 @@
   </solids>
 
   <structure>
-    <volume name="lens75_x_volume">
+    <volume name="l1_x_volume">
       <materialref ref="uvfs" />
-      <solidref ref="lens75_x_ellipsoid" />
+      <solidref ref="l1_x_ellipsoid" />
     </volume>
 
-    <volume name="lens60_x_volume">
+    <volume name="l2_x_volume">
       <materialref ref="uvfs" />
-      <solidref ref="lens60_x_ellipsoid" />
+      <solidref ref="l2_x_ellipsoid" />
     </volume>
 
     <volume name="photocathode_x_volume">
@@ -39,15 +39,15 @@
       <materialref ref="air" />
       <solidref ref="world" />
 
-      <physvol name="lens75_x_phys">
-        <volumeref ref="lens75_x_volume" />
-        <positionref ref="lens75_x_pos" />
+      <physvol name="l1_x_phys">
+        <volumeref ref="l1_x_volume" />
+        <positionref ref="l1_x_pos" />
         <rotationref ref="rot_90y" />
       </physvol>
 
-      <physvol name="lens60_x_phys">
-        <volumeref ref="lens60_x_volume" />
-        <positionref ref="lens60_x_pos" />
+      <physvol name="l2_x_phys">
+        <volumeref ref="l2_x_volume" />
+        <positionref ref="l2_x_pos" />
         <rotationref ref="rot_90y" />
       </physvol>
     </volume>

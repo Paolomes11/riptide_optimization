@@ -34,8 +34,8 @@ BINARY_PSF_DOF="$BUILD_DIR/Release/psf_dof_scan_main"
 [[ ! -f "$BINARY_PSF_DOF" ]] && BINARY_PSF_DOF="$BUILD_DIR/psf_dof_scan_main"
 N_JOBS=1
 CONFIG_FILE="$PROJECT_ROOT/config/config.json"
-LENS75_ID=""
-LENS60_ID=""
+L1_ID=""
+L2_ID=""
 ALL_LENSES=0
 
 # parsing argomenti posizionali
@@ -55,10 +55,10 @@ while [[ $# -gt 0 ]]; do
       ALL_LENSES=1; EXTRA_ARGS+=("--all-lenses"); shift ;;
     --config)
       CONFIG_FILE="$2"; shift 2 ;;
-    --lens75-id)
-      LENS75_ID="$2"; EXTRA_ARGS+=("--lens75-id" "$2"); shift 2 ;;
-    --lens60-id)
-      LENS60_ID="$2"; EXTRA_ARGS+=("--lens60-id" "$2"); shift 2 ;;
+    --l1-id)
+      L1_ID="$2"; EXTRA_ARGS+=("--l1-id" "$2"); shift 2 ;;
+    --l2-id)
+      L2_ID="$2"; EXTRA_ARGS+=("--l2-id" "$2"); shift 2 ;;
     --lens-subset)
       EXTRA_ARGS+=("--lens-subset" "$2"); shift 2 ;;
     --focus-tsv)
@@ -172,8 +172,8 @@ with open('$CONFIG_FILE') as f:
 x_min = c['x_min']; x_max = c['x_max']; dx = c['dx']
 n_jobs = $N_JOBS
 mode = '$MODE'
-lens75_id = '$LENS75_ID'
-lens60_id = '$LENS60_ID'
+l1_id = '$L1_ID'
+l2_id = '$L2_ID'
 all_lenses = $ALL_LENSES
 
 # Load Thorlabs data
@@ -229,10 +229,10 @@ h2 = 16.3
 margin = 3.0 if mode in ('lens', 'psf-dof') else 1.0
 
 # Carica spessori reali se disponibili
-if lens75_id in thorlabs_data:
-    h1 = thorlabs_data[lens75_id]['h']
-if lens60_id in thorlabs_data:
-    h2 = thorlabs_data[lens60_id]['h']
+if l1_id in thorlabs_data:
+    h1 = thorlabs_data[l1_id]['h']
+if l2_id in thorlabs_data:
+    h2 = thorlabs_data[l2_id]['h']
 
 for x1 in arange(x_min, x_max, dx):
     # x2_min per evitare collisioni: x1 + h1/2 + margin < x2 - h2/2

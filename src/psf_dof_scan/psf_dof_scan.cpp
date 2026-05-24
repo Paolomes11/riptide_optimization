@@ -85,7 +85,7 @@ static PsfDofStats compute_stats(const PsfDofMoments& m) {
 
 void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                       const std::string& root_output_file, const std::filesystem::path& config_file,
-                      const std::string& lens75_id_arg, const std::string& lens60_id_arg) {
+                      const std::string& l1_id_arg, const std::string& l2_id_arg) {
   using json = nlohmann::json;
 
   std::filesystem::path output_path(root_output_file);
@@ -125,9 +125,9 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
     throw std::runtime_error("PrimaryGeneratorAction not found!");
   }
 
-  std::string lens75_id = !lens75_id_arg.empty() ? lens75_id_arg : det->GetLens75Id();
-  std::string lens60_id = !lens60_id_arg.empty() ? lens60_id_arg : det->GetLens60Id();
-  det->SetLenses(lens75_id, lens60_id);
+  std::string l1_id = !l1_id_arg.empty() ? l1_id_arg : det->GetL1Id();
+  std::string l2_id = !l2_id_arg.empty() ? l2_id_arg : det->GetL2Id();
+  det->SetLenses(l1_id, l2_id);
 
   auto analysisManager = G4AnalysisManager::Instance();
   if (!analysisManager->OpenFile(root_output_file)) {
@@ -152,8 +152,8 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
   analysisManager->CreateNtupleDColumn("x1");
   analysisManager->CreateNtupleDColumn("x2");
   analysisManager->CreateNtupleDColumn("x_virtual");
-  analysisManager->CreateNtupleSColumn("lens75_id");
-  analysisManager->CreateNtupleSColumn("lens60_id");
+  analysisManager->CreateNtupleSColumn("l1_id");
+  analysisManager->CreateNtupleSColumn("l2_id");
   analysisManager->FinishNtuple(0);
 
   analysisManager->CreateNtuple("PsfDofRuns", "PSF+DoF runs");
@@ -209,8 +209,8 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
   UImanager->ApplyCommand("/gps/ang/mintheta 0 deg");
   UImanager->ApplyCommand("/gps/ang/maxtheta 90 deg");
 
-  double h1 = det->GetLens75Thickness();
-  double h2 = det->GetLens60Thickness();
+  double h1 = det->GetL1Thickness();
+  double h2 = det->GetL2Thickness();
 
   std::vector<std::pair<double, double>> pairs;
   if (config.contains("pairs")) {
@@ -231,7 +231,7 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
     }
   }
 
-  spdlog::info("PSF+DoF scan lens pair: {} & {}", lens75_id, lens60_id);
+  spdlog::info("PSF+DoF scan lens pair: {} & {}", l1_id, l2_id);
 
   for (const auto& pair : pairs) {
     double x1 = pair.first;
@@ -243,11 +243,11 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
     double x_virtual = has_virtual_mm ? x_virtual_mm : (x2 + x_virtual_offset);
     steppingAction->SetVirtualPlane(x_virtual);
     {
-      auto lens1      = det->GetLens75Params();
+      auto lens1      = det->GetL1Params();
       double x1_front = lens1.x - 0.5 * lens1.tc - 1e-3;
-      double r1_lens  = 0.5 * det->GetLens75Diameter();
-      double x2_front = det->GetLens60X() - 0.5 * det->GetLens60Thickness() - 1e-3;
-      double r2_lens  = 0.5 * det->GetLens60Diameter();
+      double r1_lens  = 0.5 * det->GetL1Diameter();
+      double x2_front = det->GetL2X() - 0.5 * det->GetL2Thickness() - 1e-3;
+      double r2_lens  = 0.5 * det->GetL2Diameter();
       steppingAction->SetLensAperturePlanes(x1_front, r1_lens, x2_front, r2_lens);
     }
 
@@ -255,8 +255,8 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
     analysisManager->FillNtupleDColumn(0, 1, x1);
     analysisManager->FillNtupleDColumn(0, 2, x2);
     analysisManager->FillNtupleDColumn(0, 3, x_virtual);
-    analysisManager->FillNtupleSColumn(0, 4, lens75_id);
-    analysisManager->FillNtupleSColumn(0, 5, lens60_id);
+    analysisManager->FillNtupleSColumn(0, 4, l1_id);
+    analysisManager->FillNtupleSColumn(0, 5, l2_id);
     analysisManager->AddNtupleRow(0);
 
     for (double x_source = source_x_min; x_source <= source_x_max + 1e-9; x_source += source_dx) {
@@ -267,7 +267,7 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
         double is_weight = 1.0;
         if (config.value("use_importance_sampling", false)) {
           G4ThreeVector pos(x_source, y_source, 0);
-          auto params = det->GetLens75Params();
+          auto params = det->GetL1Params();
           G4ThreeVector axis;
           double maxTheta = 0.0;
           axis            = (G4ThreeVector(params.x, 0, 0) - pos).unit();

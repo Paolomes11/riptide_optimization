@@ -23,13 +23,13 @@
 
 namespace riptide {
 
-DetectorConstruction::DetectorConstruction(std::filesystem::path geometry_path, double lens75_x,
-                                           double lens60_x)
+DetectorConstruction::DetectorConstruction(std::filesystem::path geometry_path, double l1_x,
+                                           double l2_x)
     : m_geometry_path{std::move(geometry_path)}
-    , m_lens75_x{lens75_x}
-    , m_lens60_x{lens60_x}
-    , m_lens75_id{std::nullopt}
-    , m_lens60_id{std::nullopt} {
+    , m_l1_x{l1_x}
+    , m_l2_x{l2_x}
+    , m_l1_id{std::nullopt}
+    , m_l2_id{std::nullopt} {
   if (!std::filesystem::exists(m_geometry_path)
       || !std::filesystem::is_regular_file(m_geometry_path)) {
     throw std::runtime_error("Geometry path is invalid");
@@ -37,13 +37,13 @@ DetectorConstruction::DetectorConstruction(std::filesystem::path geometry_path, 
 }
 
 DetectorConstruction::DetectorConstruction(std::filesystem::path geometry_path,
-                                           std::string lens75_id, std::string lens60_id,
-                                           double lens75_x, double lens60_x)
+                                           std::string l1_id, std::string l2_id,
+                                           double l1_x, double l2_x)
     : m_geometry_path{std::move(geometry_path)}
-    , m_lens75_x{lens75_x}
-    , m_lens60_x{lens60_x}
-    , m_lens75_id{std::move(lens75_id)}
-    , m_lens60_id{std::move(lens60_id)} {
+    , m_l1_x{l1_x}
+    , m_l2_x{l2_x}
+    , m_l1_id{std::move(l1_id)}
+    , m_l2_id{std::move(l2_id)} {
   if (!std::filesystem::exists(m_geometry_path)
       || !std::filesystem::is_regular_file(m_geometry_path)) {
     throw std::runtime_error("Geometry path is invalid");
@@ -62,16 +62,16 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
     for (auto pv : *pv_store) {
       auto name = pv->GetName();
 
-      if (name == "lens75_x_phys") {
-        m_lens75_phys = pv;
-      } else if (name == "lens60_x_phys") {
-        m_lens60_phys = pv;
+      if (name == "l1_x_phys") {
+        m_l1_phys = pv;
+      } else if (name == "l2_x_phys") {
+        m_l2_phys = pv;
       } else if (name == "photocathode_x_phys") {
         m_photocathode_phys = pv;
       }
     }
 
-    if (!m_lens75_phys || !m_lens60_phys) {
+    if (!m_l1_phys || !m_l2_phys) {
       throw std::runtime_error("Lens physical volumes not found in GDML");
     }
     if (!m_photocathode_phys) {
@@ -79,11 +79,11 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
     }
 
     // Supporto per LensCutter: sostituisci i solidi se gli ID sono forniti
-    if (m_lens75_id || m_lens60_id) {
+    if (m_l1_id || m_l2_id) {
       LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
       cutter.load_catalog("lens_cutter/lens_data/thorlabs_planoconvex.tsv");
 
-      auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_lens75) {
+      auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_l1) {
         const auto* lens = cutter.get_lens_by_id(id);
         if (lens) {
           auto lv        = pv->GetLogicalVolume();
@@ -111,12 +111,12 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
           double sign   = (std::abs(lens->rotation_deg) < 1e-6) ? 1.0 : -1.0;
           double offset = sign * lens->get_center_offset();
 
-          if (is_lens75) {
-            m_lens75_thickness     = lens->center_thickness;
-            m_lens75_center_offset = offset;
+          if (is_l1) {
+            m_l1_thickness     = lens->center_thickness;
+            m_l1_center_offset = offset;
           } else {
-            m_lens60_thickness     = lens->center_thickness;
-            m_lens60_center_offset = offset;
+            m_l2_thickness     = lens->center_thickness;
+            m_l2_center_offset = offset;
           }
 
           spdlog::info("Replaced solid for {} with Thorlabs lens {} (offset: {:.3f} mm)",
@@ -126,15 +126,15 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
         }
       };
 
-      if (m_lens75_id)
-        replace_solid(m_lens75_phys, *m_lens75_id, true);
-      if (m_lens60_id)
-        replace_solid(m_lens60_phys, *m_lens60_id, false);
+      if (m_l1_id)
+        replace_solid(m_l1_phys, *m_l1_id, true);
+      if (m_l2_id)
+        replace_solid(m_l2_phys, *m_l2_id, false);
     }
   }
 
   // Imposta posizione iniziale
-  SetLensPositions(m_lens75_x, m_lens60_x);
+  SetLensPositions(m_l1_x, m_l2_x);
 
   return m_world;
 }
@@ -156,23 +156,23 @@ void DetectorConstruction::ConstructSDandField() {
   }
 }
 
-void DetectorConstruction::SetLensPositions(double lens75_x, double lens60_x) {
-  m_lens75_x = lens75_x;
-  m_lens60_x = lens60_x;
+void DetectorConstruction::SetLensPositions(double l1_x, double l2_x) {
+  m_l1_x = l1_x;
+  m_l2_x = l2_x;
 
   // Controllo collisioni (opzionale, logga un warning)
-  double dist               = std::abs(m_lens60_x - m_lens75_x);
-  double sum_half_thickness = (m_lens75_thickness + m_lens60_thickness) / 2.0;
+  double dist               = std::abs(m_l2_x - m_l1_x);
+  double sum_half_thickness = (m_l1_thickness + m_l2_thickness) / 2.0;
   if (dist < sum_half_thickness) {
     spdlog::warn("Lenses are overlapping! Distance: {:.3f} mm, sum of half-thicknesses: {:.3f} mm",
                  dist, sum_half_thickness);
   }
 
-  if (m_lens75_phys) {
-    m_lens75_phys->SetTranslation(G4ThreeVector(m_lens75_x - m_lens75_center_offset, 0, 0));
+  if (m_l1_phys) {
+    m_l1_phys->SetTranslation(G4ThreeVector(m_l1_x - m_l1_center_offset, 0, 0));
   }
-  if (m_lens60_phys) {
-    m_lens60_phys->SetTranslation(G4ThreeVector(m_lens60_x - m_lens60_center_offset, 0, 0));
+  if (m_l2_phys) {
+    m_l2_phys->SetTranslation(G4ThreeVector(m_l2_x - m_l2_center_offset, 0, 0));
   }
 }
 
@@ -186,14 +186,14 @@ void DetectorConstruction::SetDetectorPosition(double x_det) {
   spdlog::info("Detector (photocathode) position set to x = {:.2f} mm", x_det);
 }
 
-void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::string& lens60_id) {
-  m_lens75_id = lens75_id;
-  m_lens60_id = lens60_id;
+void DetectorConstruction::SetLenses(const std::string& l1_id, const std::string& l2_id) {
+  m_l1_id = l1_id;
+  m_l2_id = l2_id;
 
   LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
   cutter.load_catalog("lens_cutter/lens_data/thorlabs_planoconvex.tsv");
 
-  auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_lens75) {
+  auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_l1) {
     if (!pv) {
       spdlog::warn("Physical volume is null");
       return;
@@ -201,7 +201,7 @@ void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::st
     const auto* lens = cutter.get_lens_by_id(id);
     if (lens) {
       auto lv        = pv->GetLogicalVolume();
-      auto new_solid = lens->to_g4_solid(is_lens75 ? "_75" : "_60");
+      auto new_solid = lens->to_g4_solid(is_l1 ? "_75" : "_60");
       lv->SetSolid(new_solid);
 
       // Convenzione Thorlabs: rotation=0 -> lato curvo verso la sorgente (-X)
@@ -225,17 +225,17 @@ void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::st
       double sign   = (std::abs(lens->rotation_deg) < 1e-6) ? 1.0 : -1.0;
       double offset = sign * lens->get_center_offset();
 
-      if (is_lens75) {
-        m_lens75_thickness      = lens->center_thickness;
-        m_lens75_edge_thickness = lens->edge_thickness;
-        m_lens75_center_offset  = offset;
-        m_lens75_diameter       = lens->diameter;
-        m_lens75_R1             = lens->radius_of_curvature;
-        m_lens75_R2 = (lens->type == LensType::Biconvex) ? lens->radius_of_curvature : 1e12; // Flat
-        m_lens75_is_biconvex = (lens->type == LensType::Biconvex);
+      if (is_l1) {
+        m_l1_thickness      = lens->center_thickness;
+        m_l1_edge_thickness = lens->edge_thickness;
+        m_l1_center_offset  = offset;
+        m_l1_diameter       = lens->diameter;
+        m_l1_R1             = lens->radius_of_curvature;
+        m_l1_R2 = (lens->type == LensType::Biconvex) ? lens->radius_of_curvature : 1e12; // Flat
+        m_l1_is_biconvex = (lens->type == LensType::Biconvex);
       } else {
-        m_lens60_thickness     = lens->center_thickness;
-        m_lens60_center_offset = offset;
+        m_l2_thickness     = lens->center_thickness;
+        m_l2_center_offset = offset;
       }
       spdlog::info("Updated solid for {} with Thorlabs lens {} (offset: {:.3f} mm)", pv->GetName(),
                    id, offset);
@@ -244,31 +244,31 @@ void DetectorConstruction::SetLenses(const std::string& lens75_id, const std::st
     }
   };
 
-  if (m_lens75_phys)
-    replace_solid(m_lens75_phys, lens75_id, true);
-  if (m_lens60_phys)
-    replace_solid(m_lens60_phys, lens60_id, false);
+  if (m_l1_phys)
+    replace_solid(m_l1_phys, l1_id, true);
+  if (m_l2_phys)
+    replace_solid(m_l2_phys, l2_id, false);
 }
 
-ImportanceSamplingHelper::LensParams DetectorConstruction::GetLens75Params() const {
-  return {m_lens75_x,         m_lens75_diameter,       m_lens75_R1,         m_lens75_R2,
-          m_lens75_thickness, m_lens75_edge_thickness, m_lens75_is_biconvex};
+ImportanceSamplingHelper::LensParams DetectorConstruction::GetL1Params() const {
+  return {m_l1_x,         m_l1_diameter,       m_l1_R1,         m_l1_R2,
+          m_l1_thickness, m_l1_edge_thickness, m_l1_is_biconvex};
 }
 
-double DetectorConstruction::GetLens75Thickness() const {
-  return m_lens75_thickness;
+double DetectorConstruction::GetL1Thickness() const {
+  return m_l1_thickness;
 }
 
-double DetectorConstruction::GetLens60Thickness() const {
-  return m_lens60_thickness;
+double DetectorConstruction::GetL2Thickness() const {
+  return m_l2_thickness;
 }
 
-double DetectorConstruction::GetLens75CenterOffset() const {
-  return m_lens75_center_offset;
+double DetectorConstruction::GetL1CenterOffset() const {
+  return m_l1_center_offset;
 }
 
-double DetectorConstruction::GetLens60CenterOffset() const {
-  return m_lens60_center_offset;
+double DetectorConstruction::GetL2CenterOffset() const {
+  return m_l2_center_offset;
 }
 
 } // namespace riptide

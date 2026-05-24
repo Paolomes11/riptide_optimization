@@ -65,11 +65,22 @@ PSFDatabase load_psf_database(const std::string& root_path) {
     std::cerr << "[WARN] PSF file vecchio: branch n_hits_filtered_count assente. "
                  "Rigenera il PSF con psf_extractor corrente.\n";
   }
+  char l1_id_buf[256] = {}, l2_id_buf[256] = {};
+  bool has_lens_ids = (tree->GetBranch("l1_id") != nullptr);
+  if (has_lens_ids) {
+    tree->SetBranchAddress("l1_id", l1_id_buf);
+    tree->SetBranchAddress("l2_id", l2_id_buf);
+  } else {
+    std::cerr << "[WARN] PSF file vecchio: branch l1_id/l2_id assenti. "
+                 "Rigenera il PSF con psf_extractor corrente.\n";
+  }
 
   PSFDatabase db;
   for (Long64_t i = 0; i < tree->GetEntries(); ++i) {
     tree->GetEntry(i);
-    LensConfig cfg{x1, x2};
+    LensConfig cfg{x1, x2,
+                   has_lens_ids ? l1_id_buf : "",
+                   has_lens_ids ? l2_id_buf : ""};
     db[cfg].push_back(
         {x_source_d, y_source_d, mean_y, mean_z, cov_yy, cov_yz, cov_zz, (bool)on_detector,
          n_hits_filtered,

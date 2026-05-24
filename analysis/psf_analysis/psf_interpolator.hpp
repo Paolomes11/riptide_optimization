@@ -72,9 +72,10 @@ struct TracePoint {
   double n_hits_count;
 };
 
-// Chiave di configurazione lenti (x1, x2)
+// Chiave di configurazione lenti (x1, x2); l1_id/l2_id sono informativi, non usati nel confronto
 struct LensConfig {
   double x1, x2;
+  std::string l1_id, l2_id;
   bool operator<(const LensConfig& o) const {
     const double eps = 1e-4;
     if (std::abs(x1 - o.x1) > eps)

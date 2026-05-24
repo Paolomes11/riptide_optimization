@@ -188,14 +188,14 @@ riptide_optimization/
 
 Il sistema simulato è composto da tre elementi posizionati lungo l'asse X, all'interno di un volume mondo cubico di 1000×1000×1000 mm³ riempito d'aria:
 ```
-Sorgente fotoni  →  [Lente 75mm]  →  [Lente 60mm]  →  [Fotocatodo GaAsP 16×16mm]
+Sorgente fotoni  →  [Lente L1]  →  [Lente L2]  →  [Fotocatodo GaAsP 16×16mm]
       (GPS)           (UVFS)           (UVFS)              (sensore)
          x=0        x ≈ 99–300mm    x ≈ 130–340mm           variabile
 ```
 
-**Lente 75 mm** (`lens75`): ellissoide in UV Fused Silica (UVFS), raggio 38.6 mm, spessore 12.5 mm. Sostituibile con qualsiasi lente Thorlabs tramite `--lens75-id`.
+**Lente L1** (`l1`): ellissoide in UV Fused Silica (UVFS), raggio 38.6 mm, spessore 12.5 mm. Sostituibile con qualsiasi lente Thorlabs tramite `--l1-id`.
 
-**Lente 60 mm** (`lens60`): ellissoide UVFS, raggio 30.9 mm, spessore 16.3 mm. Sostituibile tramite `--lens60-id`.
+**Lente L2** (`l2`): ellissoide UVFS, raggio 30.9 mm, spessore 16.3 mm. Sostituibile tramite `--l2-id`.
 
 **Fotocatodo GaAsP**: lastra quadrata 16×16×0.01 mm, indice di rifrazione 3.5–3.8 nel range 2–4 eV, lunghezza di assorbimento ~1 µm.
 
@@ -274,8 +274,8 @@ build/analysis/exp3/Release/test_exp3_homography
 | `-b`, `--batch` | flag | Modalità batch |
 | `-o`, `--optimize` | flag | Avvia la scansione |
 | `--all-lenses` | flag | Scansione di tutte le combinazioni Thorlabs |
-| `--lens75-id` | string | ID lente Thorlabs per L1 |
-| `--lens60-id` | string | ID lente Thorlabs per L2 |
+| `--l1-id` | string | ID lente Thorlabs per L1 |
+| `--l2-id` | string | ID lente Thorlabs per L2 |
 | `--output` | path | File ROOT di output (default: `output/events.root`) |
 | `--config` | path | File `config.json` (default: `config/config.json`) |
 | `--ssd` | flag | Output su SSD esterna con timestamp |
@@ -304,8 +304,8 @@ build/analysis/exp3/Release/test_exp3_homography
 | `-v`, `--visualize` | flag | Visualizzazione interattiva |
 | `-b`, `--batch` | flag | Modalità batch |
 | `-l`, `--lens-sim` | flag | Avvia il beam scan |
-| `--lens75-id` | string | ID lente Thorlabs per L1 |
-| `--lens60-id` | string | ID lente Thorlabs per L2 |
+| `--l1-id` | string | ID lente Thorlabs per L1 |
+| `--l2-id` | string | ID lente Thorlabs per L2 |
 | `--output` | path | File ROOT (default: `output/lens_simulation/lens.root`) |
 | `--config` | path | File `config.json` |
 | `--focus-tsv` | path | TSV da `dof_map` con colonne `x1,x2,x_focus`: sposta il detector al piano di fuoco ottimale per ogni (x1,x2), purché `x_focus ≥ x2 + lens_det_gap` |
@@ -336,8 +336,8 @@ build/analysis/exp3/Release/test_exp3_homography
 | `-b`, `--batch` | flag | Modalità batch |
 | `-d`, `--dof` | flag | Avvia la scansione DoF |
 | `--all-lenses` | flag | Scansione tutte le combinazioni Thorlabs |
-| `--lens75-id` | string | ID lente Thorlabs per L1 |
-| `--lens60-id` | string | ID lente Thorlabs per L2 |
+| `--l1-id` | string | ID lente Thorlabs per L1 |
+| `--l2-id` | string | ID lente Thorlabs per L2 |
 | `--output` | path | File ROOT (default: `output/dof_simulation/focal.root`) |
 | `--config` | path | File `config.json` |
 | `--ssd` | flag | Output su SSD con timestamp |
@@ -356,7 +356,7 @@ build/analysis/exp3/Release/test_exp3_homography
 ```bash
 ./build/Release/psf_dof_scan_main -g geometry/dof_geometry.gdml -b -p
 ./build/Release/psf_dof_scan_main -g geometry/dof_geometry.gdml -b -p \
-    --lens75-id LB4592 --lens60-id LB4553
+    --l1-id LB4592 --l2-id LB4553
 ```
 
 | Flag | Tipo | Descrizione |
@@ -366,8 +366,8 @@ build/analysis/exp3/Release/test_exp3_homography
 | `-v`, `--visualize` | flag | Visualizzazione |
 | `-b`, `--batch` | flag | Batch mode |
 | `-p`, `--psf-dof` | flag | Avvia la modalità PSF+DoF |
-| `--lens75-id` | string | ID lente L1 |
-| `--lens60-id` | string | ID lente L2 |
+| `--l1-id` | string | ID lente L1 |
+| `--l2-id` | string | ID lente L2 |
 | `--output` | path | File ROOT (default: `output/psf_dof_simulation/psf_dof.root`) |
 | `--config` | path | File `config.json` |
 | `--ssd` | flag | Output su SSD |
@@ -393,7 +393,7 @@ Il tool legge le specifiche da file TSV nel formato Thorlabs:
 - **Biconvesse** (`thorlabs_biconvex.tsv`): `Item # | Diameter | Focal Length | Radius of Curvature | Center Thickness | Edge Thickness | Back Focal Length`. Il tipo è rilevato automaticamente.
 - **Plano-convesse** (`thorlabs_planoconvex.tsv`): schema identico con colonna aggiuntiva `Rotation_deg` [deg]. `0` = lato curvo verso la sorgente, `180` = lato piano verso la sorgente. La rotazione è propagata automaticamente al `G4VPhysicalVolume`.
 
-Le simulazioni `optimization` e `lens_simulation` accettano ID da entrambi i cataloghi tramite `--lens75-id` e `--lens60-id`; la geometria (solido + rotazione + offset centro geometrico) è impostata automaticamente in base al tipo rilevato.
+Le simulazioni `optimization` e `lens_simulation` accettano ID da entrambi i cataloghi tramite `--l1-id` e `--l2-id`; la geometria (solido + rotazione + offset centro geometrico) è impostata automaticamente in base al tipo rilevato.
 
 ---
 
@@ -479,7 +479,7 @@ Di default l'ottimizzatore genera **9 varianti** (3 geometrie × 3 valori di mar
 
 **Fuoco fisso (default):** il rivelatore rimane a `x_det` per tutte le configurazioni. Adatto a sistemi in cui la distanza detector–ottica è fissa.
 
-**Fuoco mobile (`--mobile-focus`):** il rivelatore si sposta sul piano focale di ogni coppia (x₁, x₂). Richiede `--all-lenses` con `--lens75-id`/`--lens60-id` come lenti di riferimento per la stima thin-lens iniziale. La pipeline di screening è:
+**Fuoco mobile (`--mobile-focus`):** il rivelatore si sposta sul piano focale di ogni coppia (x₁, x₂). Richiede `--all-lenses` con `--l1-id`/`--l2-id` come lenti di riferimento per la stima thin-lens iniziale. La pipeline di screening è:
 
 1. Stima thin-lens del piano focale per ogni (x₁, x₂) → `thin_focus.tsv`
 2. `opt --all-lenses` con `thin_focus.tsv` → classifica preliminare
@@ -530,7 +530,7 @@ python3 scripts/autonomous_optimizer.py [opzioni]
 | `--top-k N` | 3 | Varianti promosse a fase 2 |
 | `--geom` | tutte | Filtra geometria: `nominal`/`coarse`/`extended` |
 | `--margin` | tutti | Filtra margine: `0.5`/`1.0`/`2.0` |
-| `--lens75-id`, `--lens60-id` | — | ID lenti specifici |
+| `--l1-id`, `--l2-id` | — | ID lenti specifici |
 | `--all-lenses` | off | Fase 0: screening su tutte le coppie del catalogo |
 | `--lens-subset` | — | IDs comma-separated per limitare lo screening |
 | `--top-n-lenses` | 3 | Top-N coppie selezionate dallo screening |
@@ -738,7 +738,7 @@ Seleziona la configurazione ottica ottimale aggregando i risultati di tutti gli 
 | `--w-Q` | `0.40` | Peso qualità in Mtot |
 | `--w-dof` | `0.15` | Peso DoF in Mtot |
 | `--w-M` | `0.10` | Peso magnificazione in Mtot |
-| `--lens75-id`, `--lens60-id` | `""` | Filtra per ID lente |
+| `--l1-id`, `--l2-id` | `""` | Filtra per ID lente |
 
 **Output PNG**: scatter plot η/η_max vs Q_max/Q, punti colorati per |M−m\_target|, dimensione ∝ DoF. Fronte di Pareto con bordo rosso; configurazione raccomandata con stella rossa. Tabella top-5 nel pad inferiore.
 
@@ -1348,8 +1348,8 @@ I file ROOT usano **vettori di hit** per massimizzare l'efficienza di archiviazi
 TTree "Configurations"
   config_id  Int_t
   x1, x2     Double_t [mm]
-  lens75_id  String
-  lens60_id  String
+  l1_id  String
+  l2_id  String
 
 TTree "Runs"
   run_id     Int_t
@@ -1366,8 +1366,8 @@ TTree "Runs"
 TTree "Configurations"
   config_id  Int_t
   x1, x2     Double_t
-  lens75_id  String
-  lens60_id  String
+  l1_id  String
+  l2_id  String
 
 TTree "Efficiency"
   config_id  Int_t
@@ -1395,8 +1395,8 @@ TTree "FocalConfigurations"
   config_id   Int_t
   x1, x2      Double_t [mm]
   x_virtual   Double_t [mm]
-  lens75_id   String
-  lens60_id   String
+  l1_id   String
+  l2_id   String
 
 TTree "FocalRays"
   config_id      Int_t

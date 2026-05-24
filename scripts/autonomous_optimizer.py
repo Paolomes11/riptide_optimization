@@ -375,7 +375,7 @@ def apply_fix(failure_id: str, dry_run: bool = False) -> bool:
 
 def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
                         sweep_dir: Path, ssd_mount: Path, jobs: int,
-                        lens75_id: str, lens60_id: str,
+                        l1_id: str, l2_id: str,
                         dry_run: bool,
                         all_lenses: bool = False,
                         lens_subset: str = "",
@@ -402,10 +402,10 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
     ]
     if not use_local:
         cmd += ["--ssd-mount", str(ssd_mount)]
-    if lens75_id:
-        cmd += ["--lens75-id", lens75_id]
-    if lens60_id:
-        cmd += ["--lens60-id", lens60_id]
+    if l1_id:
+        cmd += ["--l1-id", l1_id]
+    if l2_id:
+        cmd += ["--l2-id", l2_id]
     if all_lenses:
         cmd.append("--all-lenses")
     if lens_subset:
@@ -448,7 +448,7 @@ def run_simulation_step(mode: str, sweep_cfg_path: Path, tag: str,
 
 
 def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
-                 ssd_mount: Path, jobs: int, lens75_id: str, lens60_id: str,
+                 ssd_mount: Path, jobs: int, l1_id: str, l2_id: str,
                  ap: dict, dry_run: bool,
                  prebuilt_events: Path | None = None,
                  use_local: bool = False,
@@ -468,7 +468,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         logging.info(f"[opt] Uso events pre-costruito: {events_root}")
     else:
         events_root = run_simulation_step("opt", sweep_cfg, tag, sweep_dir,
-                                          ssd_mount, jobs, lens75_id, lens60_id, dry_run,
+                                          ssd_mount, jobs, l1_id, l2_id, dry_run,
                                           use_local=use_local)
         if events_root is None:
             return None
@@ -490,7 +490,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
 
     # Step 2: lens
     lens_root = run_simulation_step("lens", sweep_cfg, tag, sweep_dir,
-                                    ssd_mount, jobs, lens75_id, lens60_id, dry_run,
+                                    ssd_mount, jobs, l1_id, l2_id, dry_run,
                                     use_local=use_local, focus_tsv=focus_tsv)
     if lens_root is None:
         return None
@@ -557,7 +557,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
             local_dof.symlink_to(prebuilt_dof_tsv)
     else:
         focal_root = run_simulation_step("dof", sweep_cfg, tag, sweep_dir,
-                                         ssd_mount, jobs, lens75_id, lens60_id, dry_run,
+                                         ssd_mount, jobs, l1_id, l2_id, dry_run,
                                          use_local=use_local)
         if focal_root is None:
             return None
@@ -582,7 +582,7 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
 
     # Step 8: psf-dof
     psf_dof_root = run_simulation_step("psf-dof", sweep_cfg, tag, sweep_dir,
-                                       ssd_mount, jobs, lens75_id, lens60_id, dry_run,
+                                       ssd_mount, jobs, l1_id, l2_id, dry_run,
                                        use_local=use_local)
     if psf_dof_root is None:
         return None
@@ -621,10 +621,10 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         "--w-M", str(pp["w_M"]),
         "--output", str(sweep_dir / "plots" / "pareto_plot.png"),
     ]
-    if lens75_id:
-        cmd += ["--lens75-id", lens75_id]
-    if lens60_id:
-        cmd += ["--lens60-id", lens60_id]
+    if l1_id:
+        cmd += ["--l1-id", l1_id]
+    if l2_id:
+        cmd += ["--l2-id", l2_id]
     ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
     if not ok:
         return None
@@ -683,7 +683,7 @@ def _load_pareto_rows(tsv: Path) -> list[dict]:
 
 def generate_report(fast_results: dict, full_results: dict,
                     sweep_dir: Path, timestamp: str,
-                    lens75_id: str, lens60_id: str,
+                    l1_id: str, l2_id: str,
                     t_start: float) -> Path:
     elapsed = time.time() - t_start
     h, rem = divmod(int(elapsed), 3600)
@@ -721,7 +721,7 @@ def generate_report(fast_results: dict, full_results: dict,
         "",
         f"Generated: {datetime.datetime.now().isoformat(timespec='seconds')}  "
         f"|  Duration: {duration}  |  Variants: {n_done}/9",
-        f"Lenti: L1={lens75_id or 'N/A'}  L2={lens60_id or 'N/A'}",
+        f"Lenti: L1={l1_id or 'N/A'}  L2={l2_id or 'N/A'}",
         "",
         "## Sweep Matrix",
         "",
@@ -746,7 +746,7 @@ def generate_report(fast_results: dict, full_results: dict,
         "",
         "## Top-10 Pareto Configurations (ranked by Mtot)",
         "",
-        "| Rank | x1 | x2 | η | Q | M_abs_err | EE80_mean | DoF | Mtot | Variante |",
+        "| Rank | x1 | x2 | η | Q | M_abs_err | EE80 | DoF | Mtot | Variante |",
         "|------|----|----|---|---|-----------|-----------|-----|------|----------|",
     ]
     for rank, (tag, row) in enumerate(top10, 1):
@@ -755,8 +755,8 @@ def generate_report(fast_results: dict, full_results: dict,
         eta  = row.get("eta",      "—")
         Q    = row.get("Q",        "—")
         merr = row.get("M_abs_err","—")
-        ee80 = row.get("EE80_mean","—")
-        dof  = row.get("dof",      "—")
+        ee80 = row.get("EE80", "—")
+        dof  = row.get("DoF",  "—")
         mtot = row.get("Mtot",     "—")
         lines.append(f"| {rank} | {x1} | {x2} | {eta} | {Q} | {merr} | {ee80} | {dof} | {mtot} | {tag} |")
 
@@ -767,7 +767,7 @@ def generate_report(fast_results: dict, full_results: dict,
         "M ≈ (x_det − x2) / x1 (regime telescopio).  ",
         "η = efficienza di raccolta fotoni.  ",
         "M_abs_err = errore assoluto di magnificazione rispetto al target.  ",
-        "EE80_mean = raggio del cerchio che contiene l'80% dell'energia (mm).  ",
+        "EE80 = raggio del cerchio che contiene l'80% dell'energia (mm).  ",
         "DoF = profondità di campo (mm).  ",
         "",
         "Le configurazioni Pareto-ottimali massimizzano Mtot = w_eta·η̃ + w_Q·Q̃ + w_dof·DoF̃ + w_M·M̃.",
@@ -950,7 +950,7 @@ def filter_events_root(events_root: Path, selected_pairs: list[tuple[str, str]],
         return True
 
     conds = " || ".join(
-        f'(strcmp(lens75_id,"{l75}")==0 && strcmp(lens60_id,"{l60}")==0)'
+        f'(strcmp(l1_id,"{l75}")==0 && strcmp(l2_id,"{l60}")==0)'
         for l75, l60 in selected_pairs
     )
 
@@ -1019,8 +1019,8 @@ def make_tag(geom: dict, margin: float, phase: str) -> str:
     return f"{geom['name']}_m{margin}_{phase}"
 
 
-def make_tag_lens(geom: dict, margin: float, lens75: str, lens60: str, phase: str) -> str:
-    return f"{geom['name']}_m{margin}_{lens75}_{lens60}_{phase}"
+def make_tag_lens(geom: dict, margin: float, l1: str, l2: str, phase: str) -> str:
+    return f"{geom['name']}_m{margin}_{l1}_{l2}_{phase}"
 
 
 def main() -> int:
@@ -1031,10 +1031,10 @@ def main() -> int:
             Esempi:
               # Dry-run singola variante
               python3 scripts/autonomous_optimizer.py --fast --geom nominal --margin 1.0 \\
-                  --lens75-id LA4464 --lens60-id LA4464R --dry-run
+                  --l1-id LA4464 --l2-id LA4464R --dry-run
 
               # Run completo
-              python3 scripts/autonomous_optimizer.py --lens75-id LA4464 --lens60-id LA4464R
+              python3 scripts/autonomous_optimizer.py --l1-id LA4464 --l2-id LA4464R
         """),
     )
     parser.add_argument("--fast",         action="store_true",
@@ -1046,9 +1046,9 @@ def main() -> int:
                         help="Esegui solo la geometria specificata (nominal|coarse|extended)")
     parser.add_argument("--margin",       type=float, default=None,
                         help="Esegui solo il margin specificato (0.5|1.0|2.0)")
-    parser.add_argument("--lens75-id",    type=str,   default="",
+    parser.add_argument("--l1-id",    type=str,   default="",
                         help="ID lente L1 Thorlabs (es. LA4464)")
-    parser.add_argument("--lens60-id",    type=str,   default="",
+    parser.add_argument("--l2-id",    type=str,   default="",
                         help="ID lente L2 Thorlabs (es. LA4464R)")
     parser.add_argument("--local",         action="store_true",
                         help="Usa modalità local di run.sh (output in output/sweep/, nessuna SSD)")
@@ -1076,6 +1076,8 @@ def main() -> int:
                         help="Fuoco mobile: thin-lens screening + DOF accurato per posizione detector")
     parser.add_argument("--refine-photons",    type=int, default=0,
                         help="n_photons per il re-run opt con fuoco accurato (0=usa config.json)")
+    parser.add_argument("--dx",               type=float, default=None,
+                        help="Passo griglia x1/x2 in mm (default: valore da config.json)")
     args = parser.parse_args()
 
     timestamp  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1096,6 +1098,8 @@ def main() -> int:
                  f"jobs={args.jobs}  max_hours={args.max_hours}")
 
     base_cfg = load_base_config()
+    if args.dx is not None:
+        base_cfg["dx"] = args.dx
     ap       = load_analysis_params(args.analysis_params)
 
     # Pre-flight
@@ -1220,26 +1224,26 @@ def main() -> int:
             prebuilt_events = events_top
             lens_pairs = top_pairs
     else:
-        lens_pairs = [(args.lens75_id, args.lens60_id)]
+        lens_pairs = [(args.l1_id, args.l2_id)]
 
     # ── FASE 1: fast su tutte le varianti, per ogni coppia ───────────────────
     fast_tag_lens: dict[str, tuple[str, str]] = {}
-    for lens75, lens60 in lens_pairs:
+    for l1, l2 in lens_pairs:
         for geom, margin in variants:
             if time.time() - t_start > max_sec:
                 logging.warning(f"Budget tempo ({args.max_hours}h) esaurito — interruzione fase 1.")
                 break
 
-            tag = (make_tag_lens(geom, margin, lens75, lens60, "fast")
+            tag = (make_tag_lens(geom, margin, l1, l2, "fast")
                    if args.all_lenses else make_tag(geom, margin, "fast"))
-            fast_tag_lens[tag] = (lens75, lens60)
+            fast_tag_lens[tag] = (l1, l2)
             sweep_sub = sweep_dir / tag
             logging.info(f"--- Fase 1: {tag} ---")
 
             sweep_cfg = generate_sweep_config(base_cfg, geom, margin, fast=True, tag=tag,
                                                mobile_focus=args.mobile_focus)
             out = run_pipeline(tag, sweep_cfg, sweep_sub, ssd_mount,
-                               args.jobs, lens75, lens60, ap, args.dry_run,
+                               args.jobs, l1, l2, ap, args.dry_run,
                                prebuilt_events=prebuilt_events, use_local=use_local,
                                focus_tsv=focus_accurate_tsv,
                                prebuilt_dof_tsv=prebuilt_dof_tsv)
@@ -1265,9 +1269,9 @@ def main() -> int:
                 logging.error(f"Impossibile decodificare tag: {fast_tag}")
                 continue
 
-            tag_lens75, tag_lens60 = fast_tag_lens.get(
-                fast_tag, (args.lens75_id, args.lens60_id))
-            full_tag = (make_tag_lens(geom, margin, tag_lens75, tag_lens60, "full")
+            tag_l1, tag_l2 = fast_tag_lens.get(
+                fast_tag, (args.l1_id, args.l2_id))
+            full_tag = (make_tag_lens(geom, margin, tag_l1, tag_l2, "full")
                         if args.all_lenses else make_tag(geom, margin, "full"))
 
             sweep_sub = sweep_dir / full_tag
@@ -1280,7 +1284,7 @@ def main() -> int:
             success = False
             while retries < 3 and not success:
                 out = run_pipeline(full_tag, sweep_cfg, sweep_sub, ssd_mount,
-                                   args.jobs, tag_lens75, tag_lens60, ap, args.dry_run,
+                                   args.jobs, tag_l1, tag_l2, ap, args.dry_run,
                                    prebuilt_events=prebuilt_events, use_local=use_local,
                                    focus_tsv=focus_accurate_tsv,
                                    prebuilt_dof_tsv=prebuilt_dof_tsv)
@@ -1322,7 +1326,7 @@ def main() -> int:
         rep_l75 = "multi_lens"
         rep_l60 = f"{len(lens_pairs)}_pairs"
     else:
-        rep_l75, rep_l60 = args.lens75_id, args.lens60_id
+        rep_l75, rep_l60 = args.l1_id, args.l2_id
     report = generate_report(fast_results, full_results, sweep_dir, timestamp,
                              rep_l75, rep_l60, t_start)
 

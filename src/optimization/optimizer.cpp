@@ -37,7 +37,7 @@ namespace riptide {
 
 void run_optimization(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                       const std::string& root_output_file, const std::filesystem::path& config_file,
-                      bool all_lenses, const std::string& lens75_id, const std::string& lens60_id,
+                      bool all_lenses, const std::string& l1_id, const std::string& l2_id,
                       const std::string& focus_tsv, const std::string& lens_subset) {
   using json = nlohmann::json;
 
@@ -92,12 +92,12 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
       }
     }
     spdlog::warn("Optimization of ALL lens combinations enabled ({} combinations)", models.size());
-  } else if (!lens75_id.empty() && !lens60_id.empty()) {
-    models.push_back({lens75_id, lens60_id});
+  } else if (!l1_id.empty() && !l2_id.empty()) {
+    models.push_back({l1_id, l2_id});
   } else {
     // Usa i modelli correnti dal detector se disponibili, altrimenti default
-    std::string current_id75 = det->GetLens75Id();
-    std::string current_id60 = det->GetLens60Id();
+    std::string current_id75 = det->GetL1Id();
+    std::string current_id60 = det->GetL2Id();
     models.push_back({current_id75, current_id60});
   }
 
@@ -115,8 +115,8 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
   analysisManager->CreateNtupleIColumn("config_id");
   analysisManager->CreateNtupleDColumn("x1");
   analysisManager->CreateNtupleDColumn("x2");
-  analysisManager->CreateNtupleSColumn("lens75_id");
-  analysisManager->CreateNtupleSColumn("lens60_id");
+  analysisManager->CreateNtupleSColumn("l1_id");
+  analysisManager->CreateNtupleSColumn("l2_id");
   analysisManager->CreateNtupleDColumn("x_det");      // posizione detector per questa config
   analysisManager->CreateNtupleIColumn("focus_valid"); // 1=valida, 0=fuoco invalido
   analysisManager->FinishNtuple(0);
@@ -193,8 +193,8 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
     spdlog::info("Optimizing lens pair: {} & {}", model.id75, model.id60);
     det->SetLenses(model.id75, model.id60);
 
-    double h1 = det->GetLens75Thickness();
-    double h2 = det->GetLens60Thickness();
+    double h1 = det->GetL1Thickness();
+    double h2 = det->GetL2Thickness();
 
     std::vector<std::pair<double, double>> pairs;
     if (config.contains("pairs")) {
@@ -278,7 +278,7 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
               G4ThreeVector(-st / 2, sh, sw / 2), G4ThreeVector(st / 2, sh, sw / 2)};
           G4ThreeVector axis;
           double maxTheta;
-          ImportanceSamplingHelper::CalculateGlobalCone(corners, det->GetLens75Params(), axis,
+          ImportanceSamplingHelper::CalculateGlobalCone(corners, det->GetL1Params(), axis,
                                                         maxTheta);
 
           double originalOmega = 2.0 * M_PI;

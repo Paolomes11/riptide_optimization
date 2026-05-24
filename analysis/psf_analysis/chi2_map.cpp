@@ -142,7 +142,7 @@ static void apply_style() {
   gStyle->SetLabelSize(0.038, "XYZ");
   gStyle->SetTitleSize(0.044, "XYZ");
   gStyle->SetTitleSize(0.046, "");
-  gStyle->SetTitleOffset(1.55, "Y");
+  gStyle->SetTitleOffset(1.50, "Y");
   gStyle->SetTitleOffset(1.20, "X");
   gStyle->SetTitleOffset(1.40, "Z");
   gStyle->SetTickLength(0.018, "X");
@@ -378,7 +378,7 @@ static PadLayout make_canvas(bool log_z) {
   pl.pad_cb   = new TPad("pad_cb", "", 0.88, 0.12, 0.96, 1.00);
   pl.pad_info = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.12);
 
-  pl.pad_plot->SetLeftMargin(0.10);
+  pl.pad_plot->SetLeftMargin(0.16);
   pl.pad_plot->SetRightMargin(0.015);
   pl.pad_plot->SetTopMargin(0.11);
   pl.pad_plot->SetBottomMargin(0.13);

@@ -39,9 +39,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <map>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // Struttura dati per una singola hit
@@ -200,15 +202,23 @@ int main(int argc, char** argv) {
   // Leggi Configurations
   int cfg_id;
   double cfg_x1, cfg_x2;
+  char cfg_l1_id[256] = {}, cfg_l2_id[256] = {};
   tConfig->SetBranchAddress("config_id", &cfg_id);
   tConfig->SetBranchAddress("x1", &cfg_x1);
   tConfig->SetBranchAddress("x2", &cfg_x2);
+  bool has_cfg_ids = (tConfig->GetBranch("l1_id") && tConfig->GetBranch("l2_id"));
+  if (has_cfg_ids) {
+    tConfig->SetBranchAddress("l1_id", cfg_l1_id);
+    tConfig->SetBranchAddress("l2_id", cfg_l2_id);
+  }
 
-  // Mappa config_id -> (x1, x2)
-  std::map<int, std::pair<double, double>> config_map;
+  // Mappa config_id -> (x1, x2, l1_id, l2_id)
+  std::map<int, std::tuple<double, double, std::string, std::string>> config_map;
   for (Long64_t i = 0; i < tConfig->GetEntries(); ++i) {
     tConfig->GetEntry(i);
-    config_map[cfg_id] = {cfg_x1, cfg_x2};
+    config_map[cfg_id] = {cfg_x1, cfg_x2,
+                          has_cfg_ids ? cfg_l1_id : "",
+                          has_cfg_ids ? cfg_l2_id : ""};
   }
   std::cout << "Configurazioni lette: " << config_map.size() << "\n";
 
@@ -245,10 +255,13 @@ int main(int argc, char** argv) {
   double out_n_hits_raw, out_n_hits_filtered;
   int out_n_hits_raw_count, out_n_hits_filtered_count;
   bool out_on_detector;
+  char out_l1_id[256] = {}, out_l2_id[256] = {};
 
   tPSF->Branch("config_id", &out_config_id, "config_id/I");
   tPSF->Branch("x1", &out_x1, "x1/D");
   tPSF->Branch("x2", &out_x2, "x2/D");
+  tPSF->Branch("l1_id", out_l1_id, "l1_id/C");
+  tPSF->Branch("l2_id", out_l2_id, "l2_id/C");
   tPSF->Branch("x_source", &out_x_source, "x_source/D");
   tPSF->Branch("y_source", &out_y_source, "y_source/D");
   tPSF->Branch("mean_y", &out_mean_y, "mean_y/D");
@@ -288,11 +301,14 @@ int main(int argc, char** argv) {
       }
     }
 
+    strncpy(out_l1_id, std::get<2>(it->second).c_str(), 255); out_l1_id[255] = '\0';
+    strncpy(out_l2_id, std::get<3>(it->second).c_str(), 255); out_l2_id[255] = '\0';
+
     // Caso run con zero hit
     if (hits_buf.empty()) {
       out_config_id             = run_cfg_id;
-      out_x1                    = it->second.first;
-      out_x2                    = it->second.second;
+      out_x1                    = std::get<0>(it->second);
+      out_x2                    = std::get<1>(it->second);
       out_x_source              = x_source_r;
       out_y_source              = y_source_r;
       out_mean_y                = 0.0;
@@ -318,8 +334,8 @@ int main(int argc, char** argv) {
     if (!ok) {
       // Meno di 3 hit dopo il filtro: salva con on_detector = false
       out_config_id             = run_cfg_id;
-      out_x1                    = it->second.first;
-      out_x2                    = it->second.second;
+      out_x1                    = std::get<0>(it->second);
+      out_x2                    = std::get<1>(it->second);
       out_x_source              = x_source_r;
       out_y_source              = y_source_r;
       out_mean_y                = 0.0;
@@ -341,8 +357,8 @@ int main(int argc, char** argv) {
     bool on_det = (res.n_hits_filtered_count >= min_hits);
 
     out_config_id             = run_cfg_id;
-    out_x1                    = it->second.first;
-    out_x2                    = it->second.second;
+    out_x1                    = std::get<0>(it->second);
+    out_x2                    = std::get<1>(it->second);
     out_x_source              = x_source_r;
     out_y_source              = y_source_r;
     out_mean_y                = res.mean_y;

@@ -209,7 +209,7 @@ static void apply_style() {
   gStyle->SetLabelSize(0.038, "XYZ");
   gStyle->SetTitleSize(0.044, "XYZ");
   gStyle->SetTitleSize(0.046, "");
-  gStyle->SetTitleOffset(1.55, "Y");
+  gStyle->SetTitleOffset(1.50, "Y");
   gStyle->SetTitleOffset(1.20, "X");
   gStyle->SetTitleOffset(1.40, "Z");
   gStyle->SetTickLength(0.018, "X");
@@ -260,7 +260,7 @@ static PadLayout make_canvas(bool log_z) {
   pl.pad_cb   = new TPad("pad_cb", "", 0.88, 0.12, 0.96, 1.00);
   pl.pad_info = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.12);
 
-  pl.pad_plot->SetLeftMargin(0.10);
+  pl.pad_plot->SetLeftMargin(0.16);
   pl.pad_plot->SetRightMargin(0.015);
   pl.pad_plot->SetTopMargin(0.11);
   pl.pad_plot->SetBottomMargin(0.13);
@@ -363,7 +363,7 @@ static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, int 
   info.SetTextFont(42);
 
   const double col1 = 0.03, col2 = 0.52;
-  const double hdr = 0.82, row1 = 0.52, row2 = 0.18;
+  const double hdr = 0.82, row1 = 0.60, row_mid = 0.38, row2 = 0.16;
 
   info.SetTextSize(0.13);
   info.SetTextColor(kGray + 2);
@@ -374,7 +374,7 @@ static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, int 
                   + std::to_string(total_cfgs) + " config)")
                      .c_str());
 
-  info.SetTextSize(0.20);
+  info.SetTextSize(0.18);
   info.SetTextColor(kBlack);
 
   info.DrawLatex(col1, row1,
@@ -401,15 +401,16 @@ static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, int 
     std::ostringstream ss_rho;
     ss_rho << std::fixed << std::setprecision(3) << best_rho;
 
-    std::string line;
+    // Riga superiore: metrica e Q_raw; riga inferiore: Q_target e rho
+    std::string line_top, line_bot;
     if (dist_to_target) {
-      line = "#bf{|Q-target|_{min}} = " + ss_metric.str() + "   Q = " + ss_qraw.str()
-           + "   Q_{target} = " + ss_tgt.str() + "   #hat{#rho} = " + ss_rho.str();
+      line_top = "#bf{|Q-Q_{target}|_{min}} = " + ss_metric.str() + "   Q_{raw} = " + ss_qraw.str();
     } else {
-      line = "#bf{Q_{min}} = " + ss_qraw.str() + "   Q_{target} = " + ss_tgt.str()
-           + "   #hat{#rho} = " + ss_rho.str();
+      line_top = "#bf{Q_{min}} = " + ss_qraw.str();
     }
-    info.DrawLatex(col2, row2, line.c_str());
+    line_bot = "Q_{target} = " + ss_tgt.str() + "   #hat{#rho} = " + ss_rho.str();
+    info.DrawLatex(col2, row_mid, line_top.c_str());
+    info.DrawLatex(col2, row2,   line_bot.c_str());
   }
 }
 
@@ -527,6 +528,15 @@ int main(int argc, char** argv) {
   if (db.empty()) {
     std::cerr << "Errore: database vuoto\n";
     return 1;
+  }
+
+  std::string l1_label = "L1", l2_label = "L2";
+  {
+    const auto& key = db.begin()->first;
+    if (!key.l1_id.empty())
+      l1_label = "Lente " + key.l1_id;
+    if (!key.l2_id.empty())
+      l2_label = "Lente " + key.l2_id;
   }
 
   // Calcola i limiti x1, x2 direttamente dal database
@@ -666,12 +676,12 @@ int main(int argc, char** argv) {
         h_inv.SetBinContent(bx, by, 1.0);
     }
 
-    h_cov.GetXaxis()->SetTitle("x_{1}  [mm]  (lente 75 mm)");
-    h_cov.GetYaxis()->SetTitle("x_{2}  [mm]  (lente 60 mm)");
+    h_cov.GetXaxis()->SetTitle(("x_{1}  [mm]  (" + l1_label + ")").c_str());
+    h_cov.GetYaxis()->SetTitle(("x_{2}  [mm]  (" + l2_label + ")").c_str());
     h_cov.GetXaxis()->CenterTitle(true);
     h_cov.GetYaxis()->CenterTitle(true);
     h_cov.GetXaxis()->SetTitleOffset(1.20);
-    h_cov.GetYaxis()->SetTitleOffset(1.55);
+    h_cov.GetYaxis()->SetTitleOffset(1.50);
     h_cov.GetXaxis()->SetNdivisions(506);
     h_cov.GetYaxis()->SetNdivisions(505);
 
@@ -887,12 +897,12 @@ int main(int argc, char** argv) {
       h_inv.SetBinContent(bx, by, 1.0);
   }
 
-  h_Q.GetXaxis()->SetTitle("x_{1}  [mm]  (lente 75 mm)");
-  h_Q.GetYaxis()->SetTitle("x_{2}  [mm]  (lente 60 mm)");
+  h_Q.GetXaxis()->SetTitle(("x_{1}  [mm]  (" + l1_label + ")").c_str());
+  h_Q.GetYaxis()->SetTitle(("x_{2}  [mm]  (" + l2_label + ")").c_str());
   h_Q.GetXaxis()->CenterTitle(true);
   h_Q.GetYaxis()->CenterTitle(true);
   h_Q.GetXaxis()->SetTitleOffset(1.20);
-  h_Q.GetYaxis()->SetTitleOffset(1.55);
+  h_Q.GetYaxis()->SetTitleOffset(1.50);
   h_Q.GetXaxis()->SetNdivisions(506);
   h_Q.GetYaxis()->SetNdivisions(505);
 

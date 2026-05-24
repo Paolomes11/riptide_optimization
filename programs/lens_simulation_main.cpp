@@ -43,8 +43,8 @@ int main(int argc, char** argv) {
   std::filesystem::path macro_vis   = "macros/vis.mac";             // macro grafica standard
   std::filesystem::path macro_run   = "macros/lens_simulation.mac"; // macro simulazione standard
   std::filesystem::path config_file = "config/config.json";
-  std::string lens75_id;
-  std::string lens60_id;
+  std::string l1_id;
+  std::string l2_id;
   bool        visualize = false;
   bool        batch     = false;
   bool        lens_sim  = false;
@@ -62,8 +62,8 @@ int main(int argc, char** argv) {
            | lyra::opt(macro_file, "macro")["-m"]["--macro"]("Path to macro file (default: none)")
            | lyra::opt(config_file, "config")["--config"](
                  "Path to config JSON file (default: config/config.json)")
-           | lyra::opt(lens75_id, "id")["--lens75-id"]("Thorlabs ID for lens 1 (75mm)")
-           | lyra::opt(lens60_id, "id")["--lens60-id"]("Thorlabs ID for lens 2 (60mm)")
+           | lyra::opt(l1_id, "id")["--l1-id"]("Thorlabs ID for lens 1 (75mm)")
+           | lyra::opt(l2_id, "id")["--l2-id"]("Thorlabs ID for lens 2 (60mm)")
            | lyra::opt(root_output_file, "output")["--output"]("Path to ROOT output file")
            | lyra::opt(ssd_mount, "ssd-mount")["--ssd-mount"](
                  "Mount point of external SSD (default: /mnt/external_ssd)")
@@ -114,9 +114,9 @@ int main(int argc, char** argv) {
     G4RunManager run_manager{};
 
     run_manager.GeometryHasBeenModified(true);
-    if (!lens75_id.empty() && !lens60_id.empty()) {
+    if (!l1_id.empty() && !l2_id.empty()) {
       run_manager.SetUserInitialization(new riptide::DetectorConstruction(
-          geometry_path.string(), lens75_id, lens60_id, 75.9, 164.4));
+          geometry_path.string(), l1_id, l2_id, 75.9, 164.4));
     } else {
       run_manager.SetUserInitialization(
           new riptide::DetectorConstruction(geometry_path.string(), 75.9, 164.4));
@@ -142,8 +142,8 @@ int main(int argc, char** argv) {
 
     if (lens_sim) {
       spdlog::info("Running lens simulation");
-      riptide::lens_scan(&run_manager, macro_file, root_output_file, config_file, lens75_id,
-                         lens60_id, focus_tsv);
+      riptide::lens_scan(&run_manager, macro_file, root_output_file, config_file, l1_id,
+                         l2_id, focus_tsv);
       return EXIT_SUCCESS;
     }
 

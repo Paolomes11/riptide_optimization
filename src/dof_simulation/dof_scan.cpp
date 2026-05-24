@@ -31,7 +31,7 @@ namespace riptide {
 
 void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                   const std::string& root_output_file, const std::filesystem::path& config_file,
-                  bool all_lenses, const std::string& lens75_id, const std::string& lens60_id,
+                  bool all_lenses, const std::string& l1_id, const std::string& l2_id,
                   const std::string& lens_subset) {
   using json = nlohmann::json;
 
@@ -105,10 +105,10 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
                    models.end());
       spdlog::info("Subset filter applicato: {} modelli rimasti", models.size());
     }
-  } else if (!lens75_id.empty() && !lens60_id.empty()) {
-    models.push_back({lens75_id, lens60_id});
+  } else if (!l1_id.empty() && !l2_id.empty()) {
+    models.push_back({l1_id, l2_id});
   } else {
-    models.push_back({det->GetLens75Id(), det->GetLens60Id()});
+    models.push_back({det->GetL1Id(), det->GetL2Id()});
   }
 
   auto analysisManager = G4AnalysisManager::Instance();
@@ -122,8 +122,8 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
   analysisManager->CreateNtupleDColumn("x1");
   analysisManager->CreateNtupleDColumn("x2");
   analysisManager->CreateNtupleDColumn("x_virtual");
-  analysisManager->CreateNtupleSColumn("lens75_id");
-  analysisManager->CreateNtupleSColumn("lens60_id");
+  analysisManager->CreateNtupleSColumn("l1_id");
+  analysisManager->CreateNtupleSColumn("l2_id");
   analysisManager->FinishNtuple(0);
 
   analysisManager->CreateNtuple("FocalRays", "Rays at virtual plane");
@@ -187,8 +187,8 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
     spdlog::info("DoF scan lens pair: {} & {}", model.id75, model.id60);
     det->SetLenses(model.id75, model.id60);
 
-    double h1 = det->GetLens75Thickness();
-    double h2 = det->GetLens60Thickness();
+    double h1 = det->GetL1Thickness();
+    double h2 = det->GetL2Thickness();
 
     std::vector<std::pair<double, double>> pairs;
     if (config.contains("pairs")) {
@@ -216,18 +216,18 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
       steppingAction->SetVirtualPlane(x_virtual);
 
       {
-        auto lens1      = det->GetLens75Params();
+        auto lens1      = det->GetL1Params();
         double x1_front = lens1.x - 0.5 * lens1.tc - 1e-3;
-        double r1_lens  = 0.5 * det->GetLens75Diameter();
-        double x2_front = det->GetLens60X() - 0.5 * det->GetLens60Thickness() - 1e-3;
-        double r2_lens  = 0.5 * det->GetLens60Diameter();
+        double r1_lens  = 0.5 * det->GetL1Diameter();
+        double x2_front = det->GetL2X() - 0.5 * det->GetL2Thickness() - 1e-3;
+        double r2_lens  = 0.5 * det->GetL2Diameter();
         steppingAction->SetLensAperturePlanes(x1_front, r1_lens, x2_front, r2_lens);
       }
 
       if (config.value("use_importance_sampling", false)) {
         G4ThreeVector axis;
         double maxTheta = 0.0;
-        ImportanceSamplingHelper::CalculateGlobalCone(source_points, det->GetLens75Params(), axis,
+        ImportanceSamplingHelper::CalculateGlobalCone(source_points, det->GetL1Params(), axis,
                                                       maxTheta);
         primaryGen->SetStaticCone(axis, maxTheta);
       }

@@ -157,7 +157,7 @@ void apply_style() {
   gStyle->SetTitleSize(0.046, "");
 
   // Offset assi
-  gStyle->SetTitleOffset(1.55, "Y");
+  gStyle->SetTitleOffset(1.50, "Y");
   gStyle->SetTitleOffset(1.20, "X");
   gStyle->SetTitleOffset(1.15, "Z");
 
@@ -369,7 +369,7 @@ int main(int argc, char** argv) {
   TPad* pad_info = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.12);
 
   // Bordi e margini del pad principale
-  pad_plot->SetLeftMargin(0.10);
+  pad_plot->SetLeftMargin(0.16);
   pad_plot->SetRightMargin(0.015);
   pad_plot->SetTopMargin(0.11);
   pad_plot->SetBottomMargin(0.13);
@@ -401,7 +401,7 @@ int main(int argc, char** argv) {
   frame->GetYaxis()->SetTitle("z_{det}  [mm]");
   frame->GetXaxis()->CenterTitle(true);
   frame->GetYaxis()->CenterTitle(true);
-  frame->GetYaxis()->SetTitleOffset(1.55);
+  frame->GetYaxis()->SetTitleOffset(1.50);
   frame->GetXaxis()->SetTitleOffset(1.20);
   frame->GetXaxis()->SetNdivisions(506);
   frame->GetYaxis()->SetNdivisions(505);
@@ -617,8 +617,10 @@ int main(int argc, char** argv) {
   info.SetTextColor(kBlack);
 
   // Colonna 1
-  info.DrawLatex(col1_x, row1_y, ("x_{1} (lente 75 mm) = " + fmt(actual.x1) + " mm").c_str());
-  info.DrawLatex(col1_x, row2_y, ("x_{2} (lente 60 mm) = " + fmt(actual.x2) + " mm").c_str());
+  const std::string l1_lbl = actual.l1_id.empty() ? "L1" : "Lente " + actual.l1_id;
+  const std::string l2_lbl = actual.l2_id.empty() ? "L2" : "Lente " + actual.l2_id;
+  info.DrawLatex(col1_x, row1_y, ("x_{1} (" + l1_lbl + ") = " + fmt(actual.x1) + " mm").c_str());
+  info.DrawLatex(col1_x, row2_y, ("x_{2} (" + l2_lbl + ") = " + fmt(actual.x2) + " mm").c_str());
 
   // Colonna 2
   if (use_3d) {

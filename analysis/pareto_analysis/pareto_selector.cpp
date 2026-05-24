@@ -46,8 +46,8 @@ struct CliConfig {
     std::string resolution_path  = "";
     std::string output_path      = "output/pareto_analysis/pareto_plot.png";
     std::string tsv_path         = "output/pareto_analysis/pareto_results.tsv";
-    std::string lens75_id        = "";
-    std::string lens60_id        = "";
+    std::string l1_id        = "";
+    std::string l2_id        = "";
     FilterConfig fc;
     WeightConfig wc;
 };
@@ -71,8 +71,8 @@ static void print_help() {
         "  --w-Q       F     Peso Q in Mtot        [0.40]\n"
         "  --w-dof     F     Peso DoF in Mtot      [0.15]\n"
         "  --w-M       F     Peso M in Mtot        [0.10]\n"
-        "  --lens75-id STR   Filtra lente L1       [\"\"]\n"
-        "  --lens60-id STR   Filtra lente L2       [\"\"]\n"
+        "  --l1-id STR   Filtra lente L1       [\"\"]\n"
+        "  --l2-id STR   Filtra lente L2       [\"\"]\n"
         "  --help            Stampa uso ed esce\n";
 }
 
@@ -103,8 +103,8 @@ static CliConfig parse_args(int argc, char** argv) {
         else if (key == "--w-Q")       cfg.wc.w_Q       = std::stod(next());
         else if (key == "--w-dof")     cfg.wc.w_dof     = std::stod(next());
         else if (key == "--w-M")       cfg.wc.w_M       = std::stod(next());
-        else if (key == "--lens75-id") cfg.lens75_id    = next();
-        else if (key == "--lens60-id") cfg.lens60_id    = next();
+        else if (key == "--l1-id") cfg.l1_id    = next();
+        else if (key == "--l2-id") cfg.l2_id    = next();
         else if (key == "--help")      { print_help(); std::exit(0); }
         else {
             std::cerr << "Opzione sconosciuta: " << key << "\n";
@@ -271,10 +271,10 @@ int main(int argc, char** argv) {
     tree_config->SetBranchAddress("x1",        &x1_val);
     tree_config->SetBranchAddress("x2",        &x2_val);
     tree_config->SetBranchAddress("config_id", &cfg_id);
-    const bool has_lens = (tree_config->GetBranch("lens75_id") != nullptr);
+    const bool has_lens = (tree_config->GetBranch("l1_id") != nullptr);
     if (has_lens) {
-        tree_config->SetBranchAddress("lens75_id", l1_buf);
-        tree_config->SetBranchAddress("lens60_id", l2_buf);
+        tree_config->SetBranchAddress("l1_id", l1_buf);
+        tree_config->SetBranchAddress("l2_id", l2_buf);
     }
 
     tree_eff->SetBranchAddress("config_id", &cfg_id);
@@ -288,8 +288,8 @@ int main(int argc, char** argv) {
         tree_config->GetEntry(i);
         std::string s1 = has_lens ? l1_buf : "default";
         std::string s2 = has_lens ? l2_buf : "default";
-        if (!cli.lens75_id.empty() && s1 != cli.lens75_id) continue;
-        if (!cli.lens60_id.empty() && s2 != cli.lens60_id) continue;
+        if (!cli.l1_id.empty() && s1 != cli.l1_id) continue;
+        if (!cli.l2_id.empty() && s2 != cli.l2_id) continue;
         cfg_map[cfg_id] = {x1_val, x2_val, s1, s2};
     }
 

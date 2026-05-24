@@ -384,15 +384,15 @@ int main(int argc, char** argv) {
   double x1_cfg        = 0.0;
   double x2_cfg        = 0.0;
   double x_virtual_cfg = 0.0;
-  char lens75_id_buf[256];
-  char lens60_id_buf[256];
+  char l1_id_buf[256];
+  char l2_id_buf[256];
 
   tree_cfg->SetBranchAddress("config_id", &config_id_cfg);
   tree_cfg->SetBranchAddress("x1", &x1_cfg);
   tree_cfg->SetBranchAddress("x2", &x2_cfg);
   tree_cfg->SetBranchAddress("x_virtual", &x_virtual_cfg);
-  tree_cfg->SetBranchAddress("lens75_id", lens75_id_buf);
-  tree_cfg->SetBranchAddress("lens60_id", lens60_id_buf);
+  tree_cfg->SetBranchAddress("l1_id", l1_id_buf);
+  tree_cfg->SetBranchAddress("l2_id", l2_id_buf);
 
   int best_config_id    = -1;
   double best_x1        = 0.0;
@@ -411,8 +411,8 @@ int main(int argc, char** argv) {
       best_x1        = x1_cfg;
       best_x2        = x2_cfg;
       best_x_virtual = x_virtual_cfg;
-      best_l75       = lens75_id_buf;
-      best_l60       = lens60_id_buf;
+      best_l75       = l1_id_buf;
+      best_l60       = l2_id_buf;
     }
   }
 
