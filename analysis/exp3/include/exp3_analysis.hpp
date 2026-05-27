@@ -4,7 +4,6 @@
 #define RIPTIDE_EXP3_ANALYSIS_HPP
 
 #include "exp3_config.hpp"
-#include "homography.hpp"
 
 #include <filesystem>
 #include <string>
@@ -12,181 +11,149 @@
 
 namespace riptide::exp3 {
 
-/// Risultato del fit ODR per una singola acquisizione (d_ax, θ).
-struct SingleTraceResult {
-  double d_ax_nominal_mm  = 0.0;
-  double d_ax_measured_mm = 0.0;
-  double theta_nominal_deg  = 0.0;
-  double theta_measured_deg = 0.0;
-  double chi2_ndof          = 0.0;
-  int    n_valid_slices     = 0;
-  bool   valid              = false;
-  std::string warning;
+/// Scala sensor↔display derivata dalla linea di calibrazione.
+struct LineCalib {
+  double scale_mm_per_sens_px = 0.0; ///< mm fisici per pixel sensore
+  double L_px_display         = 0.0; ///< lunghezza nominale linea display [px]
+  double L_px_sensor          = 0.0; ///< lunghezza misurata sul sensore [px]
+  double d_ax_mm              = 0.0; ///< distanza assiale di questa calibrazione
 };
 
-/// Risultato per una distanza assiale (media su orientazioni).
-struct AxialResult {
-  double d_ax_nominal_mm  = 0.0;
-  double d_ax_measured_mm = 0.0;
-  double Q_exp            = 0.0;
-  double Q_exp_sigma      = 0.0;
-  int    n_valid_orientations = 0;
-  std::vector<SingleTraceResult> traces;
+/// Regione di interesse (ROI) per una singola traccia orizzontale.
+struct LineROI {
+  int    y_center   = 0;
+  int    half_width = 20;
+  int    line_idx   = 0;  ///< 0=center, 1=+Δ, 2=+2Δ
+  double r_mm       = 0.0; ///< offset radiale in mm fisici
 };
 
-/// Risultato globale per una configurazione lenti.
-struct ConfigResult {
-  std::string config_label;
-  LensConfig  lens;
-  std::vector<AxialResult> axial;
-  double Q_exp_global = 0.0;
-  double Q_sim        = 0.0;
-  double R            = 0.0;
+/// Risultato della misura di Q per una singola traccia (d_ax, r).
+struct QResult {
+  double d_ax_mm        = 0.0;
+  double r_mm           = 0.0;
+  int    r_idx          = 0;
+  double chi2_ndof      = 0.0;
+  int    n_valid_slices = 0;
+  bool   warning        = false;
 };
 
 /// Configurazione output ROOT/PNG.
 struct OutputConfig {
-  std::filesystem::path output_dir  = "output/exp3";
-  bool save_png                     = true;
-  bool save_root                    = false;
-  double z_min_percentile           = 0.005;
-  double z_max_percentile           = 0.995;
-  bool verbose                      = false;
+  std::filesystem::path output_dir = "output/exp3";
+  bool save_png  = true;
+  bool save_root = false;
+  bool verbose   = false;
 };
 
 /**
- * Analisi di una singola acquisizione (d_ax, θ):
- * stack → sottrazione bg → stima angolo → estrazione profilo → fit ODR.
+ * Calibrazione via linea di riferimento a lunghezza nota.
  *
- * Riusa riptide::exp2::estimate_trace_angle, extract_trace_profile, fit_centroid_line.
+ * Legge i frame FITS, esegue stack+diff, trova gli estremi della linea
+ * orizzontale e calcola la scala mm/px del sensore.
  *
- * @param signal_dir        Cartella con i frame .fit del segnale
- * @param bg_dir            Cartella con i frame di background
- * @param theta_nominal_deg Angolo nominale della traccia [gradi]
- * @param d_ax_nominal_mm   Distanza assiale nominale [mm]
- * @param d_ax_measured_mm  Distanza assiale misurata [mm]
- * @param H                 Omografia calibrata per questa distanza
- * @param cfg               Configurazione
- * @return                  SingleTraceResult con chi2_ndof e flag di validità
- */
-SingleTraceResult analyze_single_trace(const std::filesystem::path& signal_dir,
-                                       const std::filesystem::path& bg_dir,
-                                       double theta_nominal_deg,
-                                       double d_ax_nominal_mm,
-                                       double d_ax_measured_mm,
-                                       const Homography& H,
-                                       const Exp3Config& cfg);
-
-/**
- * Calibrazione geometrica per una distanza assiale:
- * legge i frame della griglia, rileva i dot, calcola H.
- *
- * @param signal_dir  Cartella con i frame FITS della griglia (segnale)
- * @param bg_dir      Cartella con i frame di background
+ * @param signal_dir  Cartella frame segnale FITS
+ * @param bg_dir      Cartella frame background FITS
  * @param cfg         Configurazione
- * @return            Omografia calibrata
+ * @return            LineCalib con scale_mm_per_sens_px e L_px_sensor
+ * @throws            std::runtime_error se il segnale è assente o la linea non rilevata
  */
-Homography calibrate_distance(const std::filesystem::path& signal_dir,
-                              const std::filesystem::path& bg_dir,
-                              const Exp3Config& cfg);
+LineCalib calibrate_line(const std::filesystem::path& signal_dir,
+                         const std::filesystem::path& bg_dir,
+                         const Exp3Config& cfg);
 
 /**
- * Rilevamento dot della griglia di calibrazione.
+ * Serializza LineCalib in JSON.
  *
- * Per ogni nodo della griglia teorica (passo grid_step_px), esegue un fit
- * gaussiano 2D in una finestra centrata sulla posizione attesa e, se il fit
- * converge con SNR sufficiente, aggiunge il punto di calibrazione.
- *
- * @param diff_image         Immagine differenza segnale-background (row-major)
- * @param width              Larghezza immagine [pixel]
- * @param height             Altezza immagine [pixel]
- * @param grid_step_px       Passo griglia nel display [pixel display]
- * @param display_width_px   Larghezza display [pixel]
- * @param display_height_px  Altezza display [pixel]
- * @return                   Lista di CalibPoint (attesi→trovati)
+ * @param calib  Risultato di calibrate_line
+ * @param path   File di destinazione
  */
-std::vector<CalibPoint> detect_calibration_dots(const std::vector<double>& diff_image,
-                                                int width, int height,
-                                                int grid_step_px,
-                                                int display_width_px,
-                                                int display_height_px);
+void save_line_calib(const LineCalib& calib, const std::filesystem::path& path);
 
 /**
- * Pipeline completa per una configurazione lenti.
+ * Deserializza LineCalib da JSON.
  *
- * Itera su tutte le distanze assiali e orientazioni, producendo output ROOT/PNG
- * opzionali inline. Assume che le omografie siano già state calcolate e salvate
- * in out_cfg.output_dir/calib/homography_d{dist}mm.json.
- *
- * Struttura dati attesa:
- *   data_root/{label}/d{dist}/theta{theta}/  ← frame segnale
- *   data_root/{label}/background/            ← frame background
- *
- * @param data_root   Root cartella dati (es. data/exp3/)
- * @param calib_root  Root cartella calibrazione (es. data/exp3/calib/ o output/exp3/calib/)
- * @param lens        Configurazione lenti da analizzare
- * @param cfg         Configurazione esperimento
- * @param out_cfg     Configurazione output
- * @return            ConfigResult con Q_exp_global e Q_sim
+ * @param path  File JSON scritto da save_line_calib
+ * @return      LineCalib
+ * @throws      std::runtime_error se il file non esiste o è malformato
  */
-ConfigResult analyze_config(const std::filesystem::path& data_root,
-                            const std::filesystem::path& calib_root,
-                            const LensConfig& lens,
-                            const Exp3Config& cfg,
-                            const OutputConfig& out_cfg = {});
+LineCalib load_line_calib(const std::filesystem::path& path);
 
 /**
- * Carica Q_sim da un file TSV prodotto da q_map per una coppia (x1, x2).
+ * Segmenta le tre tracce orizzontali parallele nell'immagine diff.
  *
- * Usa la prima riga con |x1_file - x1| < 0.5 mm e |x2_file - x2| < 0.5 mm.
- * Restituisce NaN se nessuna riga corrisponde.
+ * Usa optical_axis_center_px e radial_offsets_px come seed di ricerca.
  *
- * @param tsv_path  Path al file TSV
- * @param x1_mm    Posizione prima lente [mm]
- * @param x2_mm    Posizione seconda lente [mm]
- * @return          Q_sim (o NaN se non trovato)
+ * @param diff   Immagine differenza segnale-background (row-major)
+ * @param W      Larghezza immagine sensore [pixel]
+ * @param H      Altezza immagine sensore [pixel]
+ * @param cfg    Configurazione
+ * @param calib  Calibrazione corrente (per convertire offset in mm)
+ * @return       Vettore di LineROI, uno per ciascun elemento di radial_offsets_px
+ */
+std::vector<LineROI> segment_parallel_lines(const std::vector<double>& diff,
+                                             int W, int H,
+                                             const Exp3Config& cfg,
+                                             const LineCalib& calib);
+
+/**
+ * Pipeline completa per la misura di Q sulle tre tracce parallele.
+ *
+ * Per ogni LineROI: ritaglia l'immagine diff, stima l'angolo, estrae il
+ * profilo centroide, fit ODR → chi2/ndof.
+ *
+ * @param signal_dir  Cartella frame segnale FITS
+ * @param bg_dir      Cartella frame background FITS
+ * @param cfg         Configurazione
+ * @param calib       Calibrazione per questa distanza assiale
+ * @param d_ax_mm     Distanza assiale misurata [mm]
+ * @return            Vettore di QResult (uno per traccia)
+ */
+std::vector<QResult> run_measurement_parallel_lines(
+    const std::filesystem::path& signal_dir,
+    const std::filesystem::path& bg_dir,
+    const Exp3Config& cfg,
+    const LineCalib& calib,
+    double d_ax_mm);
+
+/**
+ * Carica Q_sim da TSV per una coppia (x1, x2).
+ *
+ * Restituisce NaN se la coppia non è trovata o il file non esiste.
  */
 double load_Q_sim(const std::filesystem::path& tsv_path, double x1_mm, double x2_mm);
 
 /**
- * Produce calib_report.png: scatter dei punti di calibrazione e RMS residui per distanza.
+ * Scrive q_exp_map.tsv: una riga per QResult.
  *
- * @param homographies    Vettore di omografie (una per distanza assiale)
- * @param axial_dists     Distanze assiali corrispondenti [mm]
- * @param pts_per_dist    Punti di calibrazione per ogni distanza
- * @param output_path     Path del file PNG di output
+ * Colonne: config  d_ax_mm  r_mm  r_idx  chi2_ndof  n_valid_slices  warning
+ *
+ * @param config   Label della configurazione lenti ("good" o "bad")
+ * @param results  Vettore di QResult
+ * @param path     File di destinazione
  */
-void produce_calibration_report(const std::vector<Homography>& homographies,
-                                const std::vector<double>& axial_dists,
-                                const std::vector<std::vector<CalibPoint>>& pts_per_dist,
-                                const std::filesystem::path& output_path);
+void write_q_results_tsv(const std::string& config,
+                          const std::vector<QResult>& results,
+                          const std::filesystem::path& path);
+
+// ---------------------------------------------------------------------------
+// Plot (implementate in exp3_plots.cpp)
+// ---------------------------------------------------------------------------
 
 /**
- * Produce summary.png: confronto Q_exp_global e Q_sim per tutte le configurazioni.
- *
- * @param results      Vettore di risultati (una per configurazione)
- * @param output_path  Path del file PNG di output
+ * Produce q_vs_r_d{dist}.png: Q_exp(r) per distanza fissa, good vs bad.
  */
-void produce_results_summary(const std::vector<ConfigResult>& results,
-                             const std::filesystem::path& output_path);
+void produce_q_vs_r(const std::vector<QResult>& good,
+                    const std::vector<QResult>& bad,
+                    double d_ax_mm,
+                    const std::filesystem::path& output_path);
 
 /**
- * Scrive results.tsv: tabella completa per ogni singola traccia.
- *
- * @param results  Vettore di risultati
- * @param path     Path del file TSV di output
+ * Produce q_vs_dax_r{r}.png: Q_exp(d_ax) per r_idx fisso, good vs bad.
  */
-void write_results_tsv(const std::vector<ConfigResult>& results,
-                       const std::filesystem::path& path);
-
-/**
- * Scrive summary.tsv: Q_exp_global, Q_sim, R per ogni configurazione.
- *
- * @param results  Vettore di risultati
- * @param path     Path del file TSV di output
- */
-void write_summary_tsv(const std::vector<ConfigResult>& results,
-                       const std::filesystem::path& path);
+void produce_q_vs_dax(const std::vector<QResult>& good,
+                      const std::vector<QResult>& bad,
+                      int r_idx,
+                      const std::filesystem::path& output_path);
 
 } // namespace riptide::exp3
 

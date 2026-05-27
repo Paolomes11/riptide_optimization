@@ -1,24 +1,31 @@
 {
     "display": {
-        "mm_per_px_x":   0.0,
-        "mm_per_px_y":   0.0,
-        "width_px":      1920,
-        "height_px":     1080,
+        "mm_per_px_x":   0.0646,
+        "mm_per_px_y":   0.0650,
+        "width_px":      1080,
+        "height_px":     2340,
         "wavelength_nm": 525.0
     },
-    "axial_distances_nominal_mm":  [150.0, 165.0, 180.0, 195.0, 210.0],
-    "axial_distances_measured_mm": [150.0, 165.0, 180.0, 195.0, 210.0],
-    "orientations_deg":            [0.0, 30.0, 60.0, 90.0, 120.0, 150.0],
-    "calibration_grid_step_px":    50,
-    "stack_n_sigma":    3.0,
-    "stack_n_iter":     3,
-    "stack_min_frames": 2,
-    "min_snr":             5.0,
-    "min_valid_slices":    30,
-    "angle_tolerance_deg": 10.0,
-    "q_map_tsv": "output/psf_analysis/q_tsv11.tsv",
-    "lens_configs": [
-        { "x1_mm": 0.0, "x2_mm": 0.0, "label": "good" },
-        { "x1_mm": 0.0, "x2_mm": 0.0, "label": "bad"  }
-    ]
+    "axial_distances_nominal_mm":  [150, 165, 180, 195, 210],
+    "axial_distances_measured_mm": [150.5, 165.2, 180.0, 195.3, 210.1],
+    "radial_offsets_px":   [0, 390, 780],
+    "dot_column_step_px":  50,
+    "calib_line_length_px": 800,
+    "optical_axis_center_px": [540, 1170],
+    "stacking": {
+        "n_sigma":    3.0,
+        "n_iter":     3,
+        "min_frames": 2
+    },
+    "trace_extraction": {
+        "min_snr":          5.0,
+        "min_valid_slices": 20
+    },
+    "q_comparison": {
+        "q_map_tsv":  "output/psf_analysis/q_map.tsv",
+        "good_x1_mm": 0.0,
+        "good_x2_mm": 0.0,
+        "bad_x1_mm":  0.0,
+        "bad_x2_mm":  0.0
+    }
 }

@@ -3,6 +3,7 @@
 #ifndef RIPTIDE_EXP3_CONFIG_HPP
 #define RIPTIDE_EXP3_CONFIG_HPP
 
+#include <array>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -11,18 +12,33 @@ namespace riptide::exp3 {
 
 /// Parametri fisici del display (smartphone).
 struct DisplayConfig {
-  double mm_per_px_x  = 0.0;
-  double mm_per_px_y  = 0.0;
-  int    width_px     = 1920;
-  int    height_px    = 1080;
+  double mm_per_px_x   = 0.0;
+  double mm_per_px_y   = 0.0;
+  int    width_px      = 1080;
+  int    height_px     = 2340;
   double wavelength_nm = 525.0;
 };
 
-/// Configurazione ottica (posizione delle due lenti).
-struct LensConfig {
-  double x1_mm = 0.0;
-  double x2_mm = 0.0;
-  std::string label;  // "good" o "bad"
+/// Parametri di stacking sigma-clip.
+struct StackingConfig {
+  double n_sigma    = 3.0;
+  int    n_iter     = 3;
+  int    min_frames = 2;
+};
+
+/// Soglie per l'estrazione della traccia.
+struct TraceExtractionConfig {
+  double min_snr          = 5.0;
+  int    min_valid_slices = 20;
+};
+
+/// Confronto con la simulazione (buona vs cattiva configurazione lenti).
+struct QComparisonConfig {
+  std::string q_map_tsv;
+  double good_x1_mm = 0.0;
+  double good_x2_mm = 0.0;
+  double bad_x1_mm  = 0.0;
+  double bad_x2_mm  = 0.0;
 };
 
 /// Configurazione completa dell'esperimento 3.
@@ -33,27 +49,19 @@ struct Exp3Config {
   std::vector<double> axial_distances_nominal_mm;
   /// Distanze assiali misurate col righello [mm].
   std::vector<double> axial_distances_measured_mm;
-  /// Orientazioni nominali delle tracce [gradi].
-  std::vector<double> orientations_deg;
 
-  /// Passo della griglia di calibrazione [pixel display].
-  int calibration_grid_step_px = 50;
+  /// Offset radiali delle tre tracce parallele [pixel display].
+  std::vector<int> radial_offsets_px;
+  /// Passo della colonna di dot per Exp3b [pixel display].
+  int dot_column_step_px = 50;
+  /// Lunghezza della linea di calibrazione [pixel display].
+  int calib_line_length_px = 800;
+  /// Centro dell'asse ottico nel display [pixel display].
+  std::array<double, 2> optical_axis_center_px = {540.0, 1170.0};
 
-  // -- Stacking --
-  double stack_n_sigma  = 3.0;
-  int    stack_n_iter   = 3;
-  int    stack_min_frames = 2;
-
-  // -- Estrazione traccia --
-  double min_snr            = 5.0;
-  int    min_valid_slices   = 30;
-  double angle_tolerance_deg = 10.0;
-
-  // -- Confronto simulazione --
-  std::string q_map_tsv;
-
-  /// Configurazioni lenti da analizzare.
-  std::vector<LensConfig> lens_configs;
+  StackingConfig        stacking;
+  TraceExtractionConfig trace_extraction;
+  QComparisonConfig     q_comparison;
 };
 
 /**

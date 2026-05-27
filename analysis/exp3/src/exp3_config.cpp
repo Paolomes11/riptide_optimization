@@ -40,8 +40,8 @@ Exp3Config load_exp3_config(const std::filesystem::path& path) {
         const auto& d = j["display"];
         cfg.display.mm_per_px_x   = d.value("mm_per_px_x",   0.0);
         cfg.display.mm_per_px_y   = d.value("mm_per_px_y",   0.0);
-        cfg.display.width_px      = d.value("width_px",      1920);
-        cfg.display.height_px     = d.value("height_px",     1080);
+        cfg.display.width_px      = d.value("width_px",      1080);
+        cfg.display.height_px     = d.value("height_px",     2340);
         cfg.display.wavelength_nm = d.value("wavelength_nm", 525.0);
     }
 
@@ -53,45 +53,64 @@ Exp3Config load_exp3_config(const std::filesystem::path& path) {
         cfg.axial_distances_measured_mm =
             j["axial_distances_measured_mm"].get<std::vector<double>>();
 
-    // Se measured non specificato, copia da nominal
     if (cfg.axial_distances_measured_mm.empty())
         cfg.axial_distances_measured_mm = cfg.axial_distances_nominal_mm;
 
-    // Assicura stesso numero di elementi
     if (cfg.axial_distances_measured_mm.size() != cfg.axial_distances_nominal_mm.size())
         throw std::runtime_error(
             "load_exp3_config: axial_distances_nominal_mm e axial_distances_measured_mm "
             "devono avere lo stesso numero di elementi");
 
-    // Orientazioni
-    if (j.contains("orientations_deg"))
-        cfg.orientations_deg = j["orientations_deg"].get<std::vector<double>>();
+    // Nuovi campi geometrici
+    if (j.contains("radial_offsets_px"))
+        cfg.radial_offsets_px = j["radial_offsets_px"].get<std::vector<int>>();
+    else
+        cfg.radial_offsets_px = {0, 390, 780};
 
-    // Calibrazione
-    cfg.calibration_grid_step_px = j.value("calibration_grid_step_px", 50);
+    cfg.dot_column_step_px   = j.value("dot_column_step_px",   50);
+    cfg.calib_line_length_px = j.value("calib_line_length_px", 800);
 
-    // Stacking
-    cfg.stack_n_sigma    = j.value("stack_n_sigma",    3.0);
-    cfg.stack_n_iter     = j.value("stack_n_iter",     3);
-    cfg.stack_min_frames = j.value("stack_min_frames", 2);
+    if (j.contains("optical_axis_center_px") &&
+        j["optical_axis_center_px"].is_array() &&
+        j["optical_axis_center_px"].size() == 2) {
+        cfg.optical_axis_center_px[0] = j["optical_axis_center_px"][0].get<double>();
+        cfg.optical_axis_center_px[1] = j["optical_axis_center_px"][1].get<double>();
+    }
+
+    // Stacking (oggetto annidato o campi flat per retrocompatibilità)
+    if (j.contains("stacking")) {
+        const auto& s = j["stacking"];
+        cfg.stacking.n_sigma    = s.value("n_sigma",    3.0);
+        cfg.stacking.n_iter     = s.value("n_iter",     3);
+        cfg.stacking.min_frames = s.value("min_frames", 2);
+    } else {
+        cfg.stacking.n_sigma    = j.value("stack_n_sigma",    3.0);
+        cfg.stacking.n_iter     = j.value("stack_n_iter",     3);
+        cfg.stacking.min_frames = j.value("stack_min_frames", 2);
+    }
 
     // Estrazione traccia
-    cfg.min_snr             = j.value("min_snr",             5.0);
-    cfg.min_valid_slices    = j.value("min_valid_slices",    30);
-    cfg.angle_tolerance_deg = j.value("angle_tolerance_deg", 10.0);
+    if (j.contains("trace_extraction")) {
+        const auto& t = j["trace_extraction"];
+        cfg.trace_extraction.min_snr          = t.value("min_snr",          5.0);
+        cfg.trace_extraction.min_valid_slices = t.value("min_valid_slices", 20);
+    } else {
+        cfg.trace_extraction.min_snr          = j.value("min_snr",          5.0);
+        cfg.trace_extraction.min_valid_slices = j.value("min_valid_slices", 20);
+    }
 
-    // Q map simulazione
-    cfg.q_map_tsv = j.value("q_map_tsv", std::string("output/psf_analysis/q_tsv11.tsv"));
-
-    // Configurazioni lenti
-    if (j.contains("lens_configs")) {
-        for (const auto& lj : j["lens_configs"]) {
-            LensConfig lc;
-            lc.x1_mm = lj.value("x1_mm", 0.0);
-            lc.x2_mm = lj.value("x2_mm", 0.0);
-            lc.label  = lj.value("label", std::string(""));
-            cfg.lens_configs.push_back(lc);
-        }
+    // Q comparison
+    if (j.contains("q_comparison")) {
+        const auto& q = j["q_comparison"];
+        cfg.q_comparison.q_map_tsv  = q.value("q_map_tsv",  std::string("output/psf_analysis/q_map.tsv"));
+        cfg.q_comparison.good_x1_mm = q.value("good_x1_mm", 0.0);
+        cfg.q_comparison.good_x2_mm = q.value("good_x2_mm", 0.0);
+        cfg.q_comparison.bad_x1_mm  = q.value("bad_x1_mm",  0.0);
+        cfg.q_comparison.bad_x2_mm  = q.value("bad_x2_mm",  0.0);
+    } else {
+        // Retrocompatibilità: q_map_tsv al livello radice
+        cfg.q_comparison.q_map_tsv = j.value("q_map_tsv",
+                                              std::string("output/psf_analysis/q_tsv11.tsv"));
     }
 
     return cfg;
