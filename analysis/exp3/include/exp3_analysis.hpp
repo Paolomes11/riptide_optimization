@@ -79,21 +79,30 @@ void save_line_calib(const LineCalib& calib, const std::filesystem::path& path);
 LineCalib load_line_calib(const std::filesystem::path& path);
 
 /**
- * Segmenta le tre tracce orizzontali parallele nell'immagine diff.
- *
- * Usa optical_axis_center_px e radial_offsets_px come seed di ricerca.
- *
- * @param diff   Immagine differenza segnale-background (row-major)
- * @param W      Larghezza immagine sensore [pixel]
- * @param H      Altezza immagine sensore [pixel]
- * @param cfg    Configurazione
- * @param calib  Calibrazione corrente (per convertire offset in mm)
- * @return       Vettore di LineROI, uno per ciascun elemento di radial_offsets_px
+ * Segmenta le tracce orizzontali parallele nell'immagine diff usando
+ * radial_offsets_px come seed di ricerca (modalità legacy).
  */
 std::vector<LineROI> segment_parallel_lines(const std::vector<double>& diff,
                                              int W, int H,
                                              const Exp3Config& cfg,
                                              const LineCalib& calib);
+
+/**
+ * Auto-rileva fino a cfg.trace_extraction.max_lines tracce orizzontali
+ * nell'immagine diff trovando i picchi del profilo di riga.
+ *
+ * Non richiede radial_offsets_px né calibrazione. Usata quando
+ * radial_offsets_px è vuoto nel config.
+ *
+ * @param diff  Immagine differenza segnale-background (row-major)
+ * @param W     Larghezza immagine sensore [pixel]
+ * @param H     Altezza immagine sensore [pixel]
+ * @param cfg   Configurazione
+ * @return      Vettore di LineROI ordinato per y_center crescente
+ */
+std::vector<LineROI> detect_lines_auto(const std::vector<double>& diff,
+                                        int W, int H,
+                                        const Exp3Config& cfg);
 
 /**
  * Pipeline completa per la misura di Q sulle tre tracce parallele.

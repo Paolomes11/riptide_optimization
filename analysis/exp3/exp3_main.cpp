@@ -177,10 +177,11 @@ static void run_measure(const CliOptions& opt, const riptide::exp3::Exp3Config& 
       exp3::LineCalib calib;
       try {
         calib = exp3::load_line_calib(calib_path);
-      } catch (const std::exception& e) {
-        std::cerr << "[exp3 measure] WARNING: calibrazione non trovata per d=" << d_nom
-                  << ": " << e.what() << "\n";
-        continue;
+      } catch (const std::exception&) {
+        // Fallback: scala display usata direttamente da detect_lines_auto
+        if (opt.verbose)
+          std::cerr << "[exp3 measure] INFO: calib assente per d=" << d_nom
+                    << ", uso scala display come fallback\n";
       }
 
       fs::path sig_dir = opt.data_dir / lc / dist_str(d_nom) / "signal";

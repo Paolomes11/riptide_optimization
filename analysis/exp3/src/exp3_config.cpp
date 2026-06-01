@@ -92,8 +92,11 @@ Exp3Config load_exp3_config(const std::filesystem::path& path) {
     // Estrazione traccia
     if (j.contains("trace_extraction")) {
         const auto& t = j["trace_extraction"];
-        cfg.trace_extraction.min_snr          = t.value("min_snr",          5.0);
-        cfg.trace_extraction.min_valid_slices = t.value("min_valid_slices", 20);
+        cfg.trace_extraction.min_snr               = t.value("min_snr",               5.0);
+        cfg.trace_extraction.min_valid_slices      = t.value("min_valid_slices",      20);
+        cfg.trace_extraction.max_lines             = t.value("max_lines",             3);
+        cfg.trace_extraction.half_width_px         = t.value("half_width_px",         40);
+        cfg.trace_extraction.line_min_separation_px = t.value("line_min_separation_px", 100);
     } else {
         cfg.trace_extraction.min_snr          = j.value("min_snr",          5.0);
         cfg.trace_extraction.min_valid_slices = j.value("min_valid_slices", 20);

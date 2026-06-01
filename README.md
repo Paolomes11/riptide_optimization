@@ -20,7 +20,8 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 7. [Output su SSD esterna](#output-su-ssd-esterna)
 8. [Log delle simulazioni](#log-delle-simulazioni)
 9. [Ottimizzazione autonoma](#ottimizzazione-autonoma)
-10. [Strumenti di analisi](#strumenti-di-analisi)
+10. [Simulazione singola coppia di lenti](#simulazione-singola-coppia-di-lenti)
+11. [Strumenti di analisi](#strumenti-di-analisi)
     - [plot2D](#plot2d)
     - [plot3D](#plot3d)
     - [beam\_scan\_plot](#beam_scan_plot)
@@ -64,6 +65,9 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 riptide_optimization/
 ├── scripts/
 │   ├── autonomous_optimizer.py              # Driver autonomo per sweep parametrico completo (two-phase, Pareto)
+│   ├── lens_runner.py                       # Pipeline completa per una singola coppia di lenti (no Pareto)
+│   ├── pareto_runner.py                     # Post-processing Pareto multi-peso su simulazione già eseguita
+│   ├── simulation_log.csv                   # Registro persistente di tutte le simulazioni eseguite
 │   ├── run.sh                               # Lancia lens_simulation, optimization o dof_simulation (locale o SSD)
 │   ├── monitor.sh                           # Monitoraggio progresso chunk paralleli (bash)
 │   └── dashboard.py                         # Dashboard Python/rich (prioritario su monitor.sh)
@@ -451,6 +455,23 @@ output/sweep/<tag>/optimizer_<timestamp>.log
 ```
 Il log include stdout/stderr di ogni step della pipeline, con timestamp e livello spdlog.
 
+**Registro CSV persistente:** `scripts/simulation_log.csv` traccia tutte le simulazioni eseguite tramite `lens_runner.py`, con colonne:
+
+| Colonna | Descrizione |
+|---------|-------------|
+| `date` | Data e ora di esecuzione |
+| `l1_id`, `l2_id` | ID Thorlabs delle due lenti |
+| `detector_mode` | `fixed` (detector a `x_det`) o `mobile` (piano focale) |
+| `x_min`, `x_max`, `dx` | Range griglia di scansione |
+| `n_photons`, `lens_n_photons`, `dof_n_photons`, `psf_dof_n_photons` | Fotoni per step |
+| `lens_gap_margin` | Margine di sicurezza collisione lenti (mm) |
+| `storage_type` | `local` o `ssd` |
+| `storage_path` | Path dei file ROOT pesanti |
+| `output_dir` | Cartella di output grafici e TSV |
+| `notes` | Note libere (aggiungibili con `--notes "..."`) |
+
+Il file è pre-popolato con le simulazioni storiche estratte da `exp.txt`. Le nuove simulazioni vengono aggiunte automaticamente al termine di ogni run `lens_runner.py`.
+
 ---
 
 ## Ottimizzazione autonoma
@@ -544,6 +565,110 @@ python3 scripts/autonomous_optimizer.py [opzioni]
 | `--jobs` | nproc | Job Geant4 paralleli per step |
 | `--dry-run` | off | Stampa comandi senza eseguirli |
 | `--no-commit` | off | Disabilita git commit automatici dei risultati |
+
+---
+
+## Simulazione singola coppia di lenti
+
+`scripts/lens_runner.py` esegue la pipeline completa per una coppia di lenti specificata, senza screening iniziale né Pareto finale. È il modo più diretto per analizzare una coppia specifica già nota.
+
+### Output
+
+```
+output/lens_simulations/{l1_id}_{l2_id}/
+  plots/                    ← tutti i grafici PNG
+    efficiency2D.png
+    q_map.png  chi2_map.png  coverage_map.png
+    dof_focus_map.png  dof_dof_map.png  dof_M_map.png  dof_EE80_map.png
+    dof_stripe_map.png  dof_M_error_map.png  dof_within_photocathode.png
+    resolution_focus_map.png  resolution_dof_map.png  ...
+  data/                     ← TSV + ROOT di analisi
+    q_map.tsv  chi2_map.tsv  dof_map.tsv  resolution_map.tsv
+    psf_data.root  psf_dof_data.root
+    events.root → (symlink a SSD)   lens.root → (symlink a SSD)
+    focal.root  → (symlink a SSD)
+  pipeline.log              ← log strutturato di tutti gli step
+  simulation_summary.json   ← tutti i parametri usati nella run
+  focus_accurate.tsv        ← (solo --mobile-focus) piano focale da simulazione DOF
+  pareto/                   ← output di pareto_runner.py
+    w_M_dominant/
+      pareto_results.tsv  pareto_plot.png
+    balanced/
+      pareto_results.tsv  pareto_plot.png
+```
+
+I file ROOT pesanti (`events.root`, `lens.root`, `focal.root`, `psf_dof.root`) vengono salvati su SSD esterna (default) o in locale con `--local`. Un symlink in `data/` mantiene il riferimento senza duplicare i dati.
+
+### Utilizzo
+
+```bash
+# Run completo su SSD esterna (ROOT pesanti → /mnt/external_ssd)
+python3 scripts/lens_runner.py --l1-id LA4464 --l2-id LA4464R
+
+# Run locale con detector mobile sul piano focale
+python3 scripts/lens_runner.py --l1-id LA4464 --l2-id LA4464R --local --mobile-focus
+
+# Dry-run: mostra tutti i comandi senza eseguire nulla
+python3 scripts/lens_runner.py --l1-id LA4464 --l2-id LA4464R --local --dry-run
+
+# Resume: salta opt e lens già completati
+python3 scripts/lens_runner.py --l1-id LA4464 --l2-id LA4464R --local --skip-opt --skip-lens
+```
+
+### Flag principali
+
+| Flag | Default | Descrizione |
+|------|---------|-------------|
+| `--l1-id`, `--l2-id` | — | ID lenti Thorlabs (**obbligatori**) |
+| `--mobile-focus` | off | Fuoco mobile: esegue dof+dof_map prima della pipeline per ottenere il piano focale reale |
+| `--ssd-mount PATH` | `/mnt/external_ssd` | Mountpoint SSD per i file ROOT pesanti (es. `/mnt/external_ssd`) |
+| `--local` | off | Salva ROOT files in locale (no SSD mount) |
+| `--config PATH` | `config/config.json` | Override configurazione |
+| `--analysis-params PATH` | `config/analysis_params.json` | Override parametri analisi |
+| `--jobs N` | nproc | Job paralleli per run.sh |
+| `--dry-run` | off | Stampa comandi senza eseguire |
+| `--keep-lens` | off | Non eliminare `lens.root` dopo `psf_extractor` |
+| `--keep-psf-dof` | off | Non eliminare `psf_dof.root` dopo `psf_dof_extractor` |
+| `--skip-opt` | off | Salta opt (richiede `data/events.root` esistente) |
+| `--skip-lens` | off | Salta lens+psf_extractor (richiede `data/psf_data.root`) |
+| `--skip-dof` | off | Salta dof+dof_map (richiede `data/dof_map.tsv`) |
+| `--skip-psf-dof` | off | Salta psf-dof+psf_dof_extractor (richiede `data/psf_dof_data.root`) |
+| `--notes "..."` | — | Note aggiuntive nel CSV di log |
+
+### Modalità detector
+
+**Fisso (default):** il detector rimane a `x_det` da `config.json` per tutte le configurazioni.
+
+**Mobile (`--mobile-focus`):** esegue `dof`+`dof_map` come pre-pipeline prima di `opt`, ricavando il piano focale reale per ogni (x₁, x₂) via simulazione Geant4 completa (file `focus_accurate.tsv`). Il risultato viene passato come `--focus-tsv` agli step `opt`, `lens` e `psf-dof`. I passi `dof`/`dof_map` normali (step 7–8) vengono saltati automaticamente. Adatto a sistemi in cui il detector può essere posizionato sul piano focale.
+
+### Post-processing Pareto (`pareto_runner.py`)
+
+Dopo aver completato una run con `lens_runner.py`, è possibile eseguire il Pareto selector con diversi set di pesi senza rieseguire le simulazioni:
+
+```bash
+# Configura config/pareto_runs.json con l1_id, l2_id e i set di pesi desiderati
+# poi lancia:
+python3 scripts/pareto_runner.py
+
+# Override della coppia di lenti:
+python3 scripts/pareto_runner.py --l1-id LA4078 --l2-id LA4464R
+```
+
+Formato di `config/pareto_runs.json`:
+
+```json
+{
+  "l1_id": "LA4464",
+  "l2_id": "LA4464R",
+  "data_dir": null,
+  "runs": [
+    { "label": "w_M_dominant", "ee80_max": 10.0, "w_eta": 0.1, "w_Q": 0.1, "w_dof": 0.3, "w_M": 0.5 },
+    { "label": "balanced",     "ee80_max": 10.0, "w_eta": 0.25, "w_Q": 0.25, "w_dof": 0.25, "w_M": 0.25 }
+  ]
+}
+```
+
+`data_dir` (opzionale): path alternativo ai file di input se diverso da `output/lens_simulations/{l1_id}_{l2_id}/data/`.
 
 ---
 

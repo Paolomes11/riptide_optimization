@@ -28,8 +28,11 @@ struct StackingConfig {
 
 /// Soglie per l'estrazione della traccia.
 struct TraceExtractionConfig {
-  double min_snr          = 5.0;
-  int    min_valid_slices = 20;
+  double min_snr               = 5.0;
+  int    min_valid_slices      = 20;
+  int    max_lines             = 3;
+  int    half_width_px         = 40;
+  int    line_min_separation_px = 100;
 };
 
 /// Confronto con la simulazione (buona vs cattiva configurazione lenti).

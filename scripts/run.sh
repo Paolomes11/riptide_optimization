@@ -19,6 +19,13 @@ set -e
 # Root del progetto (cartella padre di scripts/)
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Configura ambiente runtime Geant4 (DT_RUNPATH non propaga a deps transitive)
+if [[ -z "${G4INSTALL:-}" ]]; then
+  _G4_SH=$(find "$HOME/Software" -maxdepth 6 -name "geant4.sh" -path "*/bin/geant4.sh" 2>/dev/null | head -1)
+  [[ -z "$_G4_SH" ]] && _G4_SH=$(find "$HOME/Software" -maxdepth 8 -name "geant4make.sh" -path "*/share/*" 2>/dev/null | head -1)
+  [[ -n "$_G4_SH" ]] && source "$_G4_SH"
+fi
+
 # configurazione di default
 BUILD_DIR="$PROJECT_ROOT/build"
 GEOMETRY="$PROJECT_ROOT/geometry/main.gdml"
@@ -37,6 +44,7 @@ CONFIG_FILE="$PROJECT_ROOT/config/config.json"
 L1_ID=""
 L2_ID=""
 ALL_LENSES=0
+BATCH_SIZE=0
 
 # parsing argomenti posizionali
 MODE="${1:-lens}"    # lens | opt | dof | psf-dof
@@ -63,6 +71,8 @@ while [[ $# -gt 0 ]]; do
       EXTRA_ARGS+=("--lens-subset" "$2"); shift 2 ;;
     --focus-tsv)
       EXTRA_ARGS+=("--focus-tsv" "$2"); shift 2 ;;
+    --batch-size)
+      BATCH_SIZE="$2"; shift 2 ;;
     *)
       EXTRA_ARGS+=("$1"); shift ;;
   esac
@@ -286,112 +296,151 @@ ACTUAL_JOBS=$(ls "$TMPDIR_CONFIGS"/config_chunk_*.json 2>/dev/null | wc -l)
 
 CHUNK_TOTALS=()
 
-for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
-  CHUNK_CONFIG="$TMPDIR_CONFIGS/config_chunk_${chunk}.json"
+# Determina SUBDIR/OUT_NAME costanti per questo MODE
+if [[ "$MODE" == "opt" ]]; then
+  SUBDIR="optimization"; OUT_NAME="events"
+elif [[ "$MODE" == "dof" ]]; then
+  SUBDIR="dof_simulation"; OUT_NAME="focal"
+elif [[ "$MODE" == "psf-dof" ]]; then
+  SUBDIR="psf_dof_simulation"; OUT_NAME="psf_dof"
+else
+  SUBDIR="lens_simulation"; OUT_NAME="lens"
+fi
+mkdir -p "$PROJECT_ROOT/output/${SUBDIR}"
+PARALLEL_SSD_ARGS="${SSD_ARGS/--ssd/}"
 
-  if [[ "$MODE" == "opt" ]]; then
-    SUBDIR="optimization"
-    EXT="events"
-  elif [[ "$MODE" == "dof" ]]; then
-    SUBDIR="dof_simulation"
-    EXT="focal"
-  elif [[ "$MODE" == "psf-dof" ]]; then
-    SUBDIR="psf_dof_simulation"
-    EXT="psf_dof"
-  else
-    SUBDIR="lens_simulation"
-    EXT="lens"
+if [[ "$BATCH_SIZE" -gt 0 ]]; then
+  # ── Modalità rolling hadd: processa BATCH_SIZE chunk alla volta ──────────
+  echo "[INFO]  Hadd rolling attivo, batch_size=$BATCH_SIZE"
+  BATCH_ACC=""
+
+  for (( batch_start=0; batch_start<ACTUAL_JOBS; batch_start+=BATCH_SIZE )); do
+    batch_end=$(( batch_start + BATCH_SIZE ))
+    [[ $batch_end -gt $ACTUAL_JOBS ]] && batch_end=$ACTUAL_JOBS
+    echo "[INFO]  Batch chunk ${batch_start}–$((batch_end-1)) di $((ACTUAL_JOBS-1))..."
+
+    BATCH_PIDS=()
+    BATCH_CHUNK_OUTPUTS=()
+
+    for (( chunk=batch_start; chunk<batch_end; chunk++ )); do
+      CHUNK_CONFIG="$TMPDIR_CONFIGS/config_chunk_${chunk}.json"
+      if [[ "$TARGET" == "ssd" ]]; then
+        CHUNK_OUTPUT="$SSD_MOUNT/riptide/runs/run_${TIMESTAMP}/chunk_${chunk}.root"
+      else
+        CHUNK_OUTPUT="$PROJECT_ROOT/output/${SUBDIR}/chunk_${TIMESTAMP}_${chunk}.root"
+      fi
+      CHUNK_OUTPUTS+=("$CHUNK_OUTPUT")
+      BATCH_CHUNK_OUTPUTS+=("$CHUNK_OUTPUT")
+
+      LOG="$TMPDIR_CONFIGS/chunk_${chunk}.log"
+      if [[ "$MODE" == "opt" ]]; then
+        "$BINARY" -g "$GEOMETRY" -b -o --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+      elif [[ "$MODE" == "dof" ]]; then
+        "$BINARY" -g "$GEOMETRY_DOF" -b -d --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+      elif [[ "$MODE" == "psf-dof" ]]; then
+        "$BINARY" -g "$GEOMETRY_DOF" -b -p --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+      else
+        "$BINARY" -g "$GEOMETRY" -b -l --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+      fi
+      BATCH_PIDS+=($!)
+    done
+
+    FAILED=0
+    for i in "${!BATCH_PIDS[@]}"; do
+      wait "${BATCH_PIDS[$i]}" || {
+        echo "[ERROR] Chunk $((batch_start+i)) fallito (vedi $TMPDIR_CONFIGS/chunk_$((batch_start+i)).log)"
+        FAILED=1
+      }
+      echo "[INFO]  Chunk $((batch_start+i)) completato"
+    done
+    [[ $FAILED -eq 1 ]] && { echo "[ERROR] Batch fallito. Interruzione."; exit 1; }
+
+    ACC_TMP="$PROJECT_ROOT/output/${SUBDIR}/acc_${TIMESTAMP}.tmp.root"
+    if [[ -z "$BATCH_ACC" ]]; then
+      BATCH_ACC="$PROJECT_ROOT/output/${SUBDIR}/acc_${TIMESTAMP}.root"
+      echo "[INFO]  Hadd batch 1 → $BATCH_ACC"
+      hadd -fk "$BATCH_ACC" "${BATCH_CHUNK_OUTPUTS[@]}"
+    else
+      echo "[INFO]  Hadd rolling batch $((batch_start/BATCH_SIZE+1)) → $ACC_TMP"
+      hadd -fk "$ACC_TMP" "$BATCH_ACC" "${BATCH_CHUNK_OUTPUTS[@]}"
+      rm -f "$BATCH_ACC"
+      mv "$ACC_TMP" "$BATCH_ACC"
+    fi
+    rm -f "${BATCH_CHUNK_OUTPUTS[@]}"
+    echo "[INFO]  Acc corrente: $(du -sh "$BATCH_ACC" | cut -f1)"
+  done
+
+  MERGED_OUTPUT="$PROJECT_ROOT/output/${SUBDIR}/${OUT_NAME}_${TIMESTAMP}.root"
+  mv "$BATCH_ACC" "$MERGED_OUTPUT"
+  rm -rf "$TMPDIR_CONFIGS"
+
+else
+  # ── Modalità classica: tutti i chunk in parallelo, poi un hadd finale ────
+  for (( chunk=0; chunk<ACTUAL_JOBS; chunk++ )); do
+    CHUNK_CONFIG="$TMPDIR_CONFIGS/config_chunk_${chunk}.json"
+    if [[ "$TARGET" == "ssd" ]]; then
+      CHUNK_OUTPUT="$SSD_MOUNT/riptide/runs/run_${TIMESTAMP}/chunk_${chunk}.root"
+    else
+      CHUNK_OUTPUT="$PROJECT_ROOT/output/${SUBDIR}/chunk_${TIMESTAMP}_${chunk}.root"
+    fi
+    CHUNK_OUTPUTS+=("$CHUNK_OUTPUT")
+
+    CHUNK_TOTAL=$(cat "$TMPDIR_CONFIGS/chunk_${chunk}_info.txt" 2>/dev/null | tr -d '[:space:]')
+    [[ -z "$CHUNK_TOTAL" || ! "$CHUNK_TOTAL" =~ ^[0-9]+$ ]] && CHUNK_TOTAL=1
+    CHUNK_TOTALS+=("$CHUNK_TOTAL")
+
+    LOG="$TMPDIR_CONFIGS/chunk_${chunk}.log"
+    if [[ "$MODE" == "opt" ]]; then
+      "$BINARY" -g "$GEOMETRY" -b -o --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+    elif [[ "$MODE" == "dof" ]]; then
+      "$BINARY" -g "$GEOMETRY_DOF" -b -d --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+    elif [[ "$MODE" == "psf-dof" ]]; then
+      "$BINARY" -g "$GEOMETRY_DOF" -b -p --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+    else
+      "$BINARY" -g "$GEOMETRY" -b -l --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+    fi
+    PIDS+=($!)
+  done
+
+  if [[ -f "$(dirname "$0")/dashboard.py" ]]; then
+    chmod +x "$(dirname "$0")/dashboard.py"
+    "$(dirname "$0")/dashboard.py" "$TMPDIR_CONFIGS" "$ACTUAL_JOBS" "${CHUNK_TOTALS[@]}" </dev/null &
+    MONITOR_PID=$!
+  elif [[ -f "$(dirname "$0")/monitor.sh" ]]; then
+    chmod +x "$(dirname "$0")/monitor.sh"
+    "$(dirname "$0")/monitor.sh" "$TMPDIR_CONFIGS" "$ACTUAL_JOBS" "${CHUNK_TOTALS[@]}" </dev/null &
+    MONITOR_PID=$!
   fi
+
+  echo "[INFO]  Attesa completamento di ${#PIDS[@]} processi..."
+  FAILED=0
+  for i in "${!PIDS[@]}"; do
+    wait "${PIDS[$i]}" || { echo "[ERROR] Chunk $i fallito (vedi $TMPDIR_CONFIGS/chunk_${i}.log)"; FAILED=1; }
+    echo "[INFO]  Chunk $i completato"
+  done
+
+  if [[ -n "$MONITOR_PID" ]]; then
+    kill "$MONITOR_PID" 2>/dev/null || true
+    wait "$MONITOR_PID" 2>/dev/null || true
+  fi
+
+  [[ $FAILED -eq 1 ]] && { echo "[ERROR] Uno o più chunk sono falliti. Merge annullato."; exit 1; }
 
   if [[ "$TARGET" == "ssd" ]]; then
-    CHUNK_OUTPUT="$SSD_MOUNT/riptide/runs/run_${TIMESTAMP}/chunk_${chunk}.root"
+    MERGED_OUTPUT="$SSD_MOUNT/riptide/runs/run_${TIMESTAMP}/${OUT_NAME}.root"
   else
-    CHUNK_OUTPUT="$PROJECT_ROOT/output/${SUBDIR}/chunk_${TIMESTAMP}_${chunk}.root"
+    MERGED_OUTPUT="$PROJECT_ROOT/output/${SUBDIR}/${OUT_NAME}_${TIMESTAMP}.root"
   fi
-  CHUNK_OUTPUTS+=("$CHUNK_OUTPUT")
 
-  CHUNK_TOTAL=$(cat "$TMPDIR_CONFIGS/chunk_${chunk}_info.txt" 2>/dev/null | tr -d '[:space:]')
-  [[ -z "$CHUNK_TOTAL" || ! "$CHUNK_TOTAL" =~ ^[0-9]+$ ]] && CHUNK_TOTAL=1
-  CHUNK_TOTALS+=("$CHUNK_TOTAL")
-
-  # Esegue il binario corretto con i flag corretti
-  LOG="$TMPDIR_CONFIGS/chunk_${chunk}.log"
-  # In parallelo non passiamo mai --ssd al binario perché run.sh gestisce già il path di output.
-  # Passiamo solo --ssd-mount se necessario.
-  PARALLEL_SSD_ARGS="${SSD_ARGS/--ssd/}"
-
-  if [[ "$MODE" == "opt" ]]; then
-    # In optimization mode, we use -o
-    "$BINARY" -g "$GEOMETRY" -b -o --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
-  elif [[ "$MODE" == "dof" ]]; then
-    "$BINARY" -g "$GEOMETRY_DOF" -b -d --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
-  elif [[ "$MODE" == "psf-dof" ]]; then
-    "$BINARY" -g "$GEOMETRY_DOF" -b -p --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
-  else
-    # In lens simulation mode, we use -l
-    "$BINARY" -g "$GEOMETRY" -b -l --config "$CHUNK_CONFIG" --output "$CHUNK_OUTPUT" $PARALLEL_SSD_ARGS "${EXTRA_ARGS[@]}" > "$LOG" 2>&1 &
+  echo "[INFO]  Merge dei chunk in $MERGED_OUTPUT"
+  if ! hadd -fk "$MERGED_OUTPUT" "${CHUNK_OUTPUTS[@]}"; then
+    echo "[ERROR] hadd fallito. Output potrebbe essere corrotto: $MERGED_OUTPUT"
+    exit 1
   fi
-  PIDS+=($!)
-done
 
-# Avvia il monitor in foreground su /dev/tty (terminale diretto)
-# I chunk girano in background, il monitor prende il controllo del display
-if [[ -f "$(dirname "$0")/dashboard.py" ]]; then
-  chmod +x "$(dirname "$0")/dashboard.py"
-  "$(dirname "$0")/dashboard.py" "$TMPDIR_CONFIGS" "$ACTUAL_JOBS" "${CHUNK_TOTALS[@]}" </dev/null &
-  MONITOR_PID=$!
-elif [[ -f "$(dirname "$0")/monitor.sh" ]]; then
-  chmod +x "$(dirname "$0")/monitor.sh"
-  "$(dirname "$0")/monitor.sh" "$TMPDIR_CONFIGS" "$ACTUAL_JOBS" "${CHUNK_TOTALS[@]}" </dev/null &
-  MONITOR_PID=$!
+  echo "[INFO]  Rimozione chunk intermedi..."
+  rm -f "${CHUNK_OUTPUTS[@]}"
+  rm -rf "$TMPDIR_CONFIGS"
 fi
-
-# Attendi tutti i processi e controlla gli exit code
-echo "[INFO]  Attesa completamento di ${#PIDS[@]} processi..."
-FAILED=0
-for i in "${!PIDS[@]}"; do
-  wait "${PIDS[$i]}" || { echo "[ERROR] Chunk $i fallito (vedi $TMPDIR_CONFIGS/chunk_${i}.log)"; FAILED=1; }
-  echo "[INFO]  Chunk $i completato"
-done
-
-# Ferma il monitor
-if [[ -n "$MONITOR_PID" ]]; then
-  kill "$MONITOR_PID" 2>/dev/null || true
-  wait "$MONITOR_PID" 2>/dev/null || true
-fi
-
-[[ $FAILED -eq 1 ]] && { echo "[ERROR] Uno o più chunk sono falliti. Merge annullato."; exit 1; }
-
-# Merge con hadd
-if [[ "$MODE" == "opt" ]]; then
-  OUT_NAME="events"
-  OUT_DIR="optimization"
-elif [[ "$MODE" == "dof" ]]; then
-  OUT_NAME="focal"
-  OUT_DIR="dof_simulation"
-elif [[ "$MODE" == "psf-dof" ]]; then
-  OUT_NAME="psf_dof"
-  OUT_DIR="psf_dof_simulation"
-else
-  OUT_NAME="lens"
-  OUT_DIR="lens_simulation"
-fi
-
-if [[ "$TARGET" == "ssd" ]]; then
-  MERGED_OUTPUT="$SSD_MOUNT/riptide/runs/run_${TIMESTAMP}/${OUT_NAME}.root"
-else
-  MERGED_OUTPUT="output/${OUT_DIR}/${OUT_NAME}_${TIMESTAMP}.root"
-fi
-
-echo "[INFO]  Merge dei chunk in $MERGED_OUTPUT"
-if ! hadd -fk "$MERGED_OUTPUT" "${CHUNK_OUTPUTS[@]}"; then
-  echo "[ERROR] hadd fallito. Output potrebbe essere corrotto: $MERGED_OUTPUT"
-  exit 1
-fi
-
-# Rimuovi i chunk intermedi
-echo "[INFO]  Rimozione chunk intermedi..."
-rm -f "${CHUNK_OUTPUTS[@]}"
-rm -rf "$TMPDIR_CONFIGS"
 
 echo "[DONE]  Output finale: $MERGED_OUTPUT"

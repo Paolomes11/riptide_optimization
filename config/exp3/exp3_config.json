@@ -1,25 +1,28 @@
 {
     "display": {
-        "mm_per_px_x":   0.0646,
-        "mm_per_px_y":   0.0650,
+        "mm_per_px_x":   0.0717,
+        "mm_per_px_y":   0.0688,
         "width_px":      1080,
-        "height_px":     2340,
+        "height_px":     2400,
         "wavelength_nm": 525.0
     },
     "axial_distances_nominal_mm":  [150, 165, 180, 195, 210],
-    "axial_distances_measured_mm": [150.5, 165.2, 180.0, 195.3, 210.1],
-    "radial_offsets_px":   [0, 390, 780],
+    "axial_distances_measured_mm": [150, 165, 180, 195, 210],
+    "radial_offsets_px":   [],
     "dot_column_step_px":  50,
     "calib_line_length_px": 800,
-    "optical_axis_center_px": [540, 1170],
+    "optical_axis_center_px": [540.0, 1200.0],
     "stacking": {
         "n_sigma":    3.0,
         "n_iter":     3,
         "min_frames": 2
     },
     "trace_extraction": {
-        "min_snr":          5.0,
-        "min_valid_slices": 20
+        "min_snr":               1.4,
+        "min_valid_slices":      10,
+        "max_lines":             3,
+        "half_width_px":         40,
+        "line_min_separation_px": 100
     },
     "q_comparison": {
         "q_map_tsv":  "output/psf_analysis/q_map.tsv",

@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <numeric>
 #include <sstream>
@@ -246,6 +247,144 @@ std::vector<LineROI> segment_parallel_lines(const std::vector<double>& diff,
 }
 
 // ---------------------------------------------------------------------------
+// Helper: smoothing gaussiano 1D (kernel troncato a ±3σ, boundary REFLECT)
+// Boundary REFLECT: idx < 0 → -idx; idx >= n → 2*(n-1) - idx.
+// Molto meglio di CLAMP per stimare il baseline con kernel larghi (σ ~ centinaia di px).
+// ---------------------------------------------------------------------------
+static std::vector<double> gaussian_smooth_1d(const std::vector<double>& S, double sigma) {
+    const int n    = static_cast<int>(S.size());
+    const int half = std::min(static_cast<int>(3.0 * sigma + 0.5), n / 2);
+    std::vector<double> kernel(static_cast<size_t>(2 * half + 1));
+    double ksum = 0.0;
+    for (int k = -half; k <= half; ++k) {
+        kernel[static_cast<size_t>(k + half)] = std::exp(-0.5 * k * k / (sigma * sigma));
+        ksum += kernel[static_cast<size_t>(k + half)];
+    }
+    for (auto& v : kernel) v /= ksum;
+
+    std::vector<double> out(static_cast<size_t>(n), 0.0);
+    for (int y = 0; y < n; ++y) {
+        for (int k = -half; k <= half; ++k) {
+            int idx = y + k;
+            if (idx < 0)   idx = -idx;           // rifletti a sinistra
+            if (idx >= n)  idx = 2 * (n - 1) - idx; // rifletti a destra
+            idx = std::clamp(idx, 0, n - 1);     // sicurezza per doppia riflessione
+            out[static_cast<size_t>(y)] += kernel[static_cast<size_t>(k + half)] * S[static_cast<size_t>(idx)];
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-rilevamento tracce tramite profilo di riga (somma firmata + multi-scala)
+// ---------------------------------------------------------------------------
+std::vector<LineROI> detect_lines_auto(const std::vector<double>& diff,
+                                        int W, int H,
+                                        const Exp3Config& cfg) {
+    // 1. Somma firmata per riga — nessun clipping (né per-pixel né per-riga).
+    //    Se il diff è negativo (bg ≥ signal), clippare a 0 azzererebbe tutto e il
+    //    confronto con la soglia assoluta farebbe break immediato senza trovare nulla.
+    //    La mediana gestisce il baseline nel peak-finding a valle.
+    std::vector<double> S(static_cast<size_t>(H), 0.0);
+    for (int y = 0; y < H; ++y) {
+        double row_sum = 0.0;
+        for (int x = 0; x < W; ++x)
+            row_sum += diff[static_cast<size_t>(y) * static_cast<size_t>(W)
+                           + static_cast<size_t>(x)];
+        S[static_cast<size_t>(y)] = row_sum;
+    }
+
+    // 2. Detrending: rimuovi il baseline lento (gradienti flat-field, vignettatura, profilo fascio).
+    //    σ_bg = H/8 ≈ 700 px cattura variazioni su scala ~ 100s di px senza toccare i picchi
+    //    di linea (FWHM ≤ 200 px).  La mediana nel peak-finding a valle centra il profilo
+    //    residuo indipendentemente dal segno del diff.
+    const double sigma_bg = static_cast<double>(H) / 8.0;
+    const auto   S_bg     = gaussian_smooth_1d(S, sigma_bg);
+    std::vector<double> S_det(static_cast<size_t>(H));
+    for (int y = 0; y < H; ++y)
+        S_det[static_cast<size_t>(y)] = S[static_cast<size_t>(y)] - S_bg[static_cast<size_t>(y)];
+
+    // 3. Multi-scala: σ = 5.5 px (fuoco netto), 25 px (lieve defocus), 75 px (forte defocus)
+    const std::vector<double> sigmas    = {5.5, 25.0, 75.0};
+    const int    sep       = cfg.trace_extraction.line_min_separation_px;
+    const int    max_lines = cfg.trace_extraction.max_lines;
+    const double min_snr   = cfg.trace_extraction.min_snr;
+
+    std::vector<int> peaks;
+    peaks.reserve(static_cast<size_t>(max_lines));
+
+    for (double sigma : sigmas) {
+        auto Ss = gaussian_smooth_1d(S_det, sigma);
+
+        // Soglia MAD robusta sul profilo smoothed a questa scala.
+        // min_snr è volutamente basso (≤ 1.5): il MAD risulta inflazionato di 3–10× rispetto
+        // al rumore di shot teorico (RFPN + disallineamento esposizioni) perciò anche con
+        // min_snr=1.4 si ottiene un vero SNR di fotoni >> 3σ per tutti i picchi reali.
+        // Il filtro secondario (aspect ratio blob, n_valid_slices) protegge dai falsi positivi.
+        std::vector<double> sorted_Ss = Ss;
+        std::nth_element(sorted_Ss.begin(),
+                         sorted_Ss.begin() + static_cast<ptrdiff_t>(sorted_Ss.size() / 2),
+                         sorted_Ss.end());
+        const double med = sorted_Ss[sorted_Ss.size() / 2];
+        std::vector<double> abs_dev(static_cast<size_t>(H));
+        for (int i = 0; i < H; ++i)
+            abs_dev[static_cast<size_t>(i)] = std::abs(Ss[static_cast<size_t>(i)] - med);
+        std::nth_element(abs_dev.begin(),
+                         abs_dev.begin() + static_cast<ptrdiff_t>(abs_dev.size() / 2),
+                         abs_dev.end());
+        const double threshold = min_snr * abs_dev[abs_dev.size() / 2] * 1.4826;
+
+        std::vector<double> work = Ss;
+        for (auto& v : work) v -= med;
+        for (int n = 0; n < max_lines; ++n) {
+            auto it = std::max_element(work.begin(), work.end());
+            if (*it < threshold) break;
+            const int y_peak = static_cast<int>(std::distance(work.begin(), it));
+
+            // Scarta se già trovato (a questa scala o da scala precedente)
+            bool dup = false;
+            for (int p : peaks)
+                if (std::abs(p - y_peak) < sep) { dup = true; break; }
+
+            if (!dup)
+                peaks.push_back(y_peak);
+
+            const int y0 = std::max(0, y_peak - sep);
+            const int y1 = std::min(H - 1, y_peak + sep);
+            for (int k = y0; k <= y1; ++k)
+                work[static_cast<size_t>(k)] = 0.0;
+        }
+    }
+
+    // 3. Ordina per Y crescente; tronca a max_lines
+    std::sort(peaks.begin(), peaks.end());
+    if (static_cast<int>(peaks.size()) > max_lines)
+        peaks.resize(static_cast<size_t>(max_lines));
+
+    // 4. Costruisce LineROI
+    std::vector<LineROI> rois;
+    rois.reserve(peaks.size());
+
+    const double H_disp = static_cast<double>(cfg.display.height_px);
+    const double axis_y = cfg.optical_axis_center_px[1];
+
+    for (int i = 0; i < static_cast<int>(peaks.size()); ++i) {
+        const int    y_best = peaks[static_cast<size_t>(i)];
+        const double y_disp = static_cast<double>(y_best) / static_cast<double>(H) * H_disp;
+        const double r_disp = y_disp - axis_y;
+
+        LineROI roi;
+        roi.y_center   = y_best;
+        roi.half_width = cfg.trace_extraction.half_width_px;
+        roi.line_idx   = i;
+        roi.r_mm       = r_disp * cfg.display.mm_per_px_y;
+        rois.push_back(roi);
+    }
+
+    return rois;
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline di misura per le tre tracce parallele
 // ---------------------------------------------------------------------------
 std::vector<QResult> run_measurement_parallel_lines(
@@ -271,7 +410,9 @@ std::vector<QResult> run_measurement_parallel_lines(
     int W = sig_stacked.width;
     int H = sig_stacked.height;
 
-    auto rois = segment_parallel_lines(diff, W, H, cfg, calib);
+    auto rois = cfg.radial_offsets_px.empty()
+                ? detect_lines_auto(diff, W, H, cfg)
+                : segment_parallel_lines(diff, W, H, cfg, calib);
 
     std::vector<QResult> results;
     results.reserve(rois.size());
@@ -286,37 +427,46 @@ std::vector<QResult> run_measurement_parallel_lines(
         qr.r_idx   = roi.line_idx;
         qr.warning = false;
 
-        // Ritaglia il diff alla ROI
-        int y_lo   = std::max(0, roi.y_center - roi.half_width);
-        int y_hi   = std::min(H, roi.y_center + roi.half_width + 1);
-        int crop_H = y_hi - y_lo;
+        try {
+            // Ritaglia il diff alla ROI
+            int y_lo   = std::max(0, roi.y_center - roi.half_width);
+            int y_hi   = std::min(H, roi.y_center + roi.half_width + 1);
+            int crop_H = y_hi - y_lo;
 
-        std::vector<double> crop(static_cast<size_t>(W * crop_H));
-        for (int y = y_lo; y < y_hi; ++y)
-            for (int x = 0; x < W; ++x)
-                crop[static_cast<size_t>((y - y_lo) * W + x)] =
-                    diff[static_cast<size_t>(y * W + x)];
+            std::vector<double> crop(static_cast<size_t>(W * crop_H));
+            for (int y = y_lo; y < y_hi; ++y)
+                for (int x = 0; x < W; ++x)
+                    crop[static_cast<size_t>((y - y_lo) * W + x)] =
+                        diff[static_cast<size_t>(y * W + x)];
 
-        // Stima angolo + estrazione profilo con raffinamento iterativo
-        double angle = exp2::estimate_trace_angle(crop, W, crop_H, tc, nullptr);
-        auto trace   = exp2::extract_trace_profile(crop, W, crop_H, angle, tc);
+            // Stima angolo + estrazione profilo con raffinamento iterativo
+            double angle = exp2::estimate_trace_angle(crop, W, crop_H, tc, nullptr);
+            auto trace   = exp2::extract_trace_profile(crop, W, crop_H, angle, tc);
 
-        for (int iter = 0; iter < 2 && trace.n_valid_slices >= 5; ++iter) {
-            auto fit_tmp = exp2::fit_centroid_line(trace);
-            if (!fit_tmp.converged) break;
-            double delta = std::atan(fit_tmp.a) * 180.0 / M_PI;
-            if (std::abs(delta) < 0.05 || std::abs(delta) > 10.0) break;
-            angle += delta;
-            trace = exp2::extract_trace_profile(crop, W, crop_H, angle, tc);
+            for (int iter = 0; iter < 2 && trace.n_valid_slices >= 5; ++iter) {
+                auto fit_tmp = exp2::fit_centroid_line(trace);
+                if (!fit_tmp.converged) break;
+                double delta = std::atan(fit_tmp.a) * 180.0 / M_PI;
+                if (std::abs(delta) < 0.05 || std::abs(delta) > 10.0) break;
+                angle += delta;
+                trace = exp2::extract_trace_profile(crop, W, crop_H, angle, tc);
+            }
+
+            auto fit = exp2::fit_centroid_line(trace);
+            qr.chi2_ndof      = fit.chi2_ndof;
+            qr.n_valid_slices = trace.n_valid_slices;
+
+            if (!trace.trace_detected ||
+                trace.n_valid_slices < cfg.trace_extraction.min_valid_slices)
+                qr.warning = true;
+        } catch (const std::exception& e) {
+            // Linea non caratterizzabile (troppo defocused, blob circolare, ecc.)
+            qr.chi2_ndof      = 0.0;
+            qr.n_valid_slices = 0;
+            qr.warning        = true;
+            std::cerr << "[exp3 measure] WARNING r_idx=" << roi.line_idx
+                      << " y=" << roi.y_center << ": " << e.what() << "\n";
         }
-
-        auto fit = exp2::fit_centroid_line(trace);
-        qr.chi2_ndof      = fit.chi2_ndof;
-        qr.n_valid_slices = trace.n_valid_slices;
-
-        if (!trace.trace_detected ||
-            trace.n_valid_slices < cfg.trace_extraction.min_valid_slices)
-            qr.warning = true;
 
         results.push_back(qr);
     }

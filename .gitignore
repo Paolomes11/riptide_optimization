@@ -21,3 +21,4 @@ scripts/fetch_any_from_cnaf.sh
 scripts/fetch_from_cnaf.sh
 scripts/sync_to_cnaf.sh
 cnaf_fetch/
+scripts/simulation_log.csv

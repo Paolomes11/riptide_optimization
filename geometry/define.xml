@@ -23,6 +23,8 @@
 <position name="lens75_x_pos" unit="mm" x="14.9" y="0" z="0" />
 <position name="lens60_x_pos" unit="mm" x="185.4" y="0" z="0" />
 <!-- <position name="glass_window_x_pos" unit="mm" x="173.9" y="0" z="0" /> -->
+<position name="l1_x_pos" unit="mm" x="14.9" y="0" z="0" />
+<position name="l2_x_pos" unit="mm" x="185.4" y="0" z="0" />
 <position name="photocathode_x_pos" unit="mm" x="179.8" y="0" z="0" />
 
 <!-- Definizioni di rotazioni standard -->

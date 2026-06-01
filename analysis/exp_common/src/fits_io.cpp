@@ -161,15 +161,31 @@ std::vector<std::filesystem::path> list_fits_files(const std::filesystem::path& 
   if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir))
     throw std::runtime_error("fits_io: cartella non trovata: " + dir.string());
 
-  std::vector<std::filesystem::path> files;
-  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-    if (!entry.is_regular_file())
-      continue;
-    std::string ext = entry.path().extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (ext == ".fit" || ext == ".fits" || ext == ".fts")
-      files.push_back(entry.path());
+  auto collect_fits = [](const std::filesystem::path& d) {
+    std::vector<std::filesystem::path> out;
+    for (const auto& entry : std::filesystem::directory_iterator(d)) {
+      if (!entry.is_regular_file())
+        continue;
+      std::string ext = entry.path().extension().string();
+      std::transform(ext.begin(), ext.end(), ext.begin(),
+                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      if (ext == ".fit" || ext == ".fits" || ext == ".fts")
+        out.push_back(entry.path());
+    }
+    return out;
+  };
+
+  auto files = collect_fits(dir);
+
+  // Se non ci sono file direttamente in dir, cerca un livello più in profondità
+  // (es. sottocartelle timestamp come signal/2026-05-28_12_51_45Z/)
+  if (files.empty()) {
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+      if (!entry.is_directory())
+        continue;
+      auto sub = collect_fits(entry.path());
+      files.insert(files.end(), sub.begin(), sub.end());
+    }
   }
 
   std::sort(files.begin(), files.end());

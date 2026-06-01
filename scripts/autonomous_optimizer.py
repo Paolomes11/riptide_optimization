@@ -27,24 +27,26 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUILD        = PROJECT_ROOT / "build"
 
 BINARIES = {
-    "run_sh":          PROJECT_ROOT / "scripts" / "run.sh",
-    "plot2D":          BUILD / "analysis" / "Release" / "plot2D",
-    "psf_extractor":   BUILD / "analysis" / "Release" / "psf_extractor",
-    "q_map":           BUILD / "analysis" / "psf_analysis" / "Release" / "q_map",
-    "chi2_map":        BUILD / "analysis" / "psf_analysis" / "Release" / "chi2_map",
-    "dof_map":         BUILD / "analysis" / "dof_analysis" / "Release" / "dof_map",
-    "resolution_map":  BUILD / "analysis" / "resolution_analysis" / "Release" / "resolution_map",
-    "pareto_selector": BUILD / "analysis" / "pareto_analysis" / "Release" / "pareto_selector",
+    "run_sh":             PROJECT_ROOT / "scripts" / "run.sh",
+    "plot2D":             BUILD / "analysis" / "Release" / "plot2D",
+    "psf_extractor":      BUILD / "analysis" / "Release" / "psf_extractor",
+    "psf_dof_extractor":  BUILD / "analysis" / "dof_analysis" / "Release" / "psf_dof_extractor",
+    "q_map":              BUILD / "analysis" / "psf_analysis" / "Release" / "q_map",
+    "chi2_map":           BUILD / "analysis" / "psf_analysis" / "Release" / "chi2_map",
+    "dof_map":            BUILD / "analysis" / "dof_analysis" / "Release" / "dof_map",
+    "resolution_map":     BUILD / "analysis" / "resolution_analysis" / "Release" / "resolution_map",
+    "pareto_selector":    BUILD / "analysis" / "pareto_analysis" / "Release" / "pareto_selector",
 }
 
 # Timeout in secondi per ogni step
 TIMEOUTS_SEC = {
-    "opt":            60  * 60,
-    "lens":           210 * 60,
-    "dof":            90  * 60,
-    "psf-dof":        90  * 60,
-    "resolution_map": 30  * 60,
-    "analysis":       10  * 60,   # psf_extractor, q_map, chi2_map, dof_map, pareto_selector
+    "opt":               60  * 60,
+    "lens":              210 * 60,
+    "dof":               90  * 60,
+    "psf-dof":           90  * 60,
+    "resolution_map":    30  * 60,
+    "psf_dof_extractor": 30  * 60,
+    "analysis":          10  * 60,   # psf_extractor, q_map, chi2_map, dof_map, pareto_selector
 }
 
 SWEEP_GEOM = [
@@ -220,6 +222,22 @@ def run_cmd(cmd: list[str], log_path: Path, timeout_sec: int,
 
 # ─── Pre-flight checks ───────────────────────────────────────────────────────
 
+MIN_FREE_LENS_GB = 1300   # picco atteso durante hadd rolling lens (2×lens_merged + batch×chunk)
+
+def check_disk_space() -> tuple[bool, str, str]:
+    out_dir = PROJECT_ROOT / "output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stat = shutil.disk_usage(out_dir)
+    free_gb = stat.free / (1024 ** 3)
+    if free_gb < MIN_FREE_LENS_GB:
+        return False, "disk_space", (
+            f"Spazio libero insufficiente su {out_dir.resolve()}: "
+            f"{free_gb:.1f} GB liberi, richiesti {MIN_FREE_LENS_GB} GB per hadd rolling lens."
+        )
+    logging.info(f"Pre-flight disk: {free_gb:.1f} GB liberi su {out_dir.resolve()}")
+    return True, "", ""
+
+
 def check_margin_consistency() -> tuple[bool, str, str]:
     key = 'config.value("lens_gap_margin"'
     for rel in ["src/lens_simulation/lens_scan.cpp",
@@ -247,7 +265,7 @@ def check_nhits_branch_type() -> tuple[bool, str, str]:
 
 def preflight_checks() -> list[str]:
     failures = []
-    for checker in [check_margin_consistency, check_nhits_branch_type]:
+    for checker in [check_margin_consistency, check_nhits_branch_type, check_disk_space]:
         ok, fid, msg = checker()
         if not ok:
             logging.error(f"Pre-flight FAIL [{fid}]: {msg}")
@@ -453,7 +471,9 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
                  prebuilt_events: Path | None = None,
                  use_local: bool = False,
                  focus_tsv: Path | None = None,
-                 prebuilt_dof_tsv: Path | None = None) -> dict | None:
+                 prebuilt_dof_tsv: Path | None = None,
+                 keep_lens: bool = False,
+                 keep_psf_dof: bool = False) -> dict | None:
     """
     Esegue i 10 step della pipeline per una variante.
     Restituisce dict con i path dei TSV/ROOT prodotti, o None se step critico fallisce.
@@ -504,6 +524,14 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
     if not ok:
         return None
     out["psf_data"] = psf_data
+
+    if not keep_lens and not dry_run and lens_root and lens_root.exists():
+        lens_size_gb = lens_root.stat().st_size / (1024 ** 3)
+        logging.info(f"Eliminazione lens.root ({lens_size_gb:.1f} GB) — psf_data.root prodotto.")
+        try:
+            lens_root.unlink()
+        except Exception as e:
+            logging.warning(f"Impossibile eliminare {lens_root}: {e}")
 
     # Step 4: q_map
     q_tsv = sweep_dir / "q_map.tsv"
@@ -588,20 +616,29 @@ def run_pipeline(tag: str, sweep_cfg: Path, sweep_dir: Path,
         return None
     out["psf_dof"] = psf_dof_root
 
-    # Step 9: resolution_map
-    res_tsv = sweep_dir / "resolution_map.tsv"
+    # Step 9: psf_dof_extractor → resolution_map.tsv + psf_dof_data.root
+    psf_dof_data = sweep_dir / "psf_dof_data.root"
+    res_tsv      = sweep_dir / "resolution_map.tsv"
     cmd = [
-        find_binary("resolution_map"),
-        "--input", str(psf_dof_root),
-        "--config", str(sweep_cfg),
-        "--tsv", str(res_tsv),
-        "--jobs", str(jobs),
-        "--output", str(sweep_dir / "plots"),
+        find_binary("psf_dof_extractor"),
+        str(psf_dof_root),
+        str(psf_dof_data),
+        str(res_tsv),
+        str(sweep_cfg),
     ]
-    ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["resolution_map"], dry_run)
+    ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["psf_dof_extractor"], dry_run)
     if not ok:
         return None
-    out["res_tsv"] = res_tsv
+    out["psf_dof_data"] = psf_dof_data
+    out["res_tsv"]      = res_tsv
+
+    if not keep_psf_dof and not dry_run and psf_dof_root and psf_dof_root.exists():
+        psf_dof_size_gb = psf_dof_root.stat().st_size / (1024 ** 3)
+        logging.info(f"Eliminazione psf_dof.root ({psf_dof_size_gb:.1f} GB) — psf_dof_data.root prodotto.")
+        try:
+            psf_dof_root.unlink()
+        except Exception as e:
+            logging.warning(f"Impossibile eliminare {psf_dof_root}: {e}")
 
     # Step 10: pareto_selector
     pareto_tsv = sweep_dir / "pareto_results.tsv"
@@ -1078,6 +1115,10 @@ def main() -> int:
                         help="n_photons per il re-run opt con fuoco accurato (0=usa config.json)")
     parser.add_argument("--dx",               type=float, default=None,
                         help="Passo griglia x1/x2 in mm (default: valore da config.json)")
+    parser.add_argument("--keep-lens",       action="store_true", default=False,
+                        help="Non eliminare lens.root dopo psf_extractor (debug)")
+    parser.add_argument("--keep-psf-dof",   action="store_true", default=False,
+                        help="Non eliminare psf_dof.root dopo psf_dof_extractor (debug)")
     args = parser.parse_args()
 
     timestamp  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1246,7 +1287,9 @@ def main() -> int:
                                args.jobs, l1, l2, ap, args.dry_run,
                                prebuilt_events=prebuilt_events, use_local=use_local,
                                focus_tsv=focus_accurate_tsv,
-                               prebuilt_dof_tsv=prebuilt_dof_tsv)
+                               prebuilt_dof_tsv=prebuilt_dof_tsv,
+                               keep_lens=args.keep_lens,
+                               keep_psf_dof=args.keep_psf_dof)
             fast_results[tag] = out or {}
 
     # ── FASE 2: full sui top-k (se abilitata) ────────────────────────────────
@@ -1287,7 +1330,9 @@ def main() -> int:
                                    args.jobs, tag_l1, tag_l2, ap, args.dry_run,
                                    prebuilt_events=prebuilt_events, use_local=use_local,
                                    focus_tsv=focus_accurate_tsv,
-                                   prebuilt_dof_tsv=prebuilt_dof_tsv)
+                                   prebuilt_dof_tsv=prebuilt_dof_tsv,
+                                   keep_lens=args.keep_lens,
+                                   keep_psf_dof=args.keep_psf_dof)
                 if out is None:
                     retries += 1
                     logging.warning(f"Pipeline fallita per {full_tag} (tentativo {retries}/3)")
