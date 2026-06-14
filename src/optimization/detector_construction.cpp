@@ -82,6 +82,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
     if (m_l1_id || m_l2_id) {
       LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
       cutter.load_catalog("lens_cutter/lens_data/thorlabs_planoconvex.tsv");
+      cutter.load_catalog("lens_cutter/lens_data/custom_lenses.tsv");
 
       auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_l1) {
         const auto* lens = cutter.get_lens_by_id(id);
@@ -198,6 +199,7 @@ void DetectorConstruction::SetLenses(const std::string& l1_id, const std::string
 
   LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
   cutter.load_catalog("lens_cutter/lens_data/thorlabs_planoconvex.tsv");
+  cutter.load_catalog("lens_cutter/lens_data/custom_lenses.tsv");
 
   auto replace_solid = [&](G4VPhysicalVolume* pv, const std::string& id, bool is_l1) {
     const auto* lens = cutter.get_lens_by_id(id);

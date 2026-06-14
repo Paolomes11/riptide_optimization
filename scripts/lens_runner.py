@@ -2,8 +2,8 @@
 """
 lens_runner.py — Pipeline completa per una singola coppia di lenti RIPTIDE.
 
-Esegue la catena completa (opt → plot2D → lens → psf_extractor → q_map → chi2_map →
-dof → dof_map → psf-dof → psf_dof_extractor → resolution_map) per una specifica
+Esegue la catena completa (opt → plot2D → lens → psf_extractor → q_map → coverage_map →
+chi2_map → cor_map → dof → dof_map → psf-dof → psf_dof_extractor → resolution_map) per una specifica
 coppia L1/L2 senza screening iniziale né Pareto selector finale.
 
 File ROOT pesanti → storage esterno (SSD) o locale.
@@ -452,6 +452,27 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
         return None
     out["q_tsv"] = q_tsv
 
+    # ── Step 5b: coverage_map ─────────────────────────────────────────────────
+    cov_tsv = data / "coverage_map.tsv"
+    cmd_cov = [
+        find_binary("q_map"),
+        "--psf",        str(psf_data),
+        "--config",     str(cfg_path),
+        "--n-tracks",   str(qp["n_tracks"]),
+        "--dt",         str(qp["dt"]),
+        "--min-hits",   str(qp["min_hits"]),
+        "--trace-frac", str(qp["trace_frac"]),
+        "--coverage",
+        "--tsv",        str(cov_tsv),
+        "--jobs",       str(jobs),
+        "--output",     str(plots / "coverage_map.png"),
+    ]
+    ok_cov, _, _ = run_cmd(cmd_cov, log, TIMEOUTS_SEC["analysis"], dry_run)
+    if ok_cov:
+        out["coverage_tsv"] = cov_tsv
+    else:
+        logging.warning("coverage_map fallito — proseguo comunque")
+
     # ── Step 6: chi2_map ──────────────────────────────────────────────────────
     chi2_tsv = data / "chi2_map.tsv"
     cp       = ap["chi2_map"]
@@ -471,6 +492,24 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
     if not ok:
         return None
     out["chi2_tsv"] = chi2_tsv
+
+    # ── Step 6b: cor_map ──────────────────────────────────────────────────────
+    corr_tsv = data / "corr_map.tsv"
+    cmd_corr = [
+        find_binary("chi2_map"),
+        "--psf",      str(psf_data),
+        "--config",   str(cfg_path),
+        "--min-hits", str(cp["min_hits"]),
+        "--p-low",    str(cp["p_low"]),
+        "--p-high",   str(cp["p_high"]),
+        "--corr-map",
+        "--tsv",      str(corr_tsv),
+        "--jobs",     str(jobs),
+        "--output",   str(plots / "cor_map.png"),
+    ]
+    ok_corr, _, _ = run_cmd(cmd_corr, log, TIMEOUTS_SEC["analysis"], dry_run)
+    if not ok_corr:
+        logging.warning("cor_map fallito — proseguo comunque")
 
     # ── Steps 7–8: dof + dof_map ──────────────────────────────────────────────
     dof_tsv = data / "dof_map.tsv"

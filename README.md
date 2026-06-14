@@ -138,7 +138,6 @@ riptide_optimization/
 │   │   └── src/
 │   ├── exp3/                                # Calibrazione omografica + analisi laser
 │   │   ├── exp3_main.cpp
-│   │   ├── test_exp3_homography.cpp
 │   │   ├── include/
 │   │   └── src/
 │   ├── exp_common/                          # Moduli FITS condivisi
@@ -174,16 +173,10 @@ riptide_optimization/
 │   └── lyra/
 │
 └── output/
-    ├── lens_simulation/
-    ├── dof_simulation/
-    ├── psf_dof_simulation/
-    ├── mean_covariance_maps/
-    ├── psf/
-    ├── psf_analysis/
-    ├── dof_analysis/
-    ├── resolution_analysis/
-    ├── pareto_analysis/
-    └── exp{1,2,3}/
+    ├── sweep/                   # autonomous_optimizer.py — sweep --all-lenses su tutte le coppie
+    │   └── <tag>/               #   plots/, optimizer_*.log, report_*.md
+    └── lens_simulations/        # lens_runner.py — simulazione di una coppia specifica
+        └── {l1_id}_{l2_id}/    #   plots/, data/, pareto/, pipeline.log
 ```
 
 ---
@@ -250,7 +243,6 @@ build/analysis/pareto_analysis/Release/test_pareto_selector
 build/analysis/exp1/Release/exp1_main
 build/analysis/exp2/Release/exp2_main
 build/analysis/exp3/Release/exp3_main
-build/analysis/exp3/Release/test_exp3_homography
 ```
 
 > **Build Release**: aggiunge automaticamente `-march=native -O3 -ffast-math`.
@@ -538,6 +530,8 @@ output/sweep/lens_screening/plots/              # plot screening (fuoco mobile)
 output/sweep/report_<timestamp>.md              # report Markdown finale con top-10 Pareto
 ```
 
+> `output/sweep/` è la cartella usata dallo sweep `--all-lenses`; per una coppia singola vedi [`lens_runner.py`](#simulazione-singola-coppia-di-lenti) → `output/lens_simulations/`.
+
 ### Utilizzo
 
 ```bash
@@ -571,6 +565,8 @@ python3 scripts/autonomous_optimizer.py [opzioni]
 ## Simulazione singola coppia di lenti
 
 `scripts/lens_runner.py` esegue la pipeline completa per una coppia di lenti specificata, senza screening iniziale né Pareto finale. È il modo più diretto per analizzare una coppia specifica già nota.
+
+> Per lo sweep su tutte le coppie del catalogo (`--all-lenses`) usa invece `autonomous_optimizer.py` → `output/sweep/`.
 
 ### Output
 
@@ -1219,10 +1215,6 @@ cd build && ctest -R fit_trace_unit -V
 ./build/analysis/pareto_analysis/Release/test_pareto_selector
 cd build && ctest -R pareto_selector_unit -V
 
-# Test omografia (exp3)
-./build/analysis/exp3/Release/test_exp3_homography
-cd build && ctest -R exp3_homography_unit -V
-
 # Test diagnostica chi2
 ./build/analysis/psf_analysis/Release/test_chi2_diagnostics
 ```
@@ -1260,15 +1252,6 @@ cd build && ctest -R exp3_homography_unit -V
 ### Suite Pareto — `test_pareto_selector`
 
 Test unitari per `pareto_core.hpp`: filtri hard (η, DoF, EE80), calcolo Mtot con normalizzazione, fronte di Pareto (dominanza), join su (x1,x2) con tolleranza.
-
-### Suite H/S/D/Q — `test_exp3_homography` (23 test)
-
-| Cluster | Test | Verifica |
-|---|---|---|
-| **H1–H7** | Identità, traslazione, scaling, rotazione 30°, prospettiva, eccezioni, rumore σ=0.1 px | RMS < 3σ, H=I per identità |
-| **S1–S4** | JSON save/load, roundtrip, directory annidate, eccezione file mancante | Roundtrip senza perdita |
-| **D1–D6** | Rilevamento dot su gaussiane sintetiche (griglia 3×2, picco sotto soglia, scala non unitaria) | Posizioni entro 0.5 px |
-| **Q1–Q6** | `load_Q_sim` TSV: match esatto/tolleranza, nessun match, file mancante, confine tolleranza | Lookup corretto |
 
 ### Note sui dati sintetici
 
@@ -1541,6 +1524,9 @@ Estende il formato PSF con i dati di raggio al piano virtuale per ogni punto del
 ---
 
 ## Workflow completo
+
+Il workflow primario per una coppia di lenti è gestito da `lens_runner.py`, che esegue automaticamente tutti i passi della pipeline (opt → lens → PSF → DoF → mappe → Pareto).
+
 ```bash
 # ── 1. Build ────────────────────────────────────────────────────────────────
 cmake -S . -B build/ -G "Ninja Multi-Config"
@@ -1549,79 +1535,20 @@ cmake --build build/ --config Release
 # ── 2. Test unitari ─────────────────────────────────────────────────────────
 ./build/analysis/psf_analysis/Release/test_fit_trace
 ./build/analysis/pareto_analysis/Release/test_pareto_selector
-./build/analysis/exp3/Release/test_exp3_homography
+./build/analysis/exp3/Release/test_exp3_calib
 # oppure: cd build && ctest -V
 
-# ── 3. Scansione efficienza geometrica ──────────────────────────────────────
-./build/Release/optimization_main -g geometry/main.gdml -b -o
-./build/analysis/Release/plot2D
-# → output/efficiency2D.png
+# ── 3. Pipeline per singola coppia ──────────────────────────────────────────
+python3 scripts/lens_runner.py --l1-id LA4464 --l2-id LA4464R --local --mobile-focus
+# → output/lens_simulations/LA4464_LA4464R/{plots,data,pipeline.log}
 
-# ── 4a. Beam scan PSF (parallelizzato) ──────────────────────────────────────
-./scripts/run.sh lens local --jobs $(nproc --all)
-# → output/lens_simulation/lens_<timestamp>.root
+# ── 4. Post-processing Pareto con pesi multipli ──────────────────────────────
+python3 scripts/pareto_runner.py --l1-id LA4464 --l2-id LA4464R
+# → output/lens_simulations/LA4464_LA4464R/pareto/{label}/
 
-# ── 4b. Scansione DoF (parallelizzata) ──────────────────────────────────────
-./scripts/run.sh dof local --jobs $(nproc --all)
-# → output/dof_simulation/focal.root
-
-# ── 5a. Estrazione PSF ───────────────────────────────────────────────────────
-./build/analysis/Release/psf_extractor \
-    output/lens_simulation/lens_<timestamp>.root \
-    output/psf/psf_data.root
-# → output/psf/psf_data.root
-
-# ── 5b. Calcolo piano di fuoco, DoF, magnificazione ─────────────────────────
-./build/analysis/dof_analysis/Release/dof_map \
-    --input output/dof_simulation/focal.root \
-    --tsv   output/dof_analysis/dof_map.tsv
-# → output/dof_analysis/dof_map.png
-
-# ── 5c. Beam scan focused (detector al piano di fuoco ottimale) ─────────────
-./scripts/run.sh lens local --jobs $(nproc --all) \
-    --focus-tsv output/dof_analysis/dof_map.tsv
-# → output/lens_simulation/lens_focused_<timestamp>.root
-
-# ── 6. Mappa linearità (diagnostica veloce) ──────────────────────────────────
-./build/analysis/psf_analysis/Release/chi2_map \
-    --psf output/psf/psf_data.root --log
-# → output/psf_analysis/chi2_map.png
-
-# ── 7. Mappa Q — ottimizzazione PSF-based ────────────────────────────────────
-./build/analysis/psf_analysis/Release/q_map \
-    --psf output/psf/psf_data.root \
-    --n-tracks 100 --dt 0.1 --unfold-dz 0.000002 \
-    --trace-frac 0.50 --log \
-    --tsv output/psf_analysis/q_map.tsv
-# → output/psf_analysis/q_map.png
-
-# ── 8. Mappa copertura geometrica ─────────────────────────────────────────────
-./build/analysis/psf_analysis/Release/q_map --coverage \
-    --psf output/psf/psf_data.root
-# → output/psf_analysis/coverage_map.png
-
-# ── 9. Metriche ottiche al fuoco (EE80, Δy_min) ──────────────────────────────
-./build/analysis/resolution_analysis/Release/resolution_map \
-    --input output/psf_dof_simulation/psf_dof.root \
-    --tsv   output/resolution_analysis/resolution_map.tsv
-# → output/resolution_analysis/resolution_{DoF,delta_y,EE80}_map.png
-
-# ── 10. Selezione Pareto-ottimale ─────────────────────────────────────────────
-./build/analysis/pareto_analysis/Release/pareto_selector \
-    --events     output/optimization/events.root \
-    --qmap       output/psf_analysis/q_map.tsv \
-    --chi2map    output/psf_analysis/chi2_map.tsv \
-    --dofmap     output/dof_analysis/dof_map.tsv \
-    --resolution output/resolution_analysis/resolution_map.tsv \
-    --tsv        output/pareto_analysis/pareto_results.tsv
-# → output/pareto_analysis/pareto_plot.png
-# → Stampa su stdout la configurazione raccomandata
-
-# ── 11. Diagnostica configurazione ottimale ───────────────────────────────────
+# ── 5. Diagnostica manuale configurazione ottimale ───────────────────────────
 ./build/analysis/psf_analysis/Release/trace_viewer \
     --x1 <x1*> --x2 <x2*> --y0 5.0 --fit
-./build/analysis/Release/beam_scan_plot <x1*> <x2*>
-./build/analysis/Release/m_c_creator   <x1*> <x2*> 5.0
 ```
 
 ---
@@ -1644,7 +1571,7 @@ cmake --build build/ --config Release
 
 ### Calibrazione geometrica (exp3 — omografia)
 
-- **Hartley, R. & Zisserman, A. (2003)**. *Multiple View Geometry in Computer Vision*, 2nd ed. Cambridge University Press. §4.1: Direct Linear Transform (DLT) con normalizzazione isotropica dei punti (normalizzazione di Hartley). Algoritmo usato in `analysis/exp3/src/homography.cpp` per la calibrazione geometrica dell'esperimento laser.
+- **Hartley, R. & Zisserman, A. (2003)**. *Multiple View Geometry in Computer Vision*, 2nd ed. Cambridge University Press. §4.1: Direct Linear Transform (DLT) con normalizzazione isotropica dei punti (normalizzazione di Hartley). Algoritmo usato in `analysis/exp3/` per la calibrazione geometrica dell'esperimento laser.
 
 ---
 

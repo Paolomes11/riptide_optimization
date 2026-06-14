@@ -11,7 +11,6 @@ add_library(exp3_lib STATIC
     src/exp3b_analysis.cpp
     src/exp3_plots.cpp
     src/exp3_config.cpp
-    # homography.cpp escluso: mantenuto su disco ma non compilato
 )
 
 target_include_directories(exp3_lib
@@ -48,7 +47,6 @@ target_compile_options(exp3_main PRIVATE ${COMMON_WARNINGS})
 
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output/exp3)
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output/exp3/calib)
-file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/output/exp3b)
 
 # Unit test: exp3 calibrazione + tracce parallele + exp3b
 add_executable(test_exp3_calib test_exp3_calib.cpp)
@@ -72,4 +70,3 @@ set_tests_properties(exp3_calib_test PROPERTIES
 
 message(STATUS "exp3 analysis module configured (v2: parallel traces + line calib)")
 message(STATUS "  Place FITS files in: data/exp3/{calib,good,bad}/d{dist}/")
-message(STATUS "  Exp3b FITS in:       data/exp3b/{good,bad}/d{dist}/")
