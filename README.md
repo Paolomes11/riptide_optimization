@@ -369,7 +369,7 @@ build/analysis/exp3/Release/exp3_main
 | `--ssd` | flag | Output su SSD |
 | `--ssd-mount` | path | Mount point SSD |
 
-**Parametri config**: `psf_dof_n_photons` (default 1000), `psf_dof_x_virtual_offset`, `psf_dof_save_hits`.
+**Parametri config**: `psf_dof_n_photons` (default 10000), `psf_dof_x_virtual_offset`, `psf_dof_save_hits`.
 
 ---
 
@@ -408,6 +408,8 @@ Il framework supporta la parallelizzazione tramite `scripts/run.sh`, che divide 
 Lo script tenta prima di avviare `scripts/dashboard.py` (Python + `rich`); se non disponibile, ricade su `scripts/monitor.sh` (bash puro). La dashboard mostra progresso globale e per-chunk, tempo trascorso, ETA e stato di ogni job.
 
 **Chunking automatico**: uno script Python embedded calcola tutte le coppie (x1, x2) valide (rispettando i vincoli di non-collisione geometrica) e le distribuisce bilanciata in N chunk. Ogni chunk riceve `config_id_offset` e `run_id_offset` univoci per garantire ID globalmente monotoni dopo il merge.
+
+**Modalità super-batch** (invocata da `lens_runner.py --disk-guard-gb`): se il config chunk JSON contiene la chiave `pairs`, `run.sh` usa quelle coppie pre-computate invece di ricalcolarle, e legge `config_id_offset_base`/`run_id_offset_base` per calcolare gli offset corretti tra batch sequenziali. Questo permette a `lens_runner.py` di eseguire la simulazione in blocchi reattivi al disco senza perdere la continuità degli ID.
 
 **Cleanup**: `Ctrl+C` termina tutti i processi Geant4 in background, rimuove i config temporanei in `/tmp/riptide_chunks_*` e i file ROOT parziali.
 
@@ -629,6 +631,7 @@ python3 scripts/lens_runner.py --l1-id LA4464 --l2-id LA4464R --local --skip-opt
 | `--skip-lens` | off | Salta lens+psf_extractor (richiede `data/psf_data.root`) |
 | `--skip-dof` | off | Salta dof+dof_map (richiede `data/dof_map.tsv`) |
 | `--skip-psf-dof` | off | Salta psf-dof+psf_dof_extractor (richiede `data/psf_dof_data.root`) |
+| `--disk-guard-gb N` | 0 (off) | Super-batch reattivo: esegue `psf_extractor` e cancella `lens.root` a batch, mantenendo almeno N GB liberi su disco. Raccomandato su CNAF con `--disk-guard-gb 400` |
 | `--notes "..."` | — | Note aggiuntive nel CSV di log |
 
 ### Modalità detector
@@ -744,7 +747,7 @@ Elabora il file `focal.root` prodotto da `dof_simulation_main` e calcola per ogn
 - **Magnificazione** `M`: rapporto posizione trasversa media sul detector / posizione sorgente.
 - **EE80**: diametro che raccoglie l'80% dell'energia (vedi [Riferimenti](#riferimenti-metodologici)).
 - **Larghezza striscia** `stripe_width`: estensione del fascio sul fotocatodo 16 mm.
-- **Flag** `focus_before_lens2`: fuoco fisicamente non raggiungibile (x_focus < x2); i bin corrispondenti sono marcati con overlay arancione nella mappa PNG.
+- **Flag** `focus_before_lens2`: fuoco fisicamente non raggiungibile (x_focus < x2); i bin corrispondenti sono delimitati da una linea di contorno tratteggiata arancione nelle mappe PNG e sintetizzati in una mappa dedicata `dof_focus_zone_map.png` (palette blu→rosso).
 
 **Algoritmo propagazione**: `z(xᵢ) = z₀ + dz·(xᵢ − x_virtual)` — valida nell'ottica geometrica perché nel tratto x_virtual → detector non esistono elementi ottici. Le direzioni `(dy, dz)` codificano già la rifrazione calcolata da Geant4, aberrazioni di ordine superiore incluse.
 
@@ -1317,9 +1320,9 @@ CI: `.github/workflows/regression.yml` esegue la suite ad ogni push su `main`.
   "x_det": 579.8,
   "lens_det_gap": 10.0,
   "lens_gap_margin": 1.0,
-  "x_min": 99.0,
+  "x_min": 45.0,
   "x_max": 300.0,
-  "dx": 3.0,
+  "dx": 1.0,
 
   "r1": 38.6,
   "h1": 12.5,
@@ -1337,16 +1340,16 @@ CI: `.github/workflows/regression.yml` esegue la suite ad ogni push su `main`.
   "source_dy": 0.5,
 
   "n_photons": 10000,
-  "lens_n_photons": 1000,
+  "lens_n_photons": 10000,
   "dof_n_photons": 100000,
-  "psf_dof_n_photons": 1000,
+  "psf_dof_n_photons": 10000,
 
   "use_importance_sampling": true,
   "lower_percentile": 0.0,
   "upper_percentile": 0.0,
 
   "dof_x_virtual_offset": 30.0,
-  "dof_x_scan_min": 100.0,
+  "dof_x_scan_min": 60.0,
   "dof_x_scan_max": 700.0,
   "dof_x_scan_step": 0.5,
   "dof_k_threshold": 1.414,
@@ -1386,7 +1389,7 @@ CI: `.github/workflows/regression.yml` esegue la suite ad ogni push su `main`.
 | `psf_dof_save_hits` | Salva hit individuali in `psf_dof.root` (pesante) |
 | `m_target` | Magnificazione target per validazione in `dof_map` |
 
-I parametri `config_id_offset` e `run_id_offset` vengono aggiunti dinamicamente da `run.sh` per garantire ID univoci dopo il merge.
+I parametri `config_id_offset` e `run_id_offset` vengono aggiunti dinamicamente da `run.sh` per garantire ID univoci dopo il merge. In modalità super-batch (invocata da `lens_runner.py --disk-guard-gb`), i campi `config_id_offset_base` e `run_id_offset_base` nel JSON del chunk specificano l'offset globale accumulato tra batch sequenziali.
 
 ### `config/config_profile.json`
 
@@ -1561,7 +1564,7 @@ python3 scripts/pareto_runner.py --l1-id LA4464 --l2-id LA4464R
 
 **Ricerca del fuoco**: il piano di fuoco `x*` minimizza σ_z(x). Affinamento sub-step con interpolazione parabolica del vertice di σ_z²(x) (fit di Lagrange sui tre punti più vicini). Equivalente al criterio "Quick Focus" di Zemax per minimizzazione RMS dello spot.
 
-**Fuoco prima della seconda lente**: quando il minimo di σ_z cade prima di x2, la propagazione lineare all'indietro attraverserebbe la seconda lente, dove i raggi verrebbero rifratti: il risultato è fisicamente non valido. Questi bin vengono evidenziati nelle mappe PNG con overlay arancione semitrasparente (α = 0.35) e marcati con `focus_before_lens2 = 1` nel TSV.
+**Fuoco prima della seconda lente**: quando il minimo di σ_z cade prima di x2, la propagazione lineare all'indietro attraverserebbe la seconda lente, dove i raggi verrebbero rifratti: il risultato è fisicamente non valido. Questi bin vengono delimitati nelle mappe PNG da una linea di contorno tratteggiata arancione (`CONT3`, kOrange+7, kDashed) sovrapposta a ciascuna heatmap, e sono sintetizzati in una mappa dedicata `dof_focus_zone_map.png` con palette a due fermate (blu = fuoco valido, rosso = fuoco prima della lente 2). I bin sono anche marcati con `focus_before_lens2 = 1` nel TSV.
 
 - **Ray transfer matrix analysis (ABCD)** — Usata come termine di confronto: appropriata per sistemi con parametri gaussiani e approssimazione parAssiale; non usata qui perché il campionamento MC include aberrazioni di ordine superiore. URL: https://en.wikipedia.org/wiki/Ray_transfer_matrix_analysis
 - **DevOptical Part 19: A Quick Focus Algorithm** — The Pulsar. Criterio di best focus per minimizzazione RMS spot. URL: https://www.thepulsar.be/article/-devoptical-part-19--a-quick-focus-algorithm

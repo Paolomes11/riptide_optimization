@@ -686,25 +686,13 @@ int main(int argc, char** argv) {
   }
 
   auto build_warn_boxes = [&]() {
-    std::vector<std::unique_ptr<TBox>> boxes;
-    boxes.reserve(static_cast<size_t>(n_bins_x1 * n_bins_x2));
-    for (int bx = 1; bx <= n_bins_x1; ++bx) {
-      double x_lo = h_focus_warn.GetXaxis()->GetBinLowEdge(bx);
-      double x_hi = h_focus_warn.GetXaxis()->GetBinUpEdge(bx);
-      for (int by = 1; by <= n_bins_x2; ++by) {
-        if (h_focus_warn.GetBinContent(bx, by) < 0.5) {
-          continue;
-        }
-        double y_lo = h_focus_warn.GetYaxis()->GetBinLowEdge(by);
-        double y_hi = h_focus_warn.GetYaxis()->GetBinUpEdge(by);
-        auto box    = std::make_unique<TBox>(x_lo, y_lo, x_hi, y_hi);
-        box->SetFillColorAlpha(kOrange + 1, 0.35);
-        box->SetLineColor(0);
-        box->Draw("same");
-        boxes.push_back(std::move(box));
-      }
-    }
-    return boxes;
+    TH2D h_warn_c = h_focus_warn;
+    double level[1] = {0.5};
+    h_warn_c.SetContour(1, level);
+    h_warn_c.SetLineColor(kOrange + 7);
+    h_warn_c.SetLineWidth(2);
+    h_warn_c.SetLineStyle(kDashed);
+    h_warn_c.DrawCopy("CONT3 same");
   };
 
   auto build_mask_boxes = [&](TH2D& h_mask) {
@@ -737,8 +725,8 @@ int main(int argc, char** argv) {
     c.SetRightMargin(0.16);
     c.SetTopMargin(0.08);
     h.Draw("COLZ");
-    auto warn_boxes = build_warn_boxes();
-    auto boxes      = build_mask_boxes(h_mask);
+    build_warn_boxes();
+    auto boxes = build_mask_boxes(h_mask);
     std::string out = (std::filesystem::path(cli.output_dir) / (name + ".png")).string();
     c.SaveAs(out.c_str());
   };

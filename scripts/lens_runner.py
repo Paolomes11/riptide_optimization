@@ -235,8 +235,67 @@ def preflight_checks() -> list[str]:
 
 # ─── Fuoco mobile (DOF-based) ────────────────────────────────────────────────
 
-def extract_focus_tsv(dof_tsv: Path, out_path: Path, dry_run: bool) -> Path | None:
-    """Estrae (x1, x2, x_focus) da dof_map.tsv, escludendo i fuochi prima di L2."""
+def _remove_focus_outliers(rows: list[tuple[str, str, str]],
+                            dx: float = 3.0,
+                            thresh: float = 15.0) -> list[tuple[str, str, str]]:
+    """Rimuove iterativamente outlier isolati in x_focus all'interno di ogni x1-slice.
+
+    Un punto (x1, x2, xf) è un outlier se differisce di più di `thresh` mm
+    dalla mediana dei vicini entro ±2 passi dx sulla stessa riga x1.
+    L'approccio iterativo svela outlier "mascherati" da altri outlier vicini
+    (tipico con coppie asimmetriche dove lo stray-light crea cascate di
+    minimi spuri nel DOF scan).
+    """
+    import statistics
+    from collections import defaultdict
+
+    by_x1: dict[float, list[tuple[float, float]]] = defaultdict(list)
+    for x1s, x2s, xfs in rows:
+        by_x1[float(x1s)].append((float(x2s), float(xfs)))
+
+    cur: dict[float, list[tuple[float, float]]] = dict(by_x1)
+    total_removed = 0
+
+    for _ in range(20):
+        next_cur: dict[float, list[tuple[float, float]]] = {}
+        removed_this = 0
+        for x1, pts in cur.items():
+            pts_s = sorted(pts, key=lambda p: p[0])
+            x2s_list = [p[0] for p in pts_s]
+            xfs_list = [p[1] for p in pts_s]
+            kept: list[tuple[float, float]] = []
+            for i, (x2, xf) in enumerate(pts_s):
+                neighbors = [xfs_list[j] for j in range(len(pts_s))
+                             if j != i and abs(x2s_list[j] - x2) <= 2 * dx + 1e-6]
+                if len(neighbors) >= 2:
+                    med = statistics.median(neighbors)
+                    if abs(xf - med) > thresh:
+                        logging.warning(
+                            f"focus outlier rimosso: x1={x1:.0f} x2={x2:.0f} "
+                            f"x_focus={xf:.1f} mm (mediana vicini={med:.1f} mm, "
+                            f"delta={abs(xf-med):.1f} mm > soglia={thresh:.0f} mm)"
+                        )
+                        removed_this += 1
+                        total_removed += 1
+                        continue
+                kept.append((x2, xf))
+            next_cur[x1] = kept
+        cur = next_cur
+        if removed_this == 0:
+            break
+
+    if total_removed:
+        logging.info(f"focus outlier: rimossi {total_removed} punti su {len(rows)}")
+
+    return [(str(x1), str(x2), str(xf))
+            for x1, pts in sorted(cur.items())
+            for x2, xf in pts]
+
+
+def extract_focus_tsv(dof_tsv: Path, out_path: Path, dry_run: bool,
+                      dx: float = 3.0) -> Path | None:
+    """Estrae (x1, x2, x_focus) da dof_map.tsv, escludendo i fuochi prima di L2
+    e rimuovendo gli outlier isolati causati da minimi spuri nel DOF scan."""
     if dry_run:
         return out_path
     if not dof_tsv.exists():
@@ -255,6 +314,10 @@ def extract_focus_tsv(dof_tsv: Path, out_path: Path, dry_run: bool) -> Path | No
     if not rows:
         logging.warning("extract_focus_tsv: nessun punto focale valido")
         return None
+    rows = _remove_focus_outliers(rows, dx=dx)
+    if not rows:
+        logging.warning("extract_focus_tsv: nessun punto rimasto dopo rimozione outlier")
+        return None
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         f.write("x1\tx2\tx_focus\n")
@@ -262,6 +325,219 @@ def extract_focus_tsv(dof_tsv: Path, out_path: Path, dry_run: bool) -> Path | No
             f.write(f"{r[0]}\t{r[1]}\t{r[2]}\n")
     logging.info(f"Focus TSV accurato: {len(rows)} punti → {out_path}")
     return out_path
+
+# ─── Disk-guard utilities ─────────────────────────────────────────────────────
+
+def _arange(start: float, stop: float, step: float) -> list[float]:
+    result = []
+    i = 0
+    while True:
+        val = start + i * step
+        if val > stop + 1e-9:
+            break
+        result.append(val)
+        i += 1
+    return result
+
+
+def _load_thorlabs_data() -> dict[str, dict]:
+    """Carica spessori e offset da TSV Thorlabs (stessa logica di run.sh)."""
+    data: dict[str, dict] = {}
+
+    def _parse(filename: str, has_rotation: bool) -> None:
+        path = PROJECT_ROOT / "lens_cutter" / "lens_data" / filename
+        if not path.exists():
+            return
+        with open(path) as f:
+            for line in f.readlines()[1:]:
+                parts = line.split('\t')
+                if len(parts) < 6:
+                    continue
+                lid  = parts[0].strip()
+                tc   = float(parts[4])
+                rot  = float(parts[7]) if has_rotation and len(parts) >= 8 else 0.0
+                sign = -1.0 if abs(rot - 180.0) < 1e-6 else 1.0
+                te   = float(parts[5])
+                data[lid] = {'h': tc, 'offset': (tc - te) / 2.0 * sign if has_rotation else 0.0}
+
+    _parse('thorlabs_biconvex.tsv', has_rotation=False)
+    _parse('thorlabs_planoconvex.tsv', has_rotation=True)
+    return data
+
+
+def generate_pairs(cfg: dict, l1_id: str, l2_id: str,
+                   mode: str = "lens") -> list[tuple[float, float]]:
+    """Genera la lista completa di coppie (x1, x2) — stessa logica di run.sh."""
+    import math
+    thorlabs = _load_thorlabs_data()
+    h1     = thorlabs.get(l1_id, {}).get('h', cfg.get('h1', 12.5))
+    h2     = thorlabs.get(l2_id, {}).get('h', cfg.get('h2', 16.3))
+    margin = 3.0 if mode in ('lens', 'psf-dof') else 1.0
+
+    x_min = cfg['x_min']
+    x_max = cfg['x_max']
+    dx    = cfg['dx']
+
+    pairs: list[tuple[float, float]] = []
+    for x1 in _arange(x_min, x_max, dx):
+        x2_min_collision = x1 + (h1 + h2) / 2.0 + margin
+        x2_start_raw     = max(x1 + dx, x2_min_collision)
+        x2_start = x_min + math.ceil(round((x2_start_raw - x_min) / dx, 8)) * dx
+        for x2 in _arange(x2_start, x_max, dx):
+            pairs.append((round(float(x1), 6), round(float(x2), 6)))
+    return pairs
+
+
+def estimate_lens_gb_per_pair(cfg: dict) -> float:
+    """Stima GB per coppia per lens.root (conservativa: 20% hit rate, 75 B/hit)."""
+    nx = len(_arange(cfg.get('source_x_min', -30.0), cfg.get('source_x_max', 30.0),
+                     cfg.get('source_dx', 0.5)))
+    ny = len(_arange(cfg.get('source_y_min', 0.0), cfg.get('source_y_max', 14.14),
+                     cfg.get('source_dy', 0.5)))
+    n_photons = cfg.get('lens_n_photons', 1000)
+    return nx * ny * n_photons * 0.20 * 75 / 1e9
+
+
+def run_lens_with_disk_guard(
+    cfg: dict, cfg_path: Path, out_dir: Path, ssd_mount: Path,
+    jobs: int, l1_id: str, l2_id: str, use_local: bool, dry_run: bool,
+    focus_tsv: Path | None, disk_guard_gb: float, keep_lens: bool,
+    min_hits: int = 5,
+) -> Path | None:
+    """Esegue lens + psf_extractor in super-batch reattivi al disco.
+
+    Ogni super-batch simula un sottoinsieme di coppie, estrae subito psf_data
+    parziale e cancella lens.root, tenendo il picco su disco sotto il budget.
+    """
+    import shutil as _shutil
+
+    log   = out_dir / "pipeline.log"
+    data  = out_dir / "data"
+
+    all_pairs   = generate_pairs(cfg, l1_id, l2_id, mode="lens")
+    total       = len(all_pairs)
+    gb_per_pair = estimate_lens_gb_per_pair(cfg)
+
+    avail_gb = _shutil.disk_usage(out_dir).free / 1e9
+    safe_gb  = max(avail_gb - disk_guard_gb, 0.0)
+    batch_size = max(jobs, int(safe_gb / max(gb_per_pair, 1e-9)))
+    batch_size = min(batch_size, total)
+
+    logging.info(
+        f"[disk-guard] {total} coppie totali, ~{gb_per_pair:.3f} GB/coppia, "
+        f"{avail_gb:.0f} GB liberi → batch_size iniziale={batch_size}"
+    )
+
+    nx = len(_arange(cfg.get('source_x_min', -30.0), cfg.get('source_x_max', 30.0),
+                     cfg.get('source_dx', 0.5)))
+    ny = len(_arange(cfg.get('source_y_min', 0.0), cfg.get('source_y_max', 14.14),
+                     cfg.get('source_dy', 0.5)))
+    n_runs_per_pair = nx * ny
+
+    psf_partials: list[Path] = []
+    offset_cfg = 0
+    offset_run = 0
+    batch_idx  = 0
+    pos        = 0
+
+    while pos < total:
+        # Ricalcola batch_size in base allo spazio corrente
+        avail_gb = _shutil.disk_usage(out_dir).free / 1e9
+        safe_gb  = max(avail_gb - disk_guard_gb, 0.0)
+        if safe_gb < gb_per_pair and not dry_run:
+            logging.error(
+                f"[disk-guard] Spazio insufficiente ({avail_gb:.0f} GB liberi, "
+                f"guardia={disk_guard_gb:.0f} GB). Interruzione."
+            )
+            return None
+        batch_size = max(jobs, int(safe_gb / max(gb_per_pair, 1e-9)))
+        batch_size = min(batch_size, total - pos)
+
+        batch_pairs = all_pairs[pos : pos + batch_size]
+
+        # Config temporaneo per il super-batch
+        tmp_cfg = dict(cfg)
+        tmp_cfg['pairs']                 = [list(p) for p in batch_pairs]
+        tmp_cfg['config_id_offset_base'] = offset_cfg
+        tmp_cfg['run_id_offset_base']    = offset_run
+        tmp_cfg_path = data / f"superbatch_{batch_idx}.json"
+        tmp_cfg_path.write_text(json.dumps(tmp_cfg, indent=2))
+
+        partial_lens = data / f"partial_lens_{batch_idx}.root"
+        partial_psf  = data / f"partial_psf_data_{batch_idx}.root"
+
+        logging.info(
+            f"[disk-guard] Super-batch {batch_idx}: coppie {pos}–{pos+batch_size-1} "
+            f"({batch_size} coppie, ~{batch_size*gb_per_pair:.1f} GB attesi)"
+        )
+
+        # Simula questo batch
+        lens_root = run_simulation_step(
+            "lens", tmp_cfg_path, out_dir, ssd_mount, jobs,
+            l1_id, l2_id, use_local, dry_run, focus_tsv,
+        )
+        if lens_root is None:
+            logging.error(f"[disk-guard] Simulazione lens fallita al super-batch {batch_idx}")
+            return None
+
+        # Rinomina lens.root → partial_lens_K.root
+        if not dry_run and lens_root.exists() and lens_root != partial_lens:
+            lens_root.rename(partial_lens)
+        elif dry_run:
+            partial_lens = Path(f"/dev/null/partial_lens_{batch_idx}.root")
+
+        # Estrai psf_data parziale
+        cmd = [find_binary("psf_extractor"), str(partial_lens), str(partial_psf), str(min_hits)]
+        ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
+        if not ok:
+            logging.error(f"[disk-guard] psf_extractor fallito al super-batch {batch_idx}")
+            return None
+
+        psf_partials.append(partial_psf)
+
+        # Libera il lens parziale
+        if not keep_lens and not dry_run and partial_lens.exists():
+            try:
+                sz = partial_lens.stat().st_size / (1024 ** 3)
+                logging.info(f"[disk-guard] Eliminato partial_lens_{batch_idx}.root ({sz:.1f} GB)")
+                partial_lens.unlink()
+            except Exception as e:
+                logging.warning(f"[disk-guard] Impossibile eliminare {partial_lens}: {e}")
+
+        offset_cfg += len(batch_pairs)
+        offset_run += len(batch_pairs) * n_runs_per_pair
+        pos        += batch_size
+        batch_idx  += 1
+
+    # Combina tutti i psf_data parziali
+    psf_data = data / "psf_data.root"
+    if dry_run:
+        logging.info(f"[disk-guard] [DRY] hadd {psf_data} ← {batch_idx} parziali")
+        return psf_data
+
+    if len(psf_partials) == 1:
+        psf_partials[0].rename(psf_data)
+    else:
+        hadd_cmd = ["hadd", "-fk", str(psf_data)] + [str(p) for p in psf_partials]
+        res = subprocess.run(hadd_cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            logging.error(f"[disk-guard] hadd fallito:\n{res.stderr}")
+            return None
+        for p in psf_partials:
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+    # Pulizia config temporanei
+    for i in range(batch_idx):
+        tmp = data / f"superbatch_{i}.json"
+        if tmp.exists():
+            tmp.unlink()
+
+    logging.info(f"[disk-guard] psf_data.root finale: {psf_data}")
+    return psf_data
+
 
 # ─── Simulation step launcher ─────────────────────────────────────────────────
 
@@ -322,7 +598,8 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
                  mobile_focus: bool,
                  keep_lens: bool, keep_psf_dof: bool,
                  skip_opt: bool, skip_lens: bool,
-                 skip_dof: bool, skip_psf_dof: bool) -> dict | None:
+                 skip_dof: bool, skip_psf_dof: bool,
+                 disk_guard_gb: float = 0.0) -> dict | None:
 
     out   = {}
     log   = out_dir / "pipeline.log"
@@ -330,6 +607,11 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
     data  = out_dir / "data"
     plots.mkdir(parents=True, exist_ok=True)
     data.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _run_cfg = json.loads(cfg_path.read_text())
+    except Exception:
+        _run_cfg = {}
 
     if not use_local:
         ok, fid, msg = check_ssd_mount(ssd_mount)
@@ -366,7 +648,8 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
             if not ok:
                 return None
             skip_dof = True  # dof già eseguito, non rieseguire negli step 7-8
-        focus_tsv = extract_focus_tsv(dof_tsv_pre, out_dir / "focus_accurate.tsv", dry_run)
+        focus_tsv = extract_focus_tsv(dof_tsv_pre, out_dir / "focus_accurate.tsv", dry_run,
+                                       dx=_run_cfg.get("dx", 3.0))
         if focus_tsv is None:
             logging.warning("[mobile-focus] Nessun fuoco estratto — continuo con fuoco fisso")
 
@@ -405,6 +688,17 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
             logging.error("--skip-lens richiede data/psf_data.root esistente")
             return None
         logging.info(f"[lens+psf_extractor] SKIP — uso {psf_data}")
+    elif disk_guard_gb > 0:
+        # Super-batch reattivo al disco
+        psf_result = run_lens_with_disk_guard(
+            cfg=_run_cfg, cfg_path=cfg_path, out_dir=out_dir,
+            ssd_mount=ssd_mount, jobs=jobs, l1_id=l1_id, l2_id=l2_id,
+            use_local=use_local, dry_run=dry_run, focus_tsv=focus_tsv,
+            disk_guard_gb=disk_guard_gb, keep_lens=keep_lens,
+            min_hits=ap["psf_extractor"]["min_hits"],
+        )
+        if psf_result is None:
+            return None
     else:
         lens_root = run_simulation_step(
             "lens", cfg_path, out_dir, ssd_mount, jobs,
@@ -681,14 +975,17 @@ Esempi:
                      help="Job paralleli per run.sh (default: nproc)")
 
     opt = parser.add_argument_group("opzioni avanzate")
-    opt.add_argument("--dry-run",     action="store_true", help="Stampa comandi senza eseguire")
-    opt.add_argument("--keep-lens",   action="store_true", help="Non eliminare lens.root dopo psf_extractor")
-    opt.add_argument("--keep-psf-dof",action="store_true", help="Non eliminare psf_dof.root dopo psf_dof_extractor")
-    opt.add_argument("--skip-opt",    action="store_true", help="Salta opt (usa data/events.root esistente)")
-    opt.add_argument("--skip-lens",   action="store_true", help="Salta lens+psf_extractor (usa data/psf_data.root)")
-    opt.add_argument("--skip-dof",    action="store_true", help="Salta dof+dof_map (usa data/dof_map.tsv)")
-    opt.add_argument("--skip-psf-dof",action="store_true", help="Salta psf-dof+psf_dof_extractor (usa data/psf_dof_data.root)")
-    opt.add_argument("--notes",       type=str, default="",  help="Note aggiuntive nel CSV di log")
+    opt.add_argument("--dry-run",       action="store_true", help="Stampa comandi senza eseguire")
+    opt.add_argument("--keep-lens",     action="store_true", help="Non eliminare lens.root dopo psf_extractor")
+    opt.add_argument("--keep-psf-dof",  action="store_true", help="Non eliminare psf_dof.root dopo psf_dof_extractor")
+    opt.add_argument("--skip-opt",      action="store_true", help="Salta opt (usa data/events.root esistente)")
+    opt.add_argument("--skip-lens",     action="store_true", help="Salta lens+psf_extractor (usa data/psf_data.root)")
+    opt.add_argument("--skip-dof",      action="store_true", help="Salta dof+dof_map (usa data/dof_map.tsv)")
+    opt.add_argument("--skip-psf-dof",  action="store_true", help="Salta psf-dof+psf_dof_extractor (usa data/psf_dof_data.root)")
+    opt.add_argument("--disk-guard-gb", type=float, default=0.0,
+                     help="Super-batch reattivo: estr. psf_data e cancella lens.root mantenendo "
+                          "almeno N GB liberi su disco (0=disabilitato)")
+    opt.add_argument("--notes",         type=str, default="",  help="Note aggiuntive nel CSV di log")
 
     args = parser.parse_args()
 
@@ -744,6 +1041,7 @@ Esempi:
         skip_lens        = args.skip_lens,
         skip_dof         = args.skip_dof,
         skip_psf_dof     = args.skip_psf_dof,
+        disk_guard_gb    = args.disk_guard_gb,
     )
 
     elapsed = time.time() - t_start

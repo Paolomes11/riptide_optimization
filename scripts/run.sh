@@ -231,37 +231,44 @@ if mode in ('lens', 'psf-dof'):
 else:
     n_runs_per_pair = 1    # una sola esecuzione per configurazione
 
-# Genera tutte le coppie valide (Adaptive Loop)
-pairs = []
-# Default GDML lens parameters (valori di backup se non trovati nel TSV)
-h1 = 12.5
-h2 = 16.3
-margin = 3.0 if mode in ('lens', 'psf-dof') else 1.0
+# Genera tutte le coppie valide — o usa coppie pre-computate (super-batch mode)
+if 'pairs' in c:
+    pairs = [tuple(p) for p in c['pairs']]
+    config_offset = c.get('config_id_offset_base', 0)
+    run_offset    = c.get('run_id_offset_base', 0)
+    print(f"[INFO]  Super-batch mode: {len(pairs)} coppie pre-computate "
+          f"(offset cfg={config_offset} run={run_offset})")
+else:
+    pairs = []
+    # Default GDML lens parameters (valori di backup se non trovati nel TSV)
+    h1 = 12.5
+    h2 = 16.3
+    margin = 3.0 if mode in ('lens', 'psf-dof') else 1.0
 
-# Carica spessori reali se disponibili
-if l1_id in thorlabs_data:
-    h1 = thorlabs_data[l1_id]['h']
-if l2_id in thorlabs_data:
-    h2 = thorlabs_data[l2_id]['h']
+    # Carica spessori reali se disponibili
+    if l1_id in thorlabs_data:
+        h1 = thorlabs_data[l1_id]['h']
+    if l2_id in thorlabs_data:
+        h2 = thorlabs_data[l2_id]['h']
 
-for x1 in arange(x_min, x_max, dx):
-    # x2_min per evitare collisioni: x1 + h1/2 + margin < x2 - h2/2
-    # Poiché x1 e x2 sono i centri geometrici, la collisione è solo sulla somma dei semi-spessori.
-    x2_min_collision = x1 + (h1 + h2) / 2.0 + margin
-    # Align x2_start to the dx grid relative to x_min
-    x2_start_raw = max(x1 + dx, x2_min_collision)
-    x2_start = x_min + math.ceil(round((x2_start_raw - x_min) / dx, 8)) * dx
+    for x1 in arange(x_min, x_max, dx):
+        # x2_min per evitare collisioni: x1 + h1/2 + margin < x2 - h2/2
+        # Poiché x1 e x2 sono i centri geometrici, la collisione è solo sulla somma dei semi-spessori.
+        x2_min_collision = x1 + (h1 + h2) / 2.0 + margin
+        # Align x2_start to the dx grid relative to x_min
+        x2_start_raw = max(x1 + dx, x2_min_collision)
+        x2_start = x_min + math.ceil(round((x2_start_raw - x_min) / dx, 8)) * dx
 
-    for x2 in arange(x2_start, x_max, dx):
-        pairs.append((round(float(x1), 6), round(float(x2), 6)))
+        for x2 in arange(x2_start, x_max, dx):
+            pairs.append((round(float(x1), 6), round(float(x2), 6)))
+
+    config_offset = 0
+    run_offset    = 0
 
 total_pairs = len(pairs)
 chunk_size  = (total_pairs + n_jobs - 1) // n_jobs
 
 print(f"[INFO]  Coppie (x1,x2) totali: {total_pairs}, ~{chunk_size} per chunk")
-
-config_offset = 0
-run_offset    = 0
 
 for chunk in range(n_jobs):
     start = chunk * chunk_size

@@ -3,7 +3,7 @@
   "lens_det_gap": 10.0,
   "x_min": 45.0,
   "x_max": 300.0,
-  "dx": 3.0,
+  "dx": 1.0,
   "lens_gap_margin": 1.0,
 
   "r1": 38.6,
@@ -22,16 +22,16 @@
   "source_dy": 0.5,
 
   "n_photons": 10000,
-  "lens_n_photons": 1000,
+  "lens_n_photons": 10000,
   "dof_n_photons": 100000,
-  "psf_dof_n_photons": 1000,
+  "psf_dof_n_photons": 10000,
 
   "use_importance_sampling": true,
   "lower_percentile": 0.0,
   "upper_percentile": 0.0,
 
   "dof_x_virtual_offset": 30.0,
-  "dof_x_scan_min": 100.0,
+  "dof_x_scan_min": 60.0,
   "dof_x_scan_max": 700.0,
   "dof_x_scan_step": 0.5,
   "dof_k_threshold": 1.414,

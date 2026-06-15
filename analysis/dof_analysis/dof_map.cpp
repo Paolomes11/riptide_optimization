@@ -827,25 +827,13 @@ int main(int argc, char** argv) {
   }
 
   auto build_warn_boxes = [&]() {
-    std::vector<std::unique_ptr<TBox>> boxes;
-    boxes.reserve(static_cast<size_t>(n_bins_x1 * n_bins_x2));
-    for (int bx = 1; bx <= n_bins_x1; ++bx) {
-      double x_lo = h_warn.GetXaxis()->GetBinLowEdge(bx);
-      double x_hi = h_warn.GetXaxis()->GetBinUpEdge(bx);
-      for (int by = 1; by <= n_bins_x2; ++by) {
-        if (h_warn.GetBinContent(bx, by) < 0.5) {
-          continue;
-        }
-        double y_lo = h_warn.GetYaxis()->GetBinLowEdge(by);
-        double y_hi = h_warn.GetYaxis()->GetBinUpEdge(by);
-        auto box    = std::make_unique<TBox>(x_lo, y_lo, x_hi, y_hi);
-        box->SetFillColorAlpha(kOrange + 1, 0.35);
-        box->SetLineColor(0);
-        box->Draw("same");
-        boxes.push_back(std::move(box));
-      }
-    }
-    return boxes;
+    TH2D h_warn_c = h_warn;
+    double level[1] = {0.5};
+    h_warn_c.SetContour(1, level);
+    h_warn_c.SetLineColor(kOrange + 7);
+    h_warn_c.SetLineWidth(2);
+    h_warn_c.SetLineStyle(kDashed);
+    h_warn_c.DrawCopy("CONT3 same");
   };
 
   auto build_mask_boxes = [&]() {
@@ -899,9 +887,9 @@ int main(int argc, char** argv) {
       m.SetMarkerColor(kBlack);
       m.Draw("same");
     }
-    auto boxes      = build_mask_boxes();
-    auto warn_boxes = build_warn_boxes();
-    auto it         = kMapTitles.find(name);
+    auto boxes = build_mask_boxes();
+    build_warn_boxes();
+    auto it    = kMapTitles.find(name);
     if (it != kMapTitles.end()) {
       TLatex tit;
       tit.SetNDC();
@@ -941,8 +929,8 @@ int main(int argc, char** argv) {
     h_margin.GetZaxis()->SetTitleOffset(1.6);
     h_margin.Draw("COLZ");
     c.Update();
-    auto boxes      = build_mask_boxes();
-    auto warn_boxes = build_warn_boxes();
+    auto boxes = build_mask_boxes();
+    build_warn_boxes();
     TLatex tit_w;
     tit_w.SetNDC();
     tit_w.SetTextFont(42);
@@ -952,6 +940,42 @@ int main(int argc, char** argv) {
     std::string out =
         (std::filesystem::path(cli.output_dir) / "dof_within_photocathode.png").string();
     c.SaveAs(out.c_str());
+  }
+
+  // ── Mappa zone fuoco prima della lente 2 ────────────────────────────────────
+  {
+    const int nRGBs     = 2;
+    double stops[nRGBs] = {0.0, 1.0};
+    double red[nRGBs]   = {0.25, 0.90};
+    double green[nRGBs] = {0.50, 0.15};
+    double blue[nRGBs]  = {0.80, 0.10};
+    TColor::CreateGradientColorTable(nRGBs, stops, red, green, blue, 2);
+    gStyle->SetNumberContours(2);
+
+    TCanvas c_zone("c_focus_zone", "focus_zone", 1100, 900);
+    c_zone.SetLeftMargin(0.10);
+    c_zone.SetBottomMargin(0.14);
+    c_zone.SetRightMargin(0.16);
+    c_zone.SetTopMargin(0.10);
+    c_zone.SetGridx();
+    c_zone.SetGridy();
+    h_warn.SetMinimum(-0.5);
+    h_warn.SetMaximum(1.5);
+    h_warn.GetZaxis()->SetNdivisions(2);
+    h_warn.GetZaxis()->SetTitle("Fuoco prima di L2");
+    h_warn.GetZaxis()->CenterTitle(kTRUE);
+    h_warn.GetZaxis()->SetTitleOffset(1.6);
+    h_warn.Draw("COLZ");
+    auto boxes_zone = build_mask_boxes();
+    TLatex tit_zone;
+    tit_zone.SetNDC();
+    tit_zone.SetTextFont(42);
+    tit_zone.SetTextSize(0.042);
+    tit_zone.SetTextAlign(22);
+    tit_zone.DrawLatex(0.50, 0.955, "Zone fuoco prima della lente 2");
+    std::string out_zone =
+        (std::filesystem::path(cli.output_dir) / "dof_focus_zone_map.png").string();
+    c_zone.SaveAs(out_zone.c_str());
   }
 
   return 0;
