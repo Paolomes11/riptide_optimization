@@ -25,10 +25,10 @@
         "line_min_separation_px": 100
     },
     "q_comparison": {
-        "q_map_tsv":  "output/psf_analysis/q_map.tsv",
-        "good_x1_mm": 0.0,
-        "good_x2_mm": 0.0,
-        "bad_x1_mm":  0.0,
-        "bad_x2_mm":  0.0
+        "q_map_tsv":  "output/lens_simulations/LA4464_LA4464R/data/q_map.tsv",
+        "good_x1_mm": 110.0,
+        "good_x2_mm": 130.0,
+        "bad_x1_mm":  60.0,
+        "bad_x2_mm":  125.0
     }
 }

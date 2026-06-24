@@ -20,7 +20,9 @@
 #include <TCanvas.h>
 #include <TGaxis.h>
 #include <TGraph.h>
+#include <TGraphAsymmErrors.h>
 #include <TGraphErrors.h>
+#include <TH1F.h>
 #include <TLegend.h>
 #include <TLine.h>
 #include <TPad.h>
@@ -31,6 +33,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iomanip>
+#include <map>
 #include <numeric>
 #include <sstream>
 #include <vector>
@@ -217,6 +220,213 @@ void produce_q_vs_dax(const std::vector<QResult>& good,
     pave->AddText(("r = " + r_mm_label + " mm  (r_{idx}=" +
                    std::to_string(r_idx) + ")").c_str());
     pave->Draw();
+
+    fs::create_directories(output_path.parent_path());
+    c->SaveAs(output_path.c_str());
+    delete c;
+}
+
+// ---------------------------------------------------------------------------
+// Exp3: confronto Q_exp(d_ax) vs Q_sim per good e bad  (due pad: top + ratio)
+// ---------------------------------------------------------------------------
+void produce_q_comparison(const std::vector<QResult>& good,
+                          const std::vector<QResult>& bad,
+                          const QComparisonConfig& cmp,
+                          const fs::path& output_path) {
+    apply_riptide_style();
+
+    // Filtra misure valide
+    auto filter_valid = [](const std::vector<QResult>& v) {
+        std::vector<QResult> out;
+        for (const auto& r : v)
+            if (!r.warning && r.n_valid_slices > 0)
+                out.push_back(r);
+        return out;
+    };
+    auto gv = filter_valid(good);
+    auto bv = filter_valid(bad);
+    if (gv.empty() && bv.empty()) return;
+
+    // Aggrega per d_ax: media, min, max di chi2/ndof
+    struct DAXStats { double d_ax, mean, lo, hi; };
+    auto group_stats = [](const std::vector<QResult>& v) {
+        std::map<double, std::vector<double>> by_dax;
+        for (const auto& r : v)
+            by_dax[r.d_ax_mm].push_back(r.chi2_ndof);
+        std::vector<DAXStats> out;
+        for (const auto& [d, vals] : by_dax) {
+            double s = 0.0;
+            for (double q : vals) s += q;
+            double mean = s / static_cast<double>(vals.size());
+            double lo = *std::min_element(vals.begin(), vals.end());
+            double hi = *std::max_element(vals.begin(), vals.end());
+            out.push_back({d, mean, lo, hi});
+        }
+        return out;
+    };
+    auto gs = group_stats(gv);
+    auto bs = group_stats(bv);
+
+    // Q_sim via nearest-neighbor
+    double q_sim_good = load_Q_sim(cmp.q_map_tsv, cmp.good_x1_mm, cmp.good_x2_mm);
+    double q_sim_bad  = load_Q_sim(cmp.q_map_tsv, cmp.bad_x1_mm,  cmp.bad_x2_mm);
+
+    const double x_lo = 143.0, x_hi = 217.0;
+    // -------------------------------------------------------------------
+    // Canvas a due pad
+    // -------------------------------------------------------------------
+    auto* c = new TCanvas("qcomp", "Q confronto sim vs exp", 820, 760);
+    c->SetFillColor(0);
+
+    // === Pad superiore: Q_exp(d_ax) ===
+    auto* pad_top = new TPad("pad_top", "", 0.0, 0.34, 1.0, 1.0);
+    pad_top->SetLeftMargin(0.16f);
+    pad_top->SetRightMargin(0.04f);
+    pad_top->SetTopMargin(0.08f);
+    pad_top->SetBottomMargin(0.015f);
+    pad_top->SetGrid();
+    pad_top->Draw();
+    pad_top->cd();
+
+    double y_max = 1.5;
+    for (const auto& s : bs) y_max = std::max(y_max, s.hi);
+    for (const auto& s : gs) y_max = std::max(y_max, s.hi);
+    if (std::isfinite(q_sim_bad))  y_max = std::max(y_max, q_sim_bad);
+    if (std::isfinite(q_sim_good)) y_max = std::max(y_max, q_sim_good);
+    y_max *= 1.18;
+
+    auto* frame_top = static_cast<TH1F*>(
+        pad_top->DrawFrame(x_lo, 0.0, x_hi, y_max, ";;Q = #chi^{2}/ndof"));
+    frame_top->GetYaxis()->SetTitleOffset(1.10f);
+    frame_top->GetYaxis()->SetTitleSize(0.065f);
+    frame_top->GetYaxis()->SetLabelSize(0.055f);
+    frame_top->GetXaxis()->SetLabelSize(0.0f);
+    frame_top->GetXaxis()->SetTitleSize(0.0f);
+    frame_top->GetXaxis()->SetNdivisions(506);
+
+    auto* leg = new TLegend(0.50, 0.45, 0.95, 0.92);
+    leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42);
+    leg->SetTextSize(0.055f);
+
+    auto draw_series = [&](const std::vector<DAXStats>& sv, int color, int marker,
+                            const char* label) {
+        if (sv.empty()) return;
+        int n = static_cast<int>(sv.size());
+        std::vector<double> xs(n), ys(n), exl(n, 0.0), exh(n, 0.0), eyl(n), eyh(n);
+        for (int i = 0; i < n; ++i) {
+            xs[i]  = sv[i].d_ax;
+            ys[i]  = sv[i].mean;
+            eyl[i] = sv[i].mean - sv[i].lo;
+            eyh[i] = sv[i].hi   - sv[i].mean;
+        }
+        auto* gr = new TGraphAsymmErrors(n,
+            xs.data(), ys.data(),
+            exl.data(), exh.data(),
+            eyl.data(), eyh.data());
+        gr->SetMarkerStyle(marker);
+        gr->SetMarkerColor(color);
+        gr->SetLineColor(color);
+        gr->SetLineWidth(2);
+        gr->SetMarkerSize(1.2f);
+        gr->SetFillColorAlpha(color, 0.15f);
+        gr->Draw("PL E2 SAME");
+        leg->AddEntry(gr, label, "PLE");
+    };
+
+    draw_series(gs, kBlue + 1, 21,
+        Form("exp good (x_{1}=%g, x_{2}=%g mm)", cmp.good_x1_mm, cmp.good_x2_mm));
+    draw_series(bs, kRed, 25,
+        Form("exp bad  (x_{1}=%g, x_{2}=%g mm)", cmp.bad_x1_mm,  cmp.bad_x2_mm));
+
+    if (std::isfinite(q_sim_good)) {
+        auto* l = new TLine(x_lo, q_sim_good, x_hi, q_sim_good);
+        l->SetLineColor(kBlue + 1); l->SetLineStyle(7); l->SetLineWidth(2); l->Draw();
+        leg->AddEntry(l, Form("sim good  Q_{sim}=%.2f", q_sim_good), "L");
+    }
+    if (std::isfinite(q_sim_bad)) {
+        auto* l = new TLine(x_lo, q_sim_bad, x_hi, q_sim_bad);
+        l->SetLineColor(kRed); l->SetLineStyle(7); l->SetLineWidth(2); l->Draw();
+        leg->AddEntry(l, Form("sim bad   Q_{sim}=%.2f", q_sim_bad), "L");
+    }
+    leg->Draw();
+
+    auto* pave = new TPaveText(0.17, 0.87, 0.62, 0.97, "NDC");
+    pave->SetFillColor(0); pave->SetBorderSize(0); pave->SetTextFont(42);
+    pave->SetTextSize(0.060f);
+    pave->AddText("LA4464 / LA4464R  --  Q simulato vs sperimentale");
+    pave->Draw();
+
+    // === Pad inferiore: ratio Q_exp / Q_sim ===
+    c->cd();
+    auto* pad_bot = new TPad("pad_bot", "", 0.0, 0.0, 1.0, 0.34);
+    pad_bot->SetLeftMargin(0.16f);
+    pad_bot->SetRightMargin(0.04f);
+    pad_bot->SetTopMargin(0.02f);
+    pad_bot->SetBottomMargin(0.25f);
+    pad_bot->SetGrid();
+    pad_bot->Draw();
+    pad_bot->cd();
+
+    // Calcola ratio: media/min/max divise per Q_sim
+    auto compute_ratio = [](const std::vector<DAXStats>& sv, double q_sim)
+        -> std::vector<DAXStats> {
+        if (!std::isfinite(q_sim) || q_sim <= 0.0 || sv.empty()) return {};
+        std::vector<DAXStats> out;
+        out.reserve(sv.size());
+        for (const auto& s : sv)
+            out.push_back({s.d_ax, s.mean / q_sim, s.lo / q_sim, s.hi / q_sim});
+        return out;
+    };
+    auto ratio_g = compute_ratio(gs, q_sim_good);
+    auto ratio_b = compute_ratio(bs, q_sim_bad);
+
+    double r_max = 2.0;
+    for (const auto& s : ratio_g) r_max = std::max(r_max, s.hi);
+    for (const auto& s : ratio_b) r_max = std::max(r_max, s.hi);
+    r_max *= 1.15;
+
+    auto* frame_bot = static_cast<TH1F*>(
+        pad_bot->DrawFrame(x_lo, 0.0, x_hi, r_max,
+                           ";d_{ax} [mm];Q_{exp}/Q_{sim}"));
+    frame_bot->GetXaxis()->SetTitleOffset(1.0f);
+    frame_bot->GetXaxis()->SetTitleSize(0.105f);
+    frame_bot->GetXaxis()->SetLabelSize(0.095f);
+    frame_bot->GetXaxis()->SetNdivisions(506);
+    frame_bot->GetYaxis()->SetTitleOffset(0.60f);
+    frame_bot->GetYaxis()->SetTitleSize(0.105f);
+    frame_bot->GetYaxis()->SetLabelSize(0.095f);
+    frame_bot->GetYaxis()->SetNdivisions(504);
+
+    // Linea di riferimento a ratio=1
+    auto* lref = new TLine(x_lo, 1.0, x_hi, 1.0);
+    lref->SetLineColor(kGray + 1); lref->SetLineStyle(7); lref->SetLineWidth(2);
+    lref->Draw();
+
+    auto draw_ratio = [&](const std::vector<DAXStats>& sv, int color, int marker) {
+        if (sv.empty()) return;
+        int n = static_cast<int>(sv.size());
+        std::vector<double> xs(n), ys(n), exl(n, 0.0), exh(n, 0.0), eyl(n), eyh(n);
+        for (int i = 0; i < n; ++i) {
+            xs[i]  = sv[i].d_ax;
+            ys[i]  = sv[i].mean;
+            eyl[i] = sv[i].mean - sv[i].lo;
+            eyh[i] = sv[i].hi   - sv[i].mean;
+        }
+        auto* gr = new TGraphAsymmErrors(n,
+            xs.data(), ys.data(),
+            exl.data(), exh.data(),
+            eyl.data(), eyh.data());
+        gr->SetMarkerStyle(marker);
+        gr->SetMarkerColor(color);
+        gr->SetLineColor(color);
+        gr->SetLineWidth(2);
+        gr->SetMarkerSize(1.2f);
+        gr->SetFillColorAlpha(color, 0.15f);
+        gr->Draw("PL E2 SAME");
+    };
+
+    draw_ratio(ratio_g, kBlue + 1, 21);
+    draw_ratio(ratio_b, kRed, 25);
 
     fs::create_directories(output_path.parent_path());
     c->SaveAs(output_path.c_str());

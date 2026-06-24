@@ -49,7 +49,7 @@ TIMEOUTS_SEC = {
     "analysis":          10  * 60,
 }
 
-LOG_CSV    = PROJECT_ROOT / "scripts" / "simulation_log.csv"
+LOG_CSV    = PROJECT_ROOT / "output" / "simulation_log.csv"
 LOG_FIELDS = [
     "date", "l1_id", "l2_id", "detector_mode",
     "x_min", "x_max", "dx",
@@ -294,8 +294,9 @@ def _remove_focus_outliers(rows: list[tuple[str, str, str]],
 
 def extract_focus_tsv(dof_tsv: Path, out_path: Path, dry_run: bool,
                       dx: float = 3.0) -> Path | None:
-    """Estrae (x1, x2, x_focus) da dof_map.tsv, escludendo i fuochi prima di L2
-    e rimuovendo gli outlier isolati causati da minimi spuri nel DOF scan."""
+    """Estrae (x1, x2, x_focus) da dof_map.tsv, incluse le configurazioni col fuoco
+    prima di L2 (già clampate al bordo fisico da dof_map), rimuovendo gli outlier
+    isolati causati da minimi spuri nel DOF scan."""
     if dry_run:
         return out_path
     if not dof_tsv.exists():
@@ -305,8 +306,6 @@ def extract_focus_tsv(dof_tsv: Path, out_path: Path, dry_run: bool,
     with open(dof_tsv) as f:
         reader = csv.DictReader(f, delimiter='\t')
         for row in reader:
-            if row.get("focus_before_lens2", "0").strip() == "1":
-                continue
             try:
                 rows.append((row["x1"], row["x2"], row["x_focus"]))
             except KeyError:
@@ -420,7 +419,7 @@ def run_lens_with_disk_guard(
 
     avail_gb = _shutil.disk_usage(out_dir).free / 1e9
     safe_gb  = max(avail_gb - disk_guard_gb, 0.0)
-    batch_size = max(jobs, int(safe_gb / max(gb_per_pair, 1e-9)))
+    batch_size = max(1, int(safe_gb / max(gb_per_pair, 1e-9)))
     batch_size = min(batch_size, total)
 
     logging.info(
@@ -450,7 +449,7 @@ def run_lens_with_disk_guard(
                 f"guardia={disk_guard_gb:.0f} GB). Interruzione."
             )
             return None
-        batch_size = max(jobs, int(safe_gb / max(gb_per_pair, 1e-9)))
+        batch_size = max(1, int(safe_gb / max(gb_per_pair, 1e-9)))
         batch_size = min(batch_size, total - pos)
 
         batch_pairs = all_pairs[pos : pos + batch_size]
@@ -461,7 +460,8 @@ def run_lens_with_disk_guard(
         tmp_cfg['config_id_offset_base'] = offset_cfg
         tmp_cfg['run_id_offset_base']    = offset_run
         tmp_cfg_path = data / f"superbatch_{batch_idx}.json"
-        tmp_cfg_path.write_text(json.dumps(tmp_cfg, indent=2))
+        if not dry_run:
+            tmp_cfg_path.write_text(json.dumps(tmp_cfg, indent=2))
 
         partial_lens = data / f"partial_lens_{batch_idx}.root"
         partial_psf  = data / f"partial_psf_data_{batch_idx}.root"
@@ -483,6 +483,10 @@ def run_lens_with_disk_guard(
         # Rinomina lens.root → partial_lens_K.root
         if not dry_run and lens_root.exists() and lens_root != partial_lens:
             lens_root.rename(partial_lens)
+            # Il symlink data/lens.root punta al file appena rinominato: rimuovilo
+            stale_link = data / "lens.root"
+            if stale_link.is_symlink():
+                stale_link.unlink()
         elif dry_run:
             partial_lens = Path(f"/dev/null/partial_lens_{batch_idx}.root")
 
@@ -599,7 +603,7 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
                  keep_lens: bool, keep_psf_dof: bool,
                  skip_opt: bool, skip_lens: bool,
                  skip_dof: bool, skip_psf_dof: bool,
-                 disk_guard_gb: float = 0.0) -> dict | None:
+                 disk_guard_gb: float = 200.0) -> dict | None:
 
     out   = {}
     log   = out_dir / "pipeline.log"
@@ -690,14 +694,13 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
         logging.info(f"[lens+psf_extractor] SKIP — uso {psf_data}")
     elif disk_guard_gb > 0:
         # Super-batch reattivo al disco
-        psf_result = run_lens_with_disk_guard(
+        if run_lens_with_disk_guard(
             cfg=_run_cfg, cfg_path=cfg_path, out_dir=out_dir,
             ssd_mount=ssd_mount, jobs=jobs, l1_id=l1_id, l2_id=l2_id,
             use_local=use_local, dry_run=dry_run, focus_tsv=focus_tsv,
             disk_guard_gb=disk_guard_gb, keep_lens=keep_lens,
             min_hits=ap["psf_extractor"]["min_hits"],
-        )
-        if psf_result is None:
+        ) is None:
             return None
     else:
         lens_root = run_simulation_step(
@@ -903,6 +906,7 @@ def append_to_log(cfg: dict, l1_id: str, l2_id: str,
                   detector_mode: str,
                   storage_type: str, storage_path: str,
                   out_dir: Path, notes: str) -> None:
+    LOG_CSV.parent.mkdir(parents=True, exist_ok=True)
     write_header = not LOG_CSV.exists()
     with open(LOG_CSV, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=LOG_FIELDS)
@@ -982,12 +986,13 @@ Esempi:
     opt.add_argument("--skip-lens",     action="store_true", help="Salta lens+psf_extractor (usa data/psf_data.root)")
     opt.add_argument("--skip-dof",      action="store_true", help="Salta dof+dof_map (usa data/dof_map.tsv)")
     opt.add_argument("--skip-psf-dof",  action="store_true", help="Salta psf-dof+psf_dof_extractor (usa data/psf_dof_data.root)")
-    opt.add_argument("--disk-guard-gb", type=float, default=0.0,
+    opt.add_argument("--disk-guard-gb", type=float, default=200.0,
                      help="Super-batch reattivo: estr. psf_data e cancella lens.root mantenendo "
-                          "almeno N GB liberi su disco (0=disabilitato)")
+                          "almeno N GB liberi su disco (default: 200, minimo forzato: 200)")
     opt.add_argument("--notes",         type=str, default="",  help="Note aggiuntive nel CSV di log")
 
     args = parser.parse_args()
+    args.disk_guard_gb = max(args.disk_guard_gb, 200.0)
 
     pair_tag  = f"{args.l1_id}_{args.l2_id}"
     out_dir   = PROJECT_ROOT / "output" / "lens_simulations" / pair_tag

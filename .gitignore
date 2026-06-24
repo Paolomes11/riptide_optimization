@@ -19,6 +19,7 @@ CNAF_CHEATSHEET.md
 scripts/cnaf_sbatch.sh
 scripts/fetch_any_from_cnaf.sh
 scripts/fetch_from_cnaf.sh
+scripts/fetch_lens_from_cnaf.sh
 scripts/sync_to_cnaf.sh
+scripts/sim_manager.py
 cnaf_fetch/
-scripts/simulation_log.csv

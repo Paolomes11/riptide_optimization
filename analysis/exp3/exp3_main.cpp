@@ -315,15 +315,13 @@ static void run_plots(const CliOptions& opt, const riptide::exp3::Exp3Config& cf
   auto good_q = load_q("good");
   auto bad_q  = load_q("bad");
 
-  // q_vs_r per ogni distanza
-  for (double d_nom : cfg.axial_distances_nominal_mm) {
-    std::ostringstream fname;
-    fname << "q_vs_r_d" << std::fixed << std::setprecision(0) << d_nom << ".png";
-    try {
-      exp3::produce_q_vs_r(good_q, bad_q, d_nom, opt.output_dir / fname.str());
-    } catch (const std::exception& e) {
-      std::cerr << "[plots] WARNING q_vs_r d=" << d_nom << ": " << e.what() << "\n";
-    }
+  // confronto Q_exp(d_ax) vs Q_sim per good e bad
+  try {
+    exp3::produce_q_comparison(good_q, bad_q, cfg.q_comparison,
+                               opt.output_dir / "q_comparison.png");
+    std::cout << "[plots] Salvato: " << opt.output_dir / "q_comparison.png" << "\n";
+  } catch (const std::exception& e) {
+    std::cerr << "[plots] WARNING q_comparison: " << e.what() << "\n";
   }
 
   // q_vs_dax per ogni r_idx

@@ -224,6 +224,12 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
       }
     }
 
+    auto t_scan_start    = std::chrono::steady_clock::now();
+    int  total_pairs     = static_cast<int>(pairs.size());
+    int  completed_pairs = 0;
+    int  next_progress_pct = 10;
+    spdlog::info("[opt] Inizio scan: {} coppie", total_pairs);
+
     for (const auto& pair : pairs) {
       double x1 = pair.first;
       double x2 = pair.second;
@@ -331,6 +337,19 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
                      x_det_config);
       }
 
+      completed_pairs++;
+      {
+        int pct = total_pairs > 0 ? (completed_pairs * 100 / total_pairs) : 0;
+        if (pct >= next_progress_pct) {
+          double elapsed = std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - t_scan_start).count();
+          double eta = elapsed * (total_pairs - completed_pairs) / completed_pairs;
+          spdlog::info("[PROGRESS] opt {}% ({}/{} coppie) — elapsed {:.0f}s ETA {:.0f}s",
+                       pct, completed_pairs, total_pairs, elapsed, eta);
+          spdlog::default_logger()->flush();
+          next_progress_pct = (pct / 10 + 1) * 10;
+        }
+      }
       config_counter++;
     }
   }

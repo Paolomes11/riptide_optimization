@@ -164,6 +164,17 @@ void produce_q_vs_dax(const std::vector<QResult>& good,
                       int r_idx,
                       const std::filesystem::path& output_path);
 
+/**
+ * Produce q_comparison.png: Q_exp(d_ax) per good e bad con Q_sim come riferimento.
+ *
+ * Le misure valide (warning=false, n_valid_slices>0) vengono aggregate per d_ax
+ * (media ± range min-max). Q_sim è cercato nel TSV via nearest-neighbor (≤10 mm).
+ */
+void produce_q_comparison(const std::vector<QResult>& good,
+                          const std::vector<QResult>& bad,
+                          const QComparisonConfig& cmp,
+                          const std::filesystem::path& output_path);
+
 } // namespace riptide::exp3
 
 #endif // RIPTIDE_EXP3_ANALYSIS_HPP

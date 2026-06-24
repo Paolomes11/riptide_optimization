@@ -475,7 +475,9 @@ std::vector<QResult> run_measurement_parallel_lines(
 }
 
 // ---------------------------------------------------------------------------
-// Carica Q_sim da TSV
+// Carica Q_sim da TSV — nearest-neighbor entro 10 mm, config_valid=1
+// Colonne TSV: x1 x2 metric Q_raw Q_target rho_hat n_traces n_failed n_invalid config_valid
+// Restituisce la colonna "metric" (chi2/ndof della sim) del punto più vicino.
 // ---------------------------------------------------------------------------
 double load_Q_sim(const fs::path& tsv_path, double x1_mm, double x2_mm) {
     std::ifstream ifs(tsv_path);
@@ -485,15 +487,31 @@ double load_Q_sim(const fs::path& tsv_path, double x1_mm, double x2_mm) {
     std::string line;
     std::getline(ifs, line);  // header
 
+    const double max_dist_sq = 10.0 * 10.0;
+    double best_dist_sq = max_dist_sq + 1.0;
+    double best_q       = std::numeric_limits<double>::quiet_NaN();
+
     while (std::getline(ifs, line)) {
         if (line.empty() || line[0] == '#') continue;
         std::istringstream ss(line);
-        double x1_f, x2_f, q;
-        if (!(ss >> x1_f >> x2_f >> q)) continue;
-        if (std::abs(x1_f - x1_mm) < 0.5 && std::abs(x2_f - x2_mm) < 0.5)
-            return q;
+
+        double x1_f, x2_f, metric, q_raw, q_target, rho_hat;
+        int    n_traces, n_failed, n_invalid, config_valid;
+
+        if (!(ss >> x1_f >> x2_f >> metric >> q_raw >> q_target >> rho_hat
+                 >> n_traces >> n_failed >> n_invalid >> config_valid))
+            continue;
+        if (config_valid != 1 || !std::isfinite(metric))
+            continue;
+
+        double dx = x1_f - x1_mm, dy = x2_f - x2_mm;
+        double dist_sq = dx * dx + dy * dy;
+        if (dist_sq < best_dist_sq) {
+            best_dist_sq = dist_sq;
+            best_q       = metric;
+        }
     }
-    return std::numeric_limits<double>::quiet_NaN();
+    return best_q;
 }
 
 // ---------------------------------------------------------------------------
