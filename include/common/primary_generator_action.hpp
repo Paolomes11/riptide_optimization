@@ -16,14 +16,24 @@
 #define RIPTIDE_PRIMARY_GENERATOR_ACTION_HPP
 
 #include "importance_sampling.hpp"
+#include <G4ThreeVector.hh>
 #include <G4VUserPrimaryGeneratorAction.hh>
 #include <functional>
+#include <vector>
 
 // Forward declarations for compilation speedup
 class G4Event;
 class G4GeneralParticleSource;
 
 namespace riptide {
+
+struct SpotConfig {
+  G4ThreeVector pos;       // posizione sorgente in Geant4 units (mm)
+  G4ThreeVector is_axis;   // asse cono IS
+  double is_theta  = 0.0;  // angolo massimo cono IS
+  double is_weight = 1.0;  // peso IS per colonna ntuple (1-cos(theta_max))
+  bool use_is      = false;
+};
 
 class PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction {
  public:
@@ -45,6 +55,12 @@ class PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction {
     m_useImportanceSampling = true;
   }
 
+  // Cycling: genera fotoni uno per spot ciclicamente su tutti gli spot.
+  // Il BeamOn deve usare n_spots * n_photons_per_spot come conteggio.
+  void ConfigureSpotCycling(const std::vector<SpotConfig>& spots);
+  void ResetCycling();     // azzera m_currentSpotIdx (chiamare prima di BeamOn)
+  void DisableCycling();   // torna alla modalità legacy
+
  private:
   G4GeneralParticleSource* m_gps{nullptr};
 
@@ -54,6 +70,10 @@ class PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction {
   bool m_hasStaticCone = false;
   G4ThreeVector m_staticAxis;
   double m_staticMaxTheta = 0.0;
+
+  // Cycling spot
+  std::vector<SpotConfig> m_spotConfigs;
+  int m_currentSpotIdx = 0;
 };
 
 } // namespace riptide

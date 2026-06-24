@@ -29,8 +29,19 @@ void PsfDofSteppingAction::UserSteppingAction(const G4Step* step) {
   auto pos      = track->GetPosition();
   auto momentum = track->GetMomentum();
 
+  // Calcola spot_id una sola volta per questa traccia (O(1) via vertex position)
+  int spot_id = -1;
+  if (m_eventAction && m_eventAction->IsSpotMode()) {
+    G4ThreeVector vtx = track->GetVertexPosition();
+    spot_id = m_eventAction->CalcSpotId(vtx.x() / CLHEP::mm, vtx.y() / CLHEP::mm);
+  }
+
   if (pos.x() < -1.0 * CLHEP::mm && momentum.x() < 0.0) {
-    ++m_n_killed_back;
+    if (spot_id >= 0) {
+      m_eventAction->AddKilledBack(spot_id);
+    } else {
+      ++m_n_killed_back;
+    }
     track->SetTrackStatus(fStopAndKill);
     return;
   }
@@ -51,7 +62,11 @@ void PsfDofSteppingAction::UserSteppingAction(const G4Step* step) {
     double z = (pp.z() + t * (qp.z() - pp.z())) / CLHEP::mm;
     double r = std::hypot(y, z);
     if (r > m_rLens1Aperture) {
-      ++m_n_killed_lens1;
+      if (spot_id >= 0) {
+        m_eventAction->AddKilledLens1(spot_id);
+      } else {
+        ++m_n_killed_lens1;
+      }
       track->SetTrackStatus(fStopAndKill);
       return;
     }
@@ -72,7 +87,11 @@ void PsfDofSteppingAction::UserSteppingAction(const G4Step* step) {
     double z = (pp.z() + t * (qp.z() - pp.z())) / CLHEP::mm;
     double r = std::hypot(y, z);
     if (r > m_rLens2Aperture) {
-      ++m_n_killed_lens2;
+      if (spot_id >= 0) {
+        m_eventAction->AddKilledLens2(spot_id);
+      } else {
+        ++m_n_killed_lens2;
+      }
       track->SetTrackStatus(fStopAndKill);
       return;
     }
@@ -107,7 +126,11 @@ void PsfDofSteppingAction::UserSteppingAction(const G4Step* step) {
   double w  = track->GetWeight();
 
   if (m_eventAction) {
-    m_eventAction->AddRay(y, z, dy, dz, w);
+    if (spot_id >= 0) {
+      m_eventAction->AddRay(spot_id, y, z, dy, dz, w);
+    } else {
+      m_eventAction->AddRay(y, z, dy, dz, w);
+    }
   }
 
   track->SetTrackStatus(fStopAndKill);

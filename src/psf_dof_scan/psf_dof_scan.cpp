@@ -4,6 +4,7 @@
 #include "primary_generator_action.hpp"
 #include "psf_dof_event_action.hpp"
 #include "psf_dof_stepping_action.hpp"
+#include "spot_grid.hpp"
 
 #include "optimization/detector_construction.hpp"
 
@@ -233,6 +234,37 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
 
   spdlog::info("PSF+DoF scan lens pair: {} & {}", l1_id, l2_id);
 
+  auto t_scan_start    = std::chrono::steady_clock::now();
+  int  total_pairs     = static_cast<int>(pairs.size());
+  int  completed_pairs = 0;
+  int  next_progress_pct = 10;
+  int  n_src_y = static_cast<int>((source_y_max - source_y_min) / source_dy) + 1;
+
+  auto log_progress = [&](const char* tag) {
+    int pct = total_pairs > 0 ? (completed_pairs * 100 / total_pairs) : 0;
+    if (pct < next_progress_pct)
+      return;
+    double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t_scan_start).count();
+    double eta = elapsed * (total_pairs - completed_pairs) / completed_pairs;
+    spdlog::info("[PROGRESS] {} {}% ({}/{} coppie) — elapsed {:.0f}s ETA {:.0f}s",
+                 tag, pct, completed_pairs, total_pairs, elapsed, eta);
+    spdlog::default_logger()->flush();
+    next_progress_pct = (pct / 10 + 1) * 10;
+  };
+
+  bool use_is      = config.value("use_importance_sampling", false);
+  bool use_cycling = !save_hits; // save_hits richiede per-event accumulo → legacy
+  if (save_hits) {
+    spdlog::warn("[psf-dof] save_hits=true: uso loop per-run (no cycling)");
+  }
+
+  auto spots   = build_spot_grid(source_x_min, source_x_max, source_dx,
+                                 source_y_min, source_y_max, source_dy);
+  int  n_spots = static_cast<int>(spots.size());
+  spdlog::info("[psf-dof] Inizio scan: {} coppie, {} spot/coppia, {}",
+               total_pairs, n_spots, use_cycling ? "1 BeamOn/coppia" : "loop per-run");
+
   for (const auto& pair : pairs) {
     double x1 = pair.first;
     double x2 = pair.second;
@@ -259,41 +291,45 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
     analysisManager->FillNtupleSColumn(0, 5, l2_id);
     analysisManager->AddNtupleRow(0);
 
-    for (double x_source = source_x_min; x_source <= source_x_max + 1e-9; x_source += source_dx) {
-      for (double y_source = source_y_min; y_source <= source_y_max + 1e-9; y_source += source_dy) {
-        UImanager->ApplyCommand("/gps/pos/centre " + std::to_string(x_source) + " "
-                                + std::to_string(y_source) + " 0 mm");
-
-        double is_weight = 1.0;
-        if (config.value("use_importance_sampling", false)) {
-          G4ThreeVector pos(x_source, y_source, 0);
-          auto params = det->GetL1Params();
-          G4ThreeVector axis;
-          double maxTheta = 0.0;
-          axis            = (G4ThreeVector(params.x, 0, 0) - pos).unit();
-          ImportanceSamplingHelper::CalculateCone(pos, params, axis, maxTheta);
-          primaryGen->SetStaticCone(axis, maxTheta);
-          is_weight = 1.0 - std::cos(maxTheta);
+    if (use_cycling) {
+      // Aggiorna coni IS per questa coppia (dipendono da x1)
+      if (use_is) {
+        auto params = det->GetL1Params();
+        for (auto& sc : spots) {
+          G4ThreeVector axis = (G4ThreeVector(params.x, 0, 0) - sc.pos).unit();
+          double maxTheta    = 0.0;
+          ImportanceSamplingHelper::CalculateCone(sc.pos, params, axis, maxTheta);
+          sc.is_axis   = axis;
+          sc.is_theta  = maxTheta;
+          sc.is_weight = 1.0 - std::cos(maxTheta);
+          sc.use_is    = true;
         }
+      }
 
-        int run_id = run_counter++;
-        eventAction->ClearRays();
-        steppingAction->ResetKillCounters();
+      eventAction->InitSpotMode(n_spots, source_x_min, source_dx,
+                                source_y_min, source_dy, n_src_y);
+      primaryGen->ConfigureSpotCycling(spots);
+      primaryGen->ResetCycling();
 
-        long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-        CLHEP::HepRandom::setTheSeed(seed);
+      long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+      CLHEP::HepRandom::setTheSeed(seed);
 
-        if (macro_file.empty()) {
-          UImanager->ApplyCommand("/run/beamOn " + std::to_string(n_photons));
-        } else {
-          UImanager->ApplyCommand("/control/execute " + macro_file.string());
-        }
+      UImanager->ApplyCommand("/run/beamOn "
+                              + std::to_string(static_cast<long long>(n_spots) * n_photons));
 
-        auto stats = compute_stats(eventAction->Moments());
-        int k1     = steppingAction->GetKilledLens1();
-        int k2     = steppingAction->GetKilledLens2();
-        int k_back = steppingAction->GetKilledBack();
+      primaryGen->DisableCycling();
 
+      // Scrivi n_spots righe in PsfDofRuns (struttura ROOT invariata)
+      const auto& spot_moments = eventAction->GetSpotMoments();
+      const auto& killed_l1    = eventAction->GetSpotKilledLens1();
+      const auto& killed_l2    = eventAction->GetSpotKilledLens2();
+      const auto& killed_back  = eventAction->GetSpotKilledBack();
+
+      for (int spot_idx = 0; spot_idx < n_spots; ++spot_idx) {
+        double x_source = spots[spot_idx].pos.x();
+        double y_source = spots[spot_idx].pos.y();
+        auto stats      = compute_stats(spot_moments[spot_idx]);
+        int run_id      = run_counter++;
         analysisManager->FillNtupleIColumn(1, 0, config_counter);
         analysisManager->FillNtupleIColumn(1, 1, run_id);
         analysisManager->FillNtupleDColumn(1, 2, x_source);
@@ -310,20 +346,83 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
         analysisManager->FillNtupleDColumn(1, 13, stats.sigma_dz);
         analysisManager->FillNtupleDColumn(1, 14, stats.cov_y_dy);
         analysisManager->FillNtupleDColumn(1, 15, stats.cov_z_dz);
-        analysisManager->FillNtupleIColumn(1, 16, k1);
-        analysisManager->FillNtupleIColumn(1, 17, k2);
-        analysisManager->FillNtupleIColumn(1, 18, k_back);
-        analysisManager->FillNtupleDColumn(1, 19, is_weight);
+        analysisManager->FillNtupleIColumn(1, 16, killed_l1[spot_idx]);
+        analysisManager->FillNtupleIColumn(1, 17, killed_l2[spot_idx]);
+        analysisManager->FillNtupleIColumn(1, 18, killed_back[spot_idx]);
+        analysisManager->FillNtupleDColumn(1, 19, spots[spot_idx].is_weight);
         analysisManager->AddNtupleRow(1);
+      }
 
-        spdlog::info(
-            "Run done: config_id={}, run_id={}, x_src={}, y_src={}, hits_w={:.1f}, "
-            "killed_l1={}, killed_l2={}, killed_back={}, is_weight={:.4f}, photons={}",
-            config_counter, run_id, x_source, y_source, stats.n_hits, k1, k2, k_back,
-            is_weight, n_photons);
+      eventAction->ResetSpotAccumulators();
+      spdlog::info("config_id={} completata: {} spot, BeamOn={}", config_counter, n_spots,
+                   static_cast<long long>(n_spots) * n_photons);
+
+    } else {
+      // Legacy: loop per-run (usato solo se save_hits=true)
+      for (double x_source = source_x_min; x_source <= source_x_max + 1e-9;
+           x_source += source_dx) {
+        for (double y_source = source_y_min; y_source <= source_y_max + 1e-9;
+             y_source += source_dy) {
+          UImanager->ApplyCommand("/gps/pos/centre " + std::to_string(x_source) + " "
+                                  + std::to_string(y_source) + " 0 mm");
+
+          double is_weight = 1.0;
+          if (use_is) {
+            G4ThreeVector pos(x_source, y_source, 0);
+            auto params = det->GetL1Params();
+            G4ThreeVector axis;
+            double maxTheta = 0.0;
+            axis            = (G4ThreeVector(params.x, 0, 0) - pos).unit();
+            ImportanceSamplingHelper::CalculateCone(pos, params, axis, maxTheta);
+            primaryGen->SetStaticCone(axis, maxTheta);
+            is_weight = 1.0 - std::cos(maxTheta);
+          }
+
+          int run_id = run_counter++;
+          eventAction->ClearRays();
+          steppingAction->ResetKillCounters();
+
+          long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+          CLHEP::HepRandom::setTheSeed(seed);
+
+          if (macro_file.empty()) {
+            UImanager->ApplyCommand("/run/beamOn " + std::to_string(n_photons));
+          } else {
+            UImanager->ApplyCommand("/control/execute " + macro_file.string());
+          }
+
+          auto stats = compute_stats(eventAction->Moments());
+          int k1     = steppingAction->GetKilledLens1();
+          int k2     = steppingAction->GetKilledLens2();
+          int k_back = steppingAction->GetKilledBack();
+
+          analysisManager->FillNtupleIColumn(1, 0, config_counter);
+          analysisManager->FillNtupleIColumn(1, 1, run_id);
+          analysisManager->FillNtupleDColumn(1, 2, x_source);
+          analysisManager->FillNtupleDColumn(1, 3, y_source);
+          analysisManager->FillNtupleDColumn(1, 4, stats.n_hits);
+          analysisManager->FillNtupleDColumn(1, 5, stats.mu_y);
+          analysisManager->FillNtupleDColumn(1, 6, stats.mu_z);
+          analysisManager->FillNtupleDColumn(1, 7, stats.sigma_y);
+          analysisManager->FillNtupleDColumn(1, 8, stats.sigma_z);
+          analysisManager->FillNtupleDColumn(1, 9, stats.sigma_yz);
+          analysisManager->FillNtupleDColumn(1, 10, stats.mu_dy);
+          analysisManager->FillNtupleDColumn(1, 11, stats.mu_dz);
+          analysisManager->FillNtupleDColumn(1, 12, stats.sigma_dy);
+          analysisManager->FillNtupleDColumn(1, 13, stats.sigma_dz);
+          analysisManager->FillNtupleDColumn(1, 14, stats.cov_y_dy);
+          analysisManager->FillNtupleDColumn(1, 15, stats.cov_z_dz);
+          analysisManager->FillNtupleIColumn(1, 16, k1);
+          analysisManager->FillNtupleIColumn(1, 17, k2);
+          analysisManager->FillNtupleIColumn(1, 18, k_back);
+          analysisManager->FillNtupleDColumn(1, 19, is_weight);
+          analysisManager->AddNtupleRow(1);
+        }
       }
     }
 
+    completed_pairs++;
+    log_progress("psf-dof");
     config_counter++;
   }
 

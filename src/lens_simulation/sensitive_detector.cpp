@@ -18,6 +18,7 @@
 
 #include <G4OpticalPhoton.hh>
 #include <G4RunManager.hh>
+#include <G4SystemOfUnits.hh>
 
 #include <iostream>
 
@@ -41,7 +42,14 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* /*hi
   // Registra il fotone come "hit"
   auto pos      = pre->GetPosition();
   double weight = track->GetWeight();
-  eventAction->AddPhotonHit(pos.y(), pos.z(), weight);
+
+  if (eventAction->IsSpotMode()) {
+    G4ThreeVector vtx = track->GetVertexPosition();
+    int spot_id = eventAction->CalcSpotId(vtx.x() / CLHEP::mm, vtx.y() / CLHEP::mm);
+    eventAction->AddPhotonHit(spot_id, pos.y(), pos.z(), weight);
+  } else {
+    eventAction->AddPhotonHit(pos.y(), pos.z(), weight);
+  }
 
   // Kill the photon after detection to stop tracking
   track->SetTrackStatus(fStopAndKill);

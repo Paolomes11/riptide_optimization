@@ -19,6 +19,7 @@
 #include "focus_map.hpp"
 #include "importance_sampling.hpp"
 #include "primary_generator_action.hpp"
+#include "spot_grid.hpp"
 
 #include <G4AnalysisManager.hh>
 #include <G4RunManager.hh>
@@ -197,6 +198,43 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     }
   }
 
+  auto t_scan_start    = std::chrono::steady_clock::now();
+  int  total_pairs     = static_cast<int>(pairs.size());
+  int  completed_pairs = 0;
+  int  next_progress_pct = 10;
+  int  n_src_y = static_cast<int>((source_y_max - source_y_min) / source_dy) + 1;
+
+  auto log_progress = [&](const char* tag) {
+    int pct = total_pairs > 0 ? (completed_pairs * 100 / total_pairs) : 0;
+    if (pct < next_progress_pct)
+      return;
+    double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t_scan_start).count();
+    double eta = elapsed * (total_pairs - completed_pairs) / completed_pairs;
+    spdlog::info("[PROGRESS] {} {}% ({}/{} coppie) — elapsed {:.0f}s ETA {:.0f}s",
+                 tag, pct, completed_pairs, total_pairs, elapsed, eta);
+    spdlog::default_logger()->flush();
+    next_progress_pct = (pct / 10 + 1) * 10;
+  };
+
+  bool use_is  = config.value("use_importance_sampling", false);
+
+  auto* eventAction = dynamic_cast<EventAction*>(
+      const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
+  if (!eventAction)
+    throw std::runtime_error("EventAction non trovato in lens_scan");
+
+  auto* primaryGen = const_cast<PrimaryGeneratorAction*>(
+      static_cast<const PrimaryGeneratorAction*>(run_manager->GetUserPrimaryGeneratorAction()));
+  if (!primaryGen)
+    throw std::runtime_error("PrimaryGeneratorAction non trovato in lens_scan");
+
+  auto spots  = build_spot_grid(source_x_min, source_x_max, source_dx,
+                                source_y_min, source_y_max, source_dy);
+  int  n_spots = static_cast<int>(spots.size());
+  spdlog::info("[lens] Inizio scan: {} coppie, {} spot/coppia, 1 BeamOn/coppia",
+               total_pairs, n_spots);
+
   for (const auto& pair : pairs) {
     double x1 = pair.first;
     double x2 = pair.second;
@@ -241,84 +279,74 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     analysisManager->AddNtupleRow(0);
 
     if (focus_valid) {
-      for (double x_source = source_x_min; x_source <= source_x_max + 1e-9; x_source += source_dx) {
-        for (double y_source = source_y_min; y_source <= source_y_max + 1e-9;
-             y_source += source_dy) {
-          UImanager->ApplyCommand("/gps/pos/centre " + std::to_string(x_source) + " "
-                                  + std::to_string(y_source) + " 0 mm");
-
-          // Calcola il cono statico per questo run (sorgente puntiforme)
-          if (config.value("use_importance_sampling", false)) {
-            G4ThreeVector pos(x_source, y_source, 0);
-            G4ThreeVector axis;
-            double maxTheta;
-            auto params = det->GetL1Params();
-            axis        = (G4ThreeVector(params.x, 0, 0) - pos).unit();
-            ImportanceSamplingHelper::CalculateCone(pos, params, axis, maxTheta);
-
-            double originalOmega = 2.0 * M_PI;
-            double cosMaxTheta   = std::cos(maxTheta);
-            double newOmega      = 2.0 * M_PI * (1.0 - cosMaxTheta);
-            double weight        = newOmega / originalOmega;
-
-            if (run_counter == 0) {
-              spdlog::info(
-                  "Configured Importance Sampling: theta_max = {:.2f} deg, weight = {:.4f}",
-                  maxTheta * 180.0 / M_PI, weight);
-            }
-
-            auto* primaryGen =
-                const_cast<PrimaryGeneratorAction*>(static_cast<const PrimaryGeneratorAction*>(
-                    run_manager->GetUserPrimaryGeneratorAction()));
-            if (primaryGen) {
-              primaryGen->SetStaticCone(axis, maxTheta);
-            }
-          }
-
-          int run_id        = run_counter++;
-          auto* eventAction = dynamic_cast<EventAction*>(
-              const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
-          if (eventAction) {
-            eventAction->runID = run_id;
-            eventAction->ResetLastRunHitCount();
-            eventAction->ClearEventHits();
-          }
-
-          long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-          CLHEP::HepRandom::setTheSeed(seed);
-
-          UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
-          UImanager->ApplyCommand("/run/beamOn " + std::to_string(lens_n_photons));
-
-          if (eventAction) {
-            const auto& hits = eventAction->GetEventHits();
-            y_hits_vec.clear();
-            z_hits_vec.clear();
-            y_hits_vec.reserve(hits.size());
-            z_hits_vec.reserve(hits.size());
-            for (const auto& h : hits) {
-              y_hits_vec.push_back(h.y);
-              z_hits_vec.push_back(h.z);
-            }
-
-            double n_hits = eventAction ? eventAction->GetLastRunHitCount() : 0.0;
-            analysisManager->FillNtupleIColumn(1, 0, config_counter);
-            analysisManager->FillNtupleIColumn(1, 1, run_id);
-            analysisManager->FillNtupleDColumn(1, 2, x_source);
-            analysisManager->FillNtupleDColumn(1, 3, y_source);
-            analysisManager->FillNtupleDColumn(1, 4, n_hits);
-            analysisManager->AddNtupleRow(1);
-          }
-
-          spdlog::info("Run done: config_id={}, x_src={}, y_src={}, n_hits={}", config_counter,
-                       x_source, y_source, eventAction ? eventAction->GetLastRunHitCount() : 0);
+      // Aggiorna coni IS per questa coppia (dipendono da x1)
+      if (use_is) {
+        auto params = det->GetL1Params();
+        for (auto& sc : spots) {
+          G4ThreeVector axis = (G4ThreeVector(params.x, 0, 0) - sc.pos).unit();
+          double maxTheta;
+          ImportanceSamplingHelper::CalculateCone(sc.pos, params, axis, maxTheta);
+          sc.is_axis   = axis;
+          sc.is_theta  = maxTheta;
+          sc.is_weight = 1.0 - std::cos(maxTheta);
+          sc.use_is    = true;
         }
       }
+
+      // Configura EventAction per accumulo per-spot
+      eventAction->InitSpotMode(n_spots, source_x_min, source_dx,
+                                source_y_min, source_dy, n_src_y);
+
+      // Configura cycling PGA e lancia 1 BeamOn per tutti gli spot
+      primaryGen->ConfigureSpotCycling(spots);
+      primaryGen->ResetCycling();
+
+      long seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+      CLHEP::HepRandom::setTheSeed(seed);
+
+      // Macro configura GPS (particle type, energy, angular distribution)
+      // La posizione viene sovrascritta dal cycling PGA per ogni evento
+      UImanager->ApplyCommand("/control/execute " + macro_to_run.string());
+      UImanager->ApplyCommand("/run/beamOn "
+                              + std::to_string(static_cast<long long>(n_spots) * lens_n_photons));
+
+      primaryGen->DisableCycling();
+
+      // Scrivi n_spots righe nel Runs ntuple (struttura ROOT invariata)
+      const auto& all_hits    = eventAction->GetSpotHits();
+      const auto& all_weights = eventAction->GetSpotWeights();
+
+      for (int spot_idx = 0; spot_idx < n_spots; ++spot_idx) {
+        double x_source      = spots[spot_idx].pos.x();
+        double y_source      = spots[spot_idx].pos.y();
+        const auto& hits     = all_hits[spot_idx];
+        y_hits_vec.clear();
+        z_hits_vec.clear();
+        y_hits_vec.reserve(hits.size());
+        z_hits_vec.reserve(hits.size());
+        for (const auto& h : hits) {
+          y_hits_vec.push_back(h.y);
+          z_hits_vec.push_back(h.z);
+        }
+        int run_id = run_counter++;
+        analysisManager->FillNtupleIColumn(1, 0, config_counter);
+        analysisManager->FillNtupleIColumn(1, 1, run_id);
+        analysisManager->FillNtupleDColumn(1, 2, x_source);
+        analysisManager->FillNtupleDColumn(1, 3, y_source);
+        analysisManager->FillNtupleDColumn(1, 4, all_weights[spot_idx]);
+        analysisManager->AddNtupleRow(1);
+      }
+
+      eventAction->ResetSpotAccumulators();
+      spdlog::info("config_id={} completata: {} spot, BeamOn={}", config_counter, n_spots,
+                   static_cast<long long>(n_spots) * lens_n_photons);
     } else {
       spdlog::info("Skipped config_id={} (focus_valid=0, x_det={:.1f})", config_counter,
                    x_det_config);
     }
 
+    completed_pairs++;
+    log_progress("lens");
     config_counter++;
   }
 

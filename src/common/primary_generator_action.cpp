@@ -18,6 +18,8 @@
 #include <G4GeneralParticleSource.hh>
 #include <G4PrimaryParticle.hh>
 #include <G4PrimaryVertex.hh>
+#include <G4SPSPosDistribution.hh>
+#include <G4SingleParticleSource.hh>
 #include <G4SystemOfUnits.hh>
 #include <Randomize.hh>
 
@@ -36,8 +38,63 @@ PrimaryGeneratorAction::~PrimaryGeneratorAction() {
   delete m_gps;
 }
 
+void PrimaryGeneratorAction::ConfigureSpotCycling(const std::vector<SpotConfig>& spots) {
+  m_spotConfigs    = spots;
+  m_currentSpotIdx = 0;
+}
+
+void PrimaryGeneratorAction::ResetCycling() {
+  m_currentSpotIdx = 0;
+}
+
+void PrimaryGeneratorAction::DisableCycling() {
+  m_spotConfigs.clear();
+  m_currentSpotIdx = 0;
+}
+
+static void apply_cone_sampling(G4Event* event, const G4ThreeVector& axis, double maxTheta) {
+  G4PrimaryVertex* vertex = event->GetPrimaryVertex();
+  if (!vertex)
+    return;
+  G4PrimaryParticle* particle = vertex->GetPrimary();
+  if (!particle)
+    return;
+
+  double cosMaxTheta = std::cos(maxTheta);
+  double rand1       = G4UniformRand();
+  double rand2       = G4UniformRand();
+
+  double cosTheta = 1.0 - rand1 * (1.0 - cosMaxTheta);
+  double sinTheta = std::sqrt(std::max(0.0, 1.0 - cosTheta * cosTheta));
+  double phi      = 2.0 * M_PI * rand2;
+
+  G4ThreeVector localDir(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
+  G4ThreeVector newDir = localDir;
+  newDir.rotateUz(axis);
+  particle->SetMomentumDirection(newDir);
+
+  double newOmega = 2.0 * M_PI * (1.0 - cosMaxTheta);
+  particle->SetWeight(newOmega / (2.0 * M_PI));
+}
+
 void PrimaryGeneratorAction::GeneratePrimaries(G4Event* event) {
-  // Genera il primo vertice dell'interazione particella
+  if (!m_spotConfigs.empty()) {
+    const auto& spot = m_spotConfigs[m_currentSpotIdx];
+
+    // Imposta posizione GPS per questo spot direttamente via C++ API
+    m_gps->GetCurrentSource()->GetPosDist()->SetCentreCoords(spot.pos);
+
+    m_gps->GeneratePrimaryVertex(event);
+
+    if (spot.use_is) {
+      apply_cone_sampling(event, spot.is_axis, spot.is_theta);
+    }
+
+    m_currentSpotIdx = (m_currentSpotIdx + 1) % static_cast<int>(m_spotConfigs.size());
+    return;
+  }
+
+  // Modalità legacy
   m_gps->GeneratePrimaryVertex(event);
 
   if (m_useImportanceSampling) {
@@ -64,29 +121,7 @@ void PrimaryGeneratorAction::GeneratePrimaries(G4Event* event) {
       return;
     }
 
-    // Genera una nuova direzione uniforme nell'angolo solido del cono
-    double cosMaxTheta = std::cos(maxTheta);
-    double rand1       = G4UniformRand();
-    double rand2       = G4UniformRand();
-
-    double cosTheta = 1.0 - rand1 * (1.0 - cosMaxTheta);
-    double sinTheta = std::sqrt(std::max(0.0, 1.0 - cosTheta * cosTheta));
-    double phi      = 2.0 * M_PI * rand2;
-
-    G4ThreeVector localDir(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
-
-    // Ruota la direzione locale per allinearla con l'asse del cono
-    G4ThreeVector newDir = localDir;
-    newDir.rotateUz(axis);
-
-    particle->SetMomentumDirection(newDir);
-
-    // Peso: Rapporto tra l'angolo solido del cono e l'angolo solido originale (emisfero = 2pi)
-    double originalOmega = 2.0 * M_PI; // maxtheta era 90 gradi nelle macro originali
-    double newOmega      = 2.0 * M_PI * (1.0 - cosMaxTheta);
-    double weight        = newOmega / originalOmega;
-
-    particle->SetWeight(weight);
+    apply_cone_sampling(event, axis, maxTheta);
   }
 }
 

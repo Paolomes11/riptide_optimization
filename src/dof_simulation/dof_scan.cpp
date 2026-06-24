@@ -206,6 +206,26 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
       }
     }
 
+    auto t_scan_start    = std::chrono::steady_clock::now();
+    int  total_pairs     = static_cast<int>(pairs.size());
+    int  completed_pairs = 0;
+    int  next_progress_pct = 10;
+
+    auto log_progress = [&](const char* tag) {
+      int pct = total_pairs > 0 ? (completed_pairs * 100 / total_pairs) : 0;
+      if (pct < next_progress_pct)
+        return;
+      double elapsed = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - t_scan_start).count();
+      double eta = elapsed * (total_pairs - completed_pairs) / completed_pairs;
+      spdlog::info("[PROGRESS] {} {}% ({}/{} coppie) — elapsed {:.0f}s ETA {:.0f}s",
+                   tag, pct, completed_pairs, total_pairs, elapsed, eta);
+      spdlog::default_logger()->flush();
+      next_progress_pct = (pct / 10 + 1) * 10;
+    };
+
+    spdlog::info("[dof] Inizio scan: {} coppie", total_pairs);
+
     for (const auto& pair : pairs) {
       double x1 = pair.first;
       double x2 = pair.second;
@@ -260,6 +280,9 @@ void run_dof_scan(G4RunManager* run_manager, const std::filesystem::path& macro_
                    eventAction->GetWeightedRayCount(), n_photons);
 
       eventAction->ClearRays();
+
+      completed_pairs++;
+      log_progress("dof");
       config_counter++;
     }
   }

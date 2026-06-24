@@ -44,6 +44,60 @@ void PsfDofEventAction::ClearRays() {
   m_weightHits.clear();
 }
 
+void PsfDofEventAction::InitSpotMode(int n_spots, double x_src_min, double dx_src,
+                                     double y_src_min, double dy_src, int ny_src) {
+  m_spotMode = true;
+  m_xSrcMin  = x_src_min;
+  m_dxSrc    = dx_src;
+  m_ySrcMin  = y_src_min;
+  m_dySrc    = dy_src;
+  m_nySrc    = ny_src;
+  m_spotMoments.assign(n_spots, PsfDofMoments{});
+  m_spotKilledLens1.assign(n_spots, 0);
+  m_spotKilledLens2.assign(n_spots, 0);
+  m_spotKilledBack.assign(n_spots, 0);
+}
+
+void PsfDofEventAction::ResetSpotAccumulators() {
+  m_spotMode = false;
+  m_spotMoments.clear();
+  m_spotKilledLens1.clear();
+  m_spotKilledLens2.clear();
+  m_spotKilledBack.clear();
+}
+
+void PsfDofEventAction::AddRay(int spot_id, double y, double z, double dy, double dz, double w) {
+  if (spot_id < 0 || spot_id >= static_cast<int>(m_spotMoments.size())) return;
+  auto& m      = m_spotMoments[spot_id];
+  m.sum_w     += w;
+  m.sum_y     += w * y;
+  m.sum_z     += w * z;
+  m.sum_dy    += w * dy;
+  m.sum_dz    += w * dz;
+  m.sum_yy    += w * y  * y;
+  m.sum_zz    += w * z  * z;
+  m.sum_yz    += w * y  * z;
+  m.sum_dy_dy += w * dy * dy;
+  m.sum_dz_dz += w * dz * dz;
+  m.sum_y_dy  += w * y  * dy;
+  m.sum_z_dz  += w * z  * dz;
+}
+
+void PsfDofEventAction::AddKilledLens1(int spot_id) {
+  if (spot_id >= 0 && spot_id < static_cast<int>(m_spotKilledLens1.size()))
+    ++m_spotKilledLens1[spot_id];
+}
+
+void PsfDofEventAction::AddKilledLens2(int spot_id) {
+  if (spot_id >= 0 && spot_id < static_cast<int>(m_spotKilledLens2.size()))
+    ++m_spotKilledLens2[spot_id];
+}
+
+void PsfDofEventAction::AddKilledBack(int spot_id) {
+  if (spot_id >= 0 && spot_id < static_cast<int>(m_spotKilledBack.size()))
+    ++m_spotKilledBack[spot_id];
+}
+
 void PsfDofEventAction::BeginOfEventAction(const G4Event* /*event*/) {
 }
 
