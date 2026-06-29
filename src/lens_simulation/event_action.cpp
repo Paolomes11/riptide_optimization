@@ -41,12 +41,53 @@ void EventAction::InitSpotMode(int n_spots, double x_src_min, double dx_src,
   m_nySrc    = ny_src;
   m_spotHits.assign(n_spots, {});
   m_spotWeights.assign(n_spots, 0.0);
+  m_spotVirtualMoments.assign(n_spots, VirtualPlaneMoments{});
+  m_spotKilledVLens1.assign(n_spots, 0);
+  m_spotKilledVLens2.assign(n_spots, 0);
+  m_spotKilledVBack.assign(n_spots, 0);
 }
 
 void EventAction::ResetSpotAccumulators() {
   m_spotMode = false;
   m_spotHits.clear();
   m_spotWeights.clear();
+  m_spotVirtualMoments.clear();
+  m_spotKilledVLens1.clear();
+  m_spotKilledVLens2.clear();
+  m_spotKilledVBack.clear();
+}
+
+void EventAction::AddVirtualHit(int spot_id, double y, double z,
+                                 double dy, double dz, double w) {
+  if (spot_id < 0 || spot_id >= static_cast<int>(m_spotVirtualMoments.size())) return;
+  auto& m    = m_spotVirtualMoments[spot_id];
+  m.sum_w   += w;
+  m.sum_y   += w * y;
+  m.sum_z   += w * z;
+  m.sum_dy  += w * dy;
+  m.sum_dz  += w * dz;
+  m.sum_yy  += w * y * y;
+  m.sum_zz  += w * z * z;
+  m.sum_yz  += w * y * z;
+  m.sum_dy_dy += w * dy * dy;
+  m.sum_dz_dz += w * dz * dz;
+  m.sum_y_dy  += w * y * dy;
+  m.sum_z_dz  += w * z * dz;
+}
+
+void EventAction::AddKilledVLens1(int spot_id) {
+  if (spot_id >= 0 && spot_id < static_cast<int>(m_spotKilledVLens1.size()))
+    ++m_spotKilledVLens1[spot_id];
+}
+
+void EventAction::AddKilledVLens2(int spot_id) {
+  if (spot_id >= 0 && spot_id < static_cast<int>(m_spotKilledVLens2.size()))
+    ++m_spotKilledVLens2[spot_id];
+}
+
+void EventAction::AddKilledVBack(int spot_id) {
+  if (spot_id >= 0 && spot_id < static_cast<int>(m_spotKilledVBack.size()))
+    ++m_spotKilledVBack[spot_id];
 }
 
 void EventAction::BeginOfEventAction(const G4Event* /*event*/) {

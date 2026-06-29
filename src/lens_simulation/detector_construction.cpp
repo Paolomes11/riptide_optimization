@@ -118,6 +118,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
           } else {
             m_l2_thickness     = lens->center_thickness;
             m_l2_center_offset = offset;
+            m_l2_diameter      = lens->diameter;
           }
 
           spdlog::info("Replaced solid for {} with Thorlabs lens {} (offset: {:.3f} mm)",
@@ -237,6 +238,7 @@ void DetectorConstruction::SetLenses(const std::string& l1_id, const std::string
       } else {
         m_l2_thickness     = lens->center_thickness;
         m_l2_center_offset = offset;
+        m_l2_diameter      = lens->diameter;
       }
       spdlog::info("Updated solid for {} with Thorlabs lens {} (offset: {:.3f} mm)", pv->GetName(),
                    id, offset);

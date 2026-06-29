@@ -18,10 +18,12 @@
 #include "event_action.hpp"
 #include "focus_map.hpp"
 #include "importance_sampling.hpp"
+#include "lens_stepping_action.hpp"
 #include "primary_generator_action.hpp"
 #include "spot_grid.hpp"
 
 #include <G4AnalysisManager.hh>
+#include <G4GeometryManager.hh>
 #include <G4RunManager.hh>
 #include <G4SystemOfUnits.hh>
 #include <G4UImanager.hh>
@@ -34,6 +36,41 @@
 #include <sstream>
 
 namespace riptide {
+
+// Statistiche derivate dai momenti del piano virtuale (identica a PsfDofStats in psf_dof_scan)
+struct VirtualStats {
+  double n_hits   = 0.0;
+  double mu_y     = 0.0, mu_z     = 0.0;
+  double sigma_y  = 0.0, sigma_z  = 0.0, sigma_yz = 0.0;
+  double mu_dy    = 0.0, mu_dz    = 0.0;
+  double sigma_dy = 0.0, sigma_dz = 0.0;
+  double cov_y_dy = 0.0, cov_z_dz = 0.0;
+};
+
+static VirtualStats compute_virtual_stats(const VirtualPlaneMoments& m) {
+  VirtualStats out;
+  if (!(m.sum_w > 0.0)) return out;
+  out.n_hits = m.sum_w;
+  out.mu_y   = m.sum_y / m.sum_w;
+  out.mu_z   = m.sum_z / m.sum_w;
+  out.mu_dy  = m.sum_dy / m.sum_w;
+  out.mu_dz  = m.sum_dz / m.sum_w;
+  double e_yy    = m.sum_yy / m.sum_w;
+  double e_zz    = m.sum_zz / m.sum_w;
+  double e_yz    = m.sum_yz / m.sum_w;
+  double e_dy_dy = m.sum_dy_dy / m.sum_w;
+  double e_dz_dz = m.sum_dz_dz / m.sum_w;
+  double e_y_dy  = m.sum_y_dy / m.sum_w;
+  double e_z_dz  = m.sum_z_dz / m.sum_w;
+  out.sigma_y  = std::sqrt(std::max(0.0, e_yy - out.mu_y * out.mu_y));
+  out.sigma_z  = std::sqrt(std::max(0.0, e_zz - out.mu_z * out.mu_z));
+  out.sigma_yz = e_yz - out.mu_y * out.mu_z;
+  out.sigma_dy = std::sqrt(std::max(0.0, e_dy_dy - out.mu_dy * out.mu_dy));
+  out.sigma_dz = std::sqrt(std::max(0.0, e_dz_dz - out.mu_dz * out.mu_dz));
+  out.cov_y_dy = e_y_dy - out.mu_y * out.mu_dy;
+  out.cov_z_dz = e_z_dz - out.mu_z * out.mu_dz;
+  return out;
+}
 
 void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_file,
                const std::string& root_output_file, const std::filesystem::path& config_file,
@@ -114,6 +151,40 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   analysisManager->CreateNtupleFColumn("z_hits", z_hits_vec);
   analysisManager->FinishNtuple(1);
 
+  // Ntuple 2: configurazioni piano virtuale (Tecnica E — embedded psf-dof)
+  analysisManager->CreateNtuple("PsfDofConfigs", "PSF+DoF configurations (embedded)");
+  analysisManager->CreateNtupleIColumn("config_id");
+  analysisManager->CreateNtupleDColumn("x1");
+  analysisManager->CreateNtupleDColumn("x2");
+  analysisManager->CreateNtupleDColumn("x_virtual");
+  analysisManager->CreateNtupleSColumn("l1_id");
+  analysisManager->CreateNtupleSColumn("l2_id");
+  analysisManager->FinishNtuple(2);
+
+  // Ntuple 3: dati piano virtuale per spot (stesso schema di PsfDofRuns in psf_dof.root)
+  analysisManager->CreateNtuple("PsfDofRuns", "PSF+DoF runs (embedded)");
+  analysisManager->CreateNtupleIColumn("config_id");
+  analysisManager->CreateNtupleIColumn("run_id");
+  analysisManager->CreateNtupleDColumn("x_source");
+  analysisManager->CreateNtupleDColumn("y_source");
+  analysisManager->CreateNtupleDColumn("n_hits");
+  analysisManager->CreateNtupleDColumn("mu_y");
+  analysisManager->CreateNtupleDColumn("mu_z");
+  analysisManager->CreateNtupleDColumn("sigma_y");
+  analysisManager->CreateNtupleDColumn("sigma_z");
+  analysisManager->CreateNtupleDColumn("sigma_yz");
+  analysisManager->CreateNtupleDColumn("mu_dy");
+  analysisManager->CreateNtupleDColumn("mu_dz");
+  analysisManager->CreateNtupleDColumn("sigma_dy");
+  analysisManager->CreateNtupleDColumn("sigma_dz");
+  analysisManager->CreateNtupleDColumn("cov_y_dy");
+  analysisManager->CreateNtupleDColumn("cov_z_dz");
+  analysisManager->CreateNtupleIColumn("n_killed_lens1");
+  analysisManager->CreateNtupleIColumn("n_killed_lens2");
+  analysisManager->CreateNtupleIColumn("n_killed_back");
+  analysisManager->CreateNtupleDColumn("is_weight");
+  analysisManager->FinishNtuple(3);
+
   // Parametri di scansione lenti e sorgente
   double x_min = config["x_min"];
   double dx    = config["dx"];
@@ -154,12 +225,14 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   double source_x_max = config.value("source_x_max", 30.0);
   double source_dx    = config.value("source_dx", 5.0);
 
-  int lens_n_photons   = config.value("lens_n_photons", 1000);
-  int config_id_offset = config.value("config_id_offset", 0);
-  int run_id_offset    = config.value("run_id_offset", 0);
+  int    lens_n_photons          = config.value("lens_n_photons", 1000);
+  int    config_id_offset        = config.value("config_id_offset", 0);
+  int    run_id_offset           = config.value("run_id_offset", 0);
+  double psf_dof_x_virtual_offset = config.value("psf_dof_x_virtual_offset", 30.0);
 
-  int config_counter = config_id_offset;
-  int run_counter    = run_id_offset;
+  int config_counter  = config_id_offset;
+  int run_counter     = run_id_offset;
+  int vrun_counter    = run_id_offset; // run_id separato per PsfDofRuns
 
   spdlog::info("Simulating lens pair: {} & {}", l1_id, l2_id);
 
@@ -229,6 +302,13 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   if (!primaryGen)
     throw std::runtime_error("PrimaryGeneratorAction non trovato in lens_scan");
 
+  auto* lensSteppingAction = dynamic_cast<LensSteppingAction*>(
+      const_cast<G4UserSteppingAction*>(run_manager->GetUserSteppingAction()));
+  // Opzionale: se non è registrata (backward-compat), continua senza piano virtuale
+
+  // Tecnica A: parallelizza voxelizzazione geometria su macchine multi-core (Geant4 ≥ 11.3)
+  G4GeometryManager::GetInstance()->RequestParallelOptimisation(true);
+
   auto spots  = build_spot_grid(source_x_min, source_x_max, source_dx,
                                 source_y_min, source_y_max, source_dy);
   int  n_spots = static_cast<int>(spots.size());
@@ -269,6 +349,18 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     det->SetLensPositions(x1, x2);
     run_manager->GeometryHasBeenModified();
 
+    // Tecnica E: configura piano virtuale e diaframmi per questa coppia
+    double x_virtual = x2 + psf_dof_x_virtual_offset;
+    if (lensSteppingAction) {
+      lensSteppingAction->SetVirtualPlane(x_virtual);
+      auto lens1     = det->GetL1Params();
+      double x1_front = lens1.x - 0.5 * lens1.tc - 1e-3;
+      double r1_lens  = 0.5 * lens1.diameter;
+      double x2_front = det->GetL2X() - 0.5 * det->GetL2Thickness() - 1e-3;
+      double r2_lens  = 0.5 * det->GetL2Diameter();
+      lensSteppingAction->SetLensAperturePlanes(x1_front, r1_lens, x2_front, r2_lens);
+    }
+
     analysisManager->FillNtupleIColumn(0, 0, config_counter);
     analysisManager->FillNtupleDColumn(0, 1, x1);
     analysisManager->FillNtupleDColumn(0, 2, x2);
@@ -277,6 +369,15 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
     analysisManager->FillNtupleDColumn(0, 5, x_det_config);
     analysisManager->FillNtupleIColumn(0, 6, focus_valid);
     analysisManager->AddNtupleRow(0);
+
+    // Tecnica E: PsfDofConfigs (una riga per coppia, come Configurations)
+    analysisManager->FillNtupleIColumn(2, 0, config_counter);
+    analysisManager->FillNtupleDColumn(2, 1, x1);
+    analysisManager->FillNtupleDColumn(2, 2, x2);
+    analysisManager->FillNtupleDColumn(2, 3, x_virtual);
+    analysisManager->FillNtupleSColumn(2, 4, l1_id);
+    analysisManager->FillNtupleSColumn(2, 5, l2_id);
+    analysisManager->AddNtupleRow(2);
 
     if (focus_valid) {
       // Aggiorna coni IS per questa coppia (dipendono da x1)
@@ -335,6 +436,43 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
         analysisManager->FillNtupleDColumn(1, 3, y_source);
         analysisManager->FillNtupleDColumn(1, 4, all_weights[spot_idx]);
         analysisManager->AddNtupleRow(1);
+      }
+
+      // Tecnica E: PsfDofRuns (una riga per spot — momenti piano virtuale)
+      if (lensSteppingAction) {
+        const auto& vmoments = eventAction->GetSpotVirtualMoments();
+        const auto& vkl1     = eventAction->GetSpotKilledVLens1();
+        const auto& vkl2     = eventAction->GetSpotKilledVLens2();
+        const auto& vkback   = eventAction->GetSpotKilledVBack();
+
+        for (int spot_idx = 0; spot_idx < n_spots; ++spot_idx) {
+          double x_source    = spots[spot_idx].pos.x();
+          double y_source    = spots[spot_idx].pos.y();
+          auto   vstats      = compute_virtual_stats(vmoments[spot_idx]);
+          double is_w        = spots[spot_idx].is_weight;
+          int    vrun_id     = vrun_counter++;
+          analysisManager->FillNtupleIColumn(3, 0, config_counter);
+          analysisManager->FillNtupleIColumn(3, 1, vrun_id);
+          analysisManager->FillNtupleDColumn(3, 2, x_source);
+          analysisManager->FillNtupleDColumn(3, 3, y_source);
+          analysisManager->FillNtupleDColumn(3, 4, vstats.n_hits);
+          analysisManager->FillNtupleDColumn(3, 5, vstats.mu_y);
+          analysisManager->FillNtupleDColumn(3, 6, vstats.mu_z);
+          analysisManager->FillNtupleDColumn(3, 7, vstats.sigma_y);
+          analysisManager->FillNtupleDColumn(3, 8, vstats.sigma_z);
+          analysisManager->FillNtupleDColumn(3, 9, vstats.sigma_yz);
+          analysisManager->FillNtupleDColumn(3, 10, vstats.mu_dy);
+          analysisManager->FillNtupleDColumn(3, 11, vstats.mu_dz);
+          analysisManager->FillNtupleDColumn(3, 12, vstats.sigma_dy);
+          analysisManager->FillNtupleDColumn(3, 13, vstats.sigma_dz);
+          analysisManager->FillNtupleDColumn(3, 14, vstats.cov_y_dy);
+          analysisManager->FillNtupleDColumn(3, 15, vstats.cov_z_dz);
+          analysisManager->FillNtupleIColumn(3, 16, vkl1[spot_idx]);
+          analysisManager->FillNtupleIColumn(3, 17, vkl2[spot_idx]);
+          analysisManager->FillNtupleIColumn(3, 18, vkback[spot_idx]);
+          analysisManager->FillNtupleDColumn(3, 19, is_w);
+          analysisManager->AddNtupleRow(3);
+        }
       }
 
       eventAction->ResetSpotAccumulators();

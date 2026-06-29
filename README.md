@@ -1617,3 +1617,19 @@ python3 scripts/pareto_runner.py --l1-id LA4464 --l2-id LA4464R
 - **Nir, G. et al.** *pyradon: Python tools for streak detection in astronomical images using the Fast Radon Transform*. GitHub: [guynir42/pyradon](https://github.com/guynir42/pyradon). Riferimento per la trasformata di Radon veloce applicata a immagini con streak diffuse.
 
 - **Yanagisawa, T. et al. (2015)**. *Streak Detection and Analysis Pipeline for Space-debris Optical Images*. ResearchGate. Base per la pipeline di estrazione di features (centroide, larghezza, flusso) da immagini ottiche con streak lineari a basso SNR.
+
+---
+
+## References — Pipeline di ottimizzazione RIPTIDE (Tecniche A/C/E)
+
+- **Blyth, S. et al. (2025)**. *Opticks: GPU Accelerated Optical Photon Simulation with Geant4*. arXiv:2502.13215. Contesto per l'accelerazione GPU delle simulazioni ottiche con Geant4; motiva l'approccio alternativo tramite ottimizzazione della voxelizzazione (Tecnica A).
+
+- **Ai, X. et al. (2025)**. *Simulation of the EIC RICH detector with Opticks*. arXiv:2512.06061. Caso d'uso di riferimento per la simulazione di fotoni ottici in rivelatori Cherenkov con Opticks/Geant4.
+
+- **Geant4 Collaboration**. *Geant4 User's Guide for Application Developers — Parallelism and Geometry Optimization*. Documentazione ufficiale: https://geant4-userdoc.web.cern.ch. Base per `G4GeometryManager::RequestParallelOptimisation(true)` (Tecnica A) e la voxelizzazione MT.
+
+- **Chan, T.F., Golub, G.H., LeVeque, R.J. (1979)**. *Updating Formulae and a Pairwise Algorithm for Computing Sample Variances*. Technical Report STAN-CS-79-773, Stanford University. Formula di Welford/Chan per l'aggiornamento online dei momenti del secondo ordine, implementata in `compute_virtual_stats()` in `src/lens_simulation/lens_scan.cpp` (Tecnica E).
+
+- **Hartig, G.F. et al. (2026)**. *Surrogate-based Bayesian Monte Carlo for optical system optimization*. arXiv:2603.13646. Metodologia di riferimento per la riduzione del costo MC tramite surrogate model; motiva la Tecnica C (riduzione N_photons con controllo dell'errore relativo).
+
+- **Chen, M. et al. (2026)**. *GPU-accelerated optical Monte Carlo for large-scale photon transport*. arXiv:2606.05385. Benchmark per lo speedup atteso nella simulazione MC di fotoni ottici su GPU; confronto con l'approccio CPU ottimizzato di RIPTIDE.

@@ -9,6 +9,7 @@
 #include "optimization/detector_construction.hpp"
 
 #include <G4AnalysisManager.hh>
+#include <G4GeometryManager.hh>
 #include <G4RunManager.hh>
 #include <G4SystemOfUnits.hh>
 #include <G4UImanager.hh>
@@ -262,6 +263,9 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
   auto spots   = build_spot_grid(source_x_min, source_x_max, source_dx,
                                  source_y_min, source_y_max, source_dy);
   int  n_spots = static_cast<int>(spots.size());
+  // Tecnica A: parallelizza voxelizzazione geometria su macchine multi-core (Geant4 ≥ 11.3)
+  G4GeometryManager::GetInstance()->RequestParallelOptimisation(true);
+
   spdlog::info("[psf-dof] Inizio scan: {} coppie, {} spot/coppia, {}",
                total_pairs, n_spots, use_cycling ? "1 BeamOn/coppia" : "loop per-run");
 
@@ -354,8 +358,6 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
       }
 
       eventAction->ResetSpotAccumulators();
-      spdlog::info("config_id={} completata: {} spot, BeamOn={}", config_counter, n_spots,
-                   static_cast<long long>(n_spots) * n_photons);
 
     } else {
       // Legacy: loop per-run (usato solo se save_hits=true)
@@ -421,6 +423,7 @@ void run_psf_dof_scan(G4RunManager* run_manager, const std::filesystem::path& ma
       }
     }
 
+    spdlog::info("config_id={} completata: {} spot", config_counter, n_spots);
     completed_pairs++;
     log_progress("psf-dof");
     config_counter++;

@@ -433,7 +433,8 @@ def run_lens_with_disk_guard(
                      cfg.get('source_dy', 0.5)))
     n_runs_per_pair = nx * ny
 
-    psf_partials: list[Path] = []
+    psf_partials:     list[Path] = []
+    psf_dof_partials: list[Path] = []
     offset_cfg = 0
     offset_run = 0
     batch_idx  = 0
@@ -457,8 +458,8 @@ def run_lens_with_disk_guard(
         # Config temporaneo per il super-batch
         tmp_cfg = dict(cfg)
         tmp_cfg['pairs']                 = [list(p) for p in batch_pairs]
-        tmp_cfg['config_id_offset_base'] = offset_cfg
-        tmp_cfg['run_id_offset_base']    = offset_run
+        tmp_cfg['config_id_offset'] = offset_cfg
+        tmp_cfg['run_id_offset']    = offset_run
         tmp_cfg_path = data / f"superbatch_{batch_idx}.json"
         if not dry_run:
             tmp_cfg_path.write_text(json.dumps(tmp_cfg, indent=2))
@@ -480,9 +481,10 @@ def run_lens_with_disk_guard(
             logging.error(f"[disk-guard] Simulazione lens fallita al super-batch {batch_idx}")
             return None
 
-        # Rinomina lens.root → partial_lens_K.root
+        # Sposta lens.root → partial_lens_K.root (shutil.move gestisce cross-device)
         if not dry_run and lens_root.exists() and lens_root != partial_lens:
-            lens_root.rename(partial_lens)
+            import shutil as _shutil_mv
+            _shutil_mv.move(str(lens_root), str(partial_lens))
             # Il symlink data/lens.root punta al file appena rinominato: rimuovilo
             stale_link = data / "lens.root"
             if stale_link.is_symlink():
@@ -498,6 +500,24 @@ def run_lens_with_disk_guard(
             return None
 
         psf_partials.append(partial_psf)
+
+        # Estrai psf_dof_data parziale dal partial_lens (Tecnica E embedded)
+        partial_psf_dof  = data / f"partial_psf_dof_data_{batch_idx}.root"
+        partial_res_tmp  = data / f"partial_res_tsv_{batch_idx}.tsv"
+        cmd_dof = [
+            find_binary("psf_dof_extractor"),
+            str(partial_lens),
+            str(partial_psf_dof),
+            str(partial_res_tmp),
+            str(cfg_path),
+        ]
+        ok_dof, _, _ = run_cmd(cmd_dof, log, TIMEOUTS_SEC["psf_dof_extractor"], dry_run)
+        if not ok_dof:
+            logging.warning(
+                f"[disk-guard] psf_dof_extractor fallito al super-batch {batch_idx} — continuo"
+            )
+        else:
+            psf_dof_partials.append(partial_psf_dof)
 
         # Libera il lens parziale
         if not keep_lens and not dry_run and partial_lens.exists():
@@ -517,6 +537,7 @@ def run_lens_with_disk_guard(
     psf_data = data / "psf_data.root"
     if dry_run:
         logging.info(f"[disk-guard] [DRY] hadd {psf_data} ← {batch_idx} parziali")
+        logging.info(f"[disk-guard] [DRY] merge TSV parziali → {data / 'resolution_map.tsv'}")
         return psf_data
 
     if len(psf_partials) == 1:
@@ -533,6 +554,47 @@ def run_lens_with_disk_guard(
             except Exception:
                 pass
 
+    # Combina psf_dof parziali (Tecnica E)
+    psf_dof_data_final = data / "psf_dof_data.root"
+    if psf_dof_partials and not dry_run:
+        if len(psf_dof_partials) == 1:
+            psf_dof_partials[0].rename(psf_dof_data_final)
+        else:
+            hadd_dof = ["hadd", "-fk", str(psf_dof_data_final)] + [str(p) for p in psf_dof_partials]
+            res_dof  = subprocess.run(hadd_dof, capture_output=True, text=True)
+            if res_dof.returncode != 0:
+                logging.error(f"[disk-guard] hadd psf_dof fallito:\n{res_dof.stderr}")
+            else:
+                for p in psf_dof_partials:
+                    try: p.unlink()
+                    except Exception: pass
+        logging.info(f"[disk-guard] psf_dof_data.root finale: {psf_dof_data_final}")
+    elif dry_run and psf_dof_partials:
+        logging.info(f"[disk-guard] [DRY] hadd {psf_dof_data_final} ← {len(psf_dof_partials)} parziali psf_dof")
+
+    # Merge TSV parziali di psf_dof in resolution_map.tsv finale
+    res_tsv_final = data / "resolution_map.tsv"
+    partial_tsvs = [data / f"partial_res_tsv_{i}.tsv"
+                    for i in range(batch_idx)
+                    if (data / f"partial_res_tsv_{i}.tsv").exists()]
+    if partial_tsvs and not dry_run:
+        with open(res_tsv_final, "w") as fout:
+            header_written = False
+            for p in partial_tsvs:
+                with open(p) as fin:
+                    lines = fin.readlines()
+                if not header_written and lines:
+                    fout.writelines(lines[:1])
+                    header_written = True
+                fout.writelines(lines[1:])
+        logging.info(f"[disk-guard] resolution_map.tsv merged: {res_tsv_final}")
+
+    # Pulizia TSV temporanei di psf_dof
+    for i in range(batch_idx):
+        tmp_tsv = data / f"partial_res_tsv_{i}.tsv"
+        if tmp_tsv.exists():
+            tmp_tsv.unlink()
+
     # Pulizia config temporanei
     for i in range(batch_idx):
         tmp = data / f"superbatch_{i}.json"
@@ -541,6 +603,38 @@ def run_lens_with_disk_guard(
 
     logging.info(f"[disk-guard] psf_data.root finale: {psf_data}")
     return psf_data
+
+
+def _delete_ssd_file(path: Path | None, data_dir: Path | None,
+                     label: str, ssd_mount: Path, dry_run: bool) -> None:
+    """Cancella un file ROOT dall'SSD e tenta di rimuovere la dir run ora vuota."""
+    if dry_run or path is None:
+        return
+    try:
+        if not str(path.resolve()).startswith(str(ssd_mount)):
+            return
+    except Exception:
+        return
+    if path.exists():
+        try:
+            sz = path.stat().st_size / (1024 ** 3)
+            logging.info(f"[ssd-cleanup] Eliminato {label} ({sz:.1f} GB): {path.name}")
+            path.unlink()
+        except Exception as e:
+            logging.warning(f"[ssd-cleanup] Impossibile eliminare {path}: {e}")
+    if data_dir is not None:
+        link = data_dir / path.name
+        if link.is_symlink() and not link.exists():
+            try:
+                link.unlink()
+            except Exception:
+                pass
+    run_dir = path.parent
+    try:
+        run_dir.rmdir()
+        logging.info(f"[ssd-cleanup] Rimossa dir run vuota: {run_dir.name}")
+    except OSError:
+        pass
 
 
 # ─── Simulation step launcher ─────────────────────────────────────────────────
@@ -685,15 +779,22 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
     else:
         logging.warning("plot2D fallito — continuo")
 
+    # events.root sull'SSD non è più necessario dopo plot2D
+    if not skip_opt:
+        _delete_ssd_file(events_root, data, "events.root", ssd_mount, dry_run)
+
     # ── Steps 3–4: lens + psf_extractor ──────────────────────────────────────
     psf_data = data / "psf_data.root"
+    # lens_root_for_psfdof: lens.root tenuto vivo per psf_dof_extractor (Tecnica E)
+    lens_root_for_psfdof: Path | None = None
+
     if skip_lens:
         if not dry_run and not psf_data.exists():
             logging.error("--skip-lens richiede data/psf_data.root esistente")
             return None
         logging.info(f"[lens+psf_extractor] SKIP — uso {psf_data}")
     elif disk_guard_gb > 0:
-        # Super-batch reattivo al disco
+        # Super-batch reattivo al disco (psf_dof estratto per-batch internamente)
         if run_lens_with_disk_guard(
             cfg=_run_cfg, cfg_path=cfg_path, out_dir=out_dir,
             ssd_mount=ssd_mount, jobs=jobs, l1_id=l1_id, l2_id=l2_id,
@@ -717,13 +818,8 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
         if not ok:
             return None
 
-        if not keep_lens and not dry_run and lens_root and lens_root.exists():
-            try:
-                lens_size_gb = lens_root.stat().st_size / (1024 ** 3)
-                logging.info(f"Eliminazione lens.root ({lens_size_gb:.1f} GB) — psf_data.root prodotto.")
-                lens_root.unlink()
-            except Exception as e:
-                logging.warning(f"Impossibile eliminare {lens_root}: {e}")
+        # Mantieni lens.root vivo per psf_dof_extractor (Tecnica E); cancellazione dopo step 11
+        lens_root_for_psfdof = lens_root
 
     out["psf_data"] = psf_data
 
@@ -838,42 +934,51 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
         ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["analysis"], dry_run)
         if not ok:
             return None
+        # focal.root sull'SSD non è più necessario dopo dof_map
+        _delete_ssd_file(focal_root, data, "focal.root", ssd_mount, dry_run)
 
     out["dof_tsv"] = dof_tsv
 
-    # ── Steps 9–10: psf-dof + psf_dof_extractor ──────────────────────────────
+    # ── Steps 9–10: psf_dof_extractor (legge PsfDofRuns embedded in lens.root) ──
+    # La simulazione psf-dof separata è eliminata (Tecnica E): i dati sono già in lens.root.
     psf_dof_data = data / "psf_dof_data.root"
     res_tsv      = data / "resolution_map.tsv"
-    psf_dof_root_raw: Path | None = None  # file grezzo, serve a resolution_map
+    psf_dof_root_raw: Path | None = None  # file grezzo per resolution_map
+
     if skip_psf_dof:
         if not dry_run and not psf_dof_data.exists():
             logging.error("--skip-psf-dof richiede data/psf_dof_data.root esistente")
             return None
-        logging.info(f"[psf-dof+psf_dof_extractor] SKIP — uso {psf_dof_data}")
-    else:
-        psf_dof_root_raw = run_simulation_step(
-            "psf-dof", cfg_path, out_dir, ssd_mount, jobs,
-            l1_id, l2_id, use_local, dry_run, focus_tsv,
-        )
-        if psf_dof_root_raw is None:
-            return None
-        out["psf_dof"] = psf_dof_root_raw
-
+        logging.info(f"[psf_dof_extractor] SKIP — uso {psf_dof_data}")
+    elif lens_root_for_psfdof is not None and (dry_run or lens_root_for_psfdof.exists()):
+        # Caso non-disk-guard: estrai direttamente da lens.root
+        psf_dof_root_raw = lens_root_for_psfdof
         cmd = [
             find_binary("psf_dof_extractor"),
-            str(psf_dof_root_raw),
+            str(lens_root_for_psfdof),
             str(psf_dof_data),
             str(res_tsv),
             str(cfg_path),
         ]
         ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["psf_dof_extractor"], dry_run)
         if not ok:
-            return None
+            logging.warning("[psf_dof_extractor] fallito — proseguo senza dati DoF")
+            psf_dof_root_raw = None
+    elif not dry_run and psf_dof_data.exists():
+        # Caso disk-guard: psf_dof_data già costruito dalle super-batch
+        logging.info(f"[psf_dof_extractor] psf_dof_data.root dal disk-guard: {psf_dof_data}")
+    else:
+        logging.info("[psf_dof_extractor] SKIP — lens.root non disponibile e nessun psf_dof_data.root")
 
     out["psf_dof_data"] = psf_dof_data
     out["res_tsv"]      = res_tsv
 
-    # ── Step 11: resolution_map (usa il file grezzo con PsfDofConfigs+PsfDofRuns) ──
+    # ── Step 11: resolution_map (usa lens.root con PsfDofConfigs+PsfDofRuns embedded) ──
+    _focus_warn_args: list[str] = []
+    _dof_tsv_path = dof_tsv if dof_tsv is not None else (data / "dof_map.tsv")
+    if _dof_tsv_path.exists():
+        _focus_warn_args = ["--focus-warn-tsv", str(_dof_tsv_path)]
+
     if psf_dof_root_raw is not None and (dry_run or psf_dof_root_raw.exists()):
         cmd = [
             find_binary("resolution_map"),
@@ -882,21 +987,26 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
             "--tsv",    str(res_tsv),
             "--jobs",   str(jobs),
             "--output", str(plots),
-        ]
+        ] + _focus_warn_args
         ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["resolution_map"], dry_run)
         if not ok:
             logging.warning("resolution_map fallito — i TSV sono comunque disponibili in data/")
+    elif dry_run or res_tsv.exists():
+        cmd = [
+            find_binary("resolution_map"),
+            "--from-tsv", str(res_tsv),
+            "--config",   str(cfg_path),
+            "--output",   str(plots),
+        ] + _focus_warn_args
+        ok, _, _ = run_cmd(cmd, log, TIMEOUTS_SEC["resolution_map"], dry_run)
+        if not ok:
+            logging.warning("resolution_map (--from-tsv) fallito — TSV disponibile in data/")
     else:
-        logging.info("[resolution_map] SKIP — psf_dof.root grezzo non disponibile (usa --skip-psf-dof=False per rieseguire)")
+        logging.info("[resolution_map] SKIP — psf_dof_root_raw e resolution_map.tsv non disponibili")
 
-    # Elimina il file grezzo dopo resolution_map
-    if not keep_psf_dof and not dry_run and psf_dof_root_raw and psf_dof_root_raw.exists():
-        try:
-            psf_dof_size_gb = psf_dof_root_raw.stat().st_size / (1024 ** 3)
-            logging.info(f"Eliminazione psf_dof.root ({psf_dof_size_gb:.1f} GB) — psf_dof_data.root prodotto.")
-            psf_dof_root_raw.unlink()
-        except Exception as e:
-            logging.warning(f"Impossibile eliminare {psf_dof_root_raw}: {e}")
+    # Elimina lens.root dopo resolution_map (Tecnica E: sostituisce eliminazione psf_dof.root)
+    if not keep_lens:
+        _delete_ssd_file(lens_root_for_psfdof, data, "lens.root", ssd_mount, dry_run)
 
     return out
 
@@ -992,7 +1102,8 @@ Esempi:
     opt.add_argument("--notes",         type=str, default="",  help="Note aggiuntive nel CSV di log")
 
     args = parser.parse_args()
-    args.disk_guard_gb = max(args.disk_guard_gb, 200.0)
+    if args.disk_guard_gb > 0:
+        args.disk_guard_gb = max(args.disk_guard_gb, 1.0)
 
     pair_tag  = f"{args.l1_id}_{args.l2_id}"
     out_dir   = PROJECT_ROOT / "output" / "lens_simulations" / pair_tag

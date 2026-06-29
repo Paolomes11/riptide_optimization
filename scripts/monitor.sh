@@ -69,7 +69,7 @@ while true; do
       continue
     fi
 
-    DONE=$(grep -c "Run done:" "$LOG" 2>/dev/null)
+    DONE=$(grep -c "completata:" "$LOG" 2>/dev/null)
     DONE=${DONE//[$'\t\r\n ']/}
     [[ -z "$DONE" || ! "$DONE" =~ ^[0-9]+$ ]] && DONE=0
     COMPLETED+=( "$DONE" )

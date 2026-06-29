@@ -40,6 +40,8 @@ struct CliConfig {
   int entry_stride = 1;
   int entry_offset = 0;
   int n_jobs = 0; // 0 = tutti i core disponibili
+  std::string from_tsv;
+  std::string focus_warn_tsv;
 };
 
 static CliConfig parse_args(int argc, char** argv) {
@@ -84,6 +86,10 @@ static CliConfig parse_args(int argc, char** argv) {
       cfg.entry_offset = std::stoi(next());
     else if (arg == "--jobs")
       cfg.n_jobs = std::stoi(next());
+    else if (arg == "--from-tsv")
+      cfg.from_tsv = next();
+    else if (arg == "--focus-warn-tsv")
+      cfg.focus_warn_tsv = next();
     else if (arg == "--help" || arg == "-h") {
       std::cout << "Uso:\n"
                 << "  resolution_map --input psf_dof.root --config config/config.json\n"
@@ -91,7 +97,8 @@ static CliConfig parse_args(int argc, char** argv) {
                 << "                 [--scan-min 180] [--scan-max 400] [--scan-step 0.5]\n"
                 << "                 [--low 0.0] [--high 0.0]\n"
                 << "                 [--tsv output/resolution_map.tsv]\n"
-                << "                 [--dump-csv diag.csv] [--max-entries N]\n";
+                << "                 [--dump-csv diag.csv] [--max-entries N]\n"
+                << "                 [--from-tsv resolution_map.tsv]\n";
       std::exit(0);
     } else {
       std::cerr << "Opzione sconosciuta: " << arg << "\n";
@@ -341,6 +348,43 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  bool from_tsv_mode = !cli.from_tsv.empty();
+  std::unordered_map<int, ConfigInfo> config_map;
+  std::unordered_map<int, Aggregated> agg;
+  double x1_min_data = std::numeric_limits<double>::infinity();
+  double x1_max_data = -std::numeric_limits<double>::infinity();
+  double x2_min_data = std::numeric_limits<double>::infinity();
+  double x2_max_data = -std::numeric_limits<double>::infinity();
+
+  if (from_tsv_mode) {
+    std::ifstream tf(cli.from_tsv);
+    if (!tf.is_open()) {
+      std::cerr << "Errore: impossibile aprire " << cli.from_tsv << "\n";
+      return 1;
+    }
+    std::string hdr;
+    std::getline(tf, hdr);
+    double x1_v, x2_v, dof_v, dy_v, ee80_v;
+    int cid_v, n_dof_v, n_dy_v, n_ee80_v;
+    // In disk-guard mode i config_id si ripetono tra batch: usa ID sintetico progressivo
+    int synthetic_id = 0;
+    while (tf >> x1_v >> x2_v >> dof_v >> dy_v >> ee80_v >> cid_v >> n_dof_v >> n_dy_v >> n_ee80_v) {
+      config_map[synthetic_id] = {synthetic_id, x1_v, x2_v, 0.0};
+      Aggregated& a  = agg[synthetic_id];
+      a.n_dof        = n_dof_v;
+      a.dof_mean     = (n_dof_v > 0) ? dof_v : 0.0;
+      a.n_delta_y    = n_dy_v;
+      a.delta_y_mean = (n_dy_v > 0) ? dy_v : 0.0;
+      a.n_EE80       = n_ee80_v;
+      a.EE80_mean    = (n_ee80_v > 0) ? ee80_v : std::numeric_limits<double>::quiet_NaN();
+      a.focus_mean   = std::numeric_limits<double>::quiet_NaN();
+      x1_min_data = std::min(x1_min_data, x1_v);
+      x1_max_data = std::max(x1_max_data, x1_v);
+      x2_min_data = std::min(x2_min_data, x2_v);
+      x2_max_data = std::max(x2_max_data, x2_v);
+      ++synthetic_id;
+    }
+  } else {
   TFile file(cli.input_file.c_str(), "READ");
   if (!file.IsOpen()) {
     std::cerr << "Errore: impossibile aprire " << cli.input_file << "\n";
@@ -363,12 +407,7 @@ int main(int argc, char** argv) {
   tree_cfg->SetBranchAddress("x2", &x2_cfg);
   tree_cfg->SetBranchAddress("x_virtual", &x_virtual_cfg);
 
-  std::unordered_map<int, ConfigInfo> config_map;
   config_map.reserve(static_cast<size_t>(tree_cfg->GetEntries()));
-  double x1_min_data = std::numeric_limits<double>::infinity();
-  double x1_max_data = -std::numeric_limits<double>::infinity();
-  double x2_min_data = std::numeric_limits<double>::infinity();
-  double x2_max_data = -std::numeric_limits<double>::infinity();
 
   for (int i = 0; i < tree_cfg->GetEntries(); ++i) {
     tree_cfg->GetEntry(i);
@@ -498,7 +537,6 @@ int main(int argc, char** argv) {
   }
 
   // Fase 3: aggregazione sequenziale e dump CSV
-  std::unordered_map<int, Aggregated> agg;
   agg.reserve(config_map.size());
 
   std::ofstream dump_file;
@@ -557,6 +595,21 @@ int main(int argc, char** argv) {
     a.EE80_mean    = (a.n_EE80 > 0) ? (a.sum_EE80 / static_cast<double>(a.n_EE80))
                                      : std::numeric_limits<double>::quiet_NaN();
   }
+  } // end else (ROOT path)
+
+  if (from_tsv_mode && !config_map.empty()) {
+    std::vector<double> x1_vals;
+    x1_vals.reserve(config_map.size());
+    for (const auto& [id, c] : config_map) x1_vals.push_back(c.x1);
+    std::sort(x1_vals.begin(), x1_vals.end());
+    x1_vals.erase(std::unique(x1_vals.begin(), x1_vals.end()), x1_vals.end());
+    if (x1_vals.size() > 1) {
+      double min_dx = std::numeric_limits<double>::infinity();
+      for (size_t i = 1; i < x1_vals.size(); ++i)
+        min_dx = std::min(min_dx, x1_vals[i] - x1_vals[i - 1]);
+      dx_grid = min_dx;
+    }
+  }
 
   int n_bins_x1 = std::round((x1_max_data - x1_min_data) / dx_grid) + 1;
   int n_bins_x2 = std::round((x2_max_data - x2_min_data) / dx_grid) + 1;
@@ -592,6 +645,26 @@ int main(int argc, char** argv) {
       h_mask_dof.SetBinContent(bx, by, 1.0);
       h_mask_delta.SetBinContent(bx, by, 1.0);
       h_mask_EE80.SetBinContent(bx, by, 1.0);
+    }
+  }
+
+  if (!cli.focus_warn_tsv.empty()) {
+    std::ifstream fw(cli.focus_warn_tsv);
+    if (fw.is_open()) {
+      std::string fhdr; std::getline(fw, fhdr);
+      // header: x1 x2 x_focus x_focus_scan dof M m_target M_abs_err EE80 stripe_width
+      //         within_photocathode n_rays n_rays_core core_fraction config_id focus_before_lens2
+      // n_rays e n_rays_core sono float (media pesata), non int
+      double x1_fw, x2_fw, xf, xfs, dof_fw, M_fw, mt, Merr, ee, sw, wpc, nr, nrc, cf;
+      int cid, fbl;
+      while (fw >> x1_fw >> x2_fw >> xf >> xfs >> dof_fw >> M_fw >> mt >> Merr
+                 >> ee >> sw >> wpc >> nr >> nrc >> cf >> cid >> fbl) {
+        if (fbl == 1) {
+          int bx = h_focus_warn.GetXaxis()->FindBin(x1_fw);
+          int by = h_focus_warn.GetYaxis()->FindBin(x2_fw);
+          h_focus_warn.SetBinContent(bx, by, 1.0);
+        }
+      }
     }
   }
 

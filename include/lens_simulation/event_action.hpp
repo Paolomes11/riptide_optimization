@@ -30,6 +30,22 @@ struct PhotonHit {
   float z;
 };
 
+// Accumulatore momenti del secondo ordine per il piano virtuale (Tecnica E)
+struct VirtualPlaneMoments {
+  double sum_w     = 0.0;
+  double sum_y     = 0.0;
+  double sum_z     = 0.0;
+  double sum_dy    = 0.0;
+  double sum_dz    = 0.0;
+  double sum_yy    = 0.0;
+  double sum_zz    = 0.0;
+  double sum_yz    = 0.0;
+  double sum_dy_dy = 0.0;
+  double sum_dz_dz = 0.0;
+  double sum_y_dy  = 0.0;
+  double sum_z_dz  = 0.0;
+};
+
 class EventAction : public G4UserEventAction {
   // Buffer legacy (un run = uno spot)
   std::vector<PhotonHit> eventHits;
@@ -39,6 +55,12 @@ class EventAction : public G4UserEventAction {
   bool m_spotMode = false;
   std::vector<std::vector<PhotonHit>> m_spotHits;
   std::vector<double> m_spotWeights;
+
+  // Accumulatori piano virtuale (Tecnica E)
+  std::vector<VirtualPlaneMoments> m_spotVirtualMoments;
+  std::vector<int> m_spotKilledVLens1;
+  std::vector<int> m_spotKilledVLens2;
+  std::vector<int> m_spotKilledVBack;
 
   // Parametri griglia sorgente (per calcolo spot_id in ProcessHits)
   double m_xSrcMin = 0.0;
@@ -58,6 +80,12 @@ class EventAction : public G4UserEventAction {
 
   // Spot-mode: hit con spot_id pre-calcolato
   void AddPhotonHit(int spot_id, double y, double z, double weight);
+
+  // Piano virtuale (Tecnica E): accumulo momenti ponderati
+  void AddVirtualHit(int spot_id, double y, double z, double dy, double dz, double w);
+  void AddKilledVLens1(int spot_id);
+  void AddKilledVLens2(int spot_id);
+  void AddKilledVBack(int spot_id);
 
   bool IsSpotMode() const {
     return m_spotMode;
@@ -81,6 +109,20 @@ class EventAction : public G4UserEventAction {
   }
   const std::vector<double>& GetSpotWeights() const {
     return m_spotWeights;
+  }
+
+  // Getters piano virtuale
+  const std::vector<VirtualPlaneMoments>& GetSpotVirtualMoments() const {
+    return m_spotVirtualMoments;
+  }
+  const std::vector<int>& GetSpotKilledVLens1() const {
+    return m_spotKilledVLens1;
+  }
+  const std::vector<int>& GetSpotKilledVLens2() const {
+    return m_spotKilledVLens2;
+  }
+  const std::vector<int>& GetSpotKilledVBack() const {
+    return m_spotKilledVBack;
   }
 
   // Getter legacy

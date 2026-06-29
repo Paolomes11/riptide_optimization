@@ -227,7 +227,7 @@ if mode in ('lens', 'psf-dof'):
 
     nx = len(arange(s_x_min, s_x_max, s_dx))
     ny = len(arange(s_y_min, s_y_max, s_dy))
-    n_runs_per_pair = nx * ny
+    n_runs_per_pair = 1    # 1 BeamOn/coppia dopo spot-cycling PGA
 else:
     n_runs_per_pair = 1    # una sola esecuzione per configurazione
 

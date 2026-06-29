@@ -41,6 +41,7 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   double m_l1_center_offset  = -32.35;
   double m_l2_center_offset  = 22.75;
   double m_l1_diameter       = 50.8; // Default 2 inch
+  double m_l2_diameter       = 50.8; // Default 2 inch
   double m_l1_R1             = 75.0; // Default
   double m_l1_R2             = 75.0;
   bool m_l1_is_biconvex      = true;
@@ -86,6 +87,9 @@ class DetectorConstruction : public G4VUserDetectorConstruction {
   double GetL2CenterOffset() const;
   double GetL2X() const {
     return m_l2_x;
+  }
+  double GetL2Diameter() const {
+    return m_l2_diameter;
   }
   std::string GetL1Id() const {
     return m_l1_id.value_or("");

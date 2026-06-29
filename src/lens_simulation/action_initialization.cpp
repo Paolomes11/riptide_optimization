@@ -15,6 +15,7 @@
 #include "action_initialization.hpp"
 #include "detector_construction.hpp"
 #include "event_action.hpp"
+#include "lens_stepping_action.hpp"
 #include "primary_generator_action.hpp"
 #include "run_action.hpp"
 #include <G4RunManager.hh>
@@ -36,8 +37,12 @@ void ActionInitialization::Build() const {
   SetUserAction(primaryGen);
   SetUserAction(new RunAction());
 
-  // EventAction per registrare PSF
-  SetUserAction(new EventAction());
+  // EventAction per registrare PSF + piano virtuale DoF
+  auto* eventAction = new EventAction();
+  SetUserAction(eventAction);
+
+  // LensSteppingAction: apertura diaframma + piano virtuale (Tecnica E)
+  SetUserAction(new LensSteppingAction(eventAction));
 }
 
 } // namespace riptide
