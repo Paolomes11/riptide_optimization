@@ -128,20 +128,22 @@ int main(int argc, char** argv) {
     TCanvas c("c_diff", "Difference", 1200, 600);
     c.Divide(2, 1);
     gStyle->SetPalette(kCool);
-    double vmax = std::max({std::abs(hgd->GetMinimum()), hgd->GetMaximum(),
-                            std::abs(hbd->GetMinimum()), hbd->GetMaximum()});
-    auto draw = [&](int i, TH2D* h, const char* t) {
+    // Scala indipendente per pannello: Good e Bad hanno ordini di grandezza
+    // fisiologicamente diversi, una scala condivisa schiaccerebbe quello più piccolo
+    double vmax_good = std::max(std::abs(hgd->GetMinimum()), hgd->GetMaximum());
+    double vmax_bad  = std::max(std::abs(hbd->GetMinimum()), hbd->GetMaximum());
+    auto draw = [&](int i, TH2D* h, const char* t, double vmax) {
       c.cd(i);
       gPad->SetLeftMargin(0.14);
-      gPad->SetRightMargin(0.16);
+      gPad->SetRightMargin(0.20);
       gPad->SetTopMargin(0.10);
       gPad->SetGridx();
       gPad->SetGridy();
       h->SetMinimum(-vmax);
       h->SetMaximum(vmax);
-      h->GetZaxis()->SetTitle("ADU  (#times10^{4})");
+      h->GetZaxis()->SetTitle("ADU");
       h->GetZaxis()->CenterTitle(kTRUE);
-      h->GetZaxis()->SetTitleOffset(1.6);
+      h->GetZaxis()->SetTitleOffset(1.3);
       h->Draw("COLZ");
       TLatex l;
       l.SetNDC();
@@ -150,8 +152,8 @@ int main(int argc, char** argv) {
       l.SetTextAlign(22);
       l.DrawLatex(0.50, 0.935, t);
     };
-    draw(1, hgd, "Good #minus Background");
-    draw(2, hbd, "Bad #minus Background");
+    draw(1, hgd, "Good #minus Background", vmax_good);
+    draw(2, hbd, "Bad #minus Background", vmax_bad);
     c.Print("output/exp1/diff_maps.png");
   }
 

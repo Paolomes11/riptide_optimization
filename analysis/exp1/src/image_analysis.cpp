@@ -621,15 +621,17 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       hbd->Write();
     }
 
-    double absmax = std::max({std::abs(hgd->GetMinimum()), hgd->GetMaximum(),
-                              std::abs(hbd->GetMinimum()), hbd->GetMaximum()});
+    // Scala indipendente per pannello: Good e Bad hanno ordini di grandezza
+    // fisiologicamente diversi, una scala condivisa schiaccerebbe quello più piccolo
+    double absmax_good = std::max(std::abs(hgd->GetMinimum()), hgd->GetMaximum());
+    double absmax_bad  = std::max(std::abs(hbd->GetMinimum()), hbd->GetMaximum());
     gStyle->SetPalette(kCool);
     TGaxis::SetMaxDigits(4);
 
-    auto draw_pad = [&](int idx, TH2D* h, const std::string& lbl) {
+    auto draw_pad = [&](int idx, TH2D* h, const std::string& lbl, double absmax) {
       auto* pad = static_cast<TPad*>(c.GetPad(idx));
       pad->SetLeftMargin(0.14);
-      pad->SetRightMargin(0.14);
+      pad->SetRightMargin(0.20);
       pad->SetTopMargin(0.11);
       pad->SetBottomMargin(0.14);
       pad->SetGridx();
@@ -639,9 +641,9 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       TH2D* h_disp = rebin_for_display(h);
       h_disp->SetMinimum(-absmax);
       h_disp->SetMaximum(absmax);
-      h_disp->GetZaxis()->SetTitle("ADU  (#times10^{4})");
+      h_disp->GetZaxis()->SetTitle("ADU");
       h_disp->GetZaxis()->CenterTitle(kTRUE);
-      h_disp->GetZaxis()->SetTitleOffset(1.6);
+      h_disp->GetZaxis()->SetTitleOffset(1.3);
       h_disp->Draw("COLZ");
 
       TLatex t;
@@ -654,8 +656,8 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       return h_disp;
     };
 
-    auto* hgdd = draw_pad(1, hgd, "Good #minus Background  [ADU]");
-    auto* hbdd = draw_pad(2, hbd, "Bad  #minus Background  [ADU]");
+    auto* hgdd = draw_pad(1, hgd, "Good #minus Background  [ADU]", absmax_good);
+    auto* hbdd = draw_pad(2, hbd, "Bad  #minus Background  [ADU]", absmax_bad);
 
     c.Update();
     if (cfg.save_png)
