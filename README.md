@@ -1612,6 +1612,14 @@ python3 scripts/pareto_runner.py --l1-id LA4464 --l2-id LA4464R
 
 ---
 
+### Ranking robusto coppie di lenti (mean-variance / LCB)
+
+- **Markowitz, H. (1952)**. *Portfolio Selection*. The Journal of Finance, 7(1), 77–91. DOI: [10.2307/2975974](https://doi.org/10.2307/2975974). Formulazione classica del trade-off media/varianza; base concettuale dello score `score = mean_eta − k·std_eta` usato per il ranking robusto delle coppie di lenti (penalizza coppie con efficienza media alta ma varianza eccessiva sulla griglia x1,x2). Implementato in `analysis/lens_ranking.hpp` (`compute_pair_ranking`).
+
+- **Auer, P., Cesa-Bianchi, N., & Fischer, P. (2002)**. *Finite-time Analysis of the Multiarmed Bandit Problem*. Machine Learning, 47(2-3), 235–256. DOI: [10.1023/A:1013689704352](https://doi.org/10.1023/A:1013689704352). Origine del criterio Lower/Upper Confidence Bound per selezione "safe" sotto incertezza statistica; qui k=0.5 (calibrato sulla distribuzione empirica del coefficiente di variazione, mediana 0.71 su 225 coppie, per non sacrificare eccessivamente l'efficienza assoluta a favore della sola consistenza).
+
+---
+
 ### Rilevazione di streak in immagini astronomiche
 
 - **Nir, G. et al.** *pyradon: Python tools for streak detection in astronomical images using the Fast Radon Transform*. GitHub: [guynir42/pyradon](https://github.com/guynir42/pyradon). Riferimento per la trasformata di Radon veloce applicata a immagini con streak diffuse.

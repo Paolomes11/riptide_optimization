@@ -115,8 +115,9 @@ def find_binary(name: str) -> Path:
     )
 
 
-def load_base_config() -> dict:
-    path = PROJECT_ROOT / "config" / "config.json"
+def load_base_config(profile: str | None = None) -> dict:
+    name = "config.json" if profile is None else f"config_{profile}.json"
+    path = PROJECT_ROOT / "config" / name
     return json.loads(path.read_text())
 
 
@@ -847,15 +848,12 @@ def read_efl(item_id: str) -> tuple[float, float]:
 
 
 def compute_focus_tsv(cfg: dict, lens_subset: str, out_path: Path) -> Path:
-    """Stima thin-lens del piano focale per ogni (x1, x2) della griglia.
+    """Stima thin-lens del piano focale per ogni (coppia, x1, x2) della griglia.
 
-    Per ogni coppia ordinata (lens_a, lens_b) nel subset, calcola x_focus con la
-    formula thin-lens. Per ogni punto (x1, x2) prende la mediana dei fuochi validi
-    su tutte le coppie, così la stima è rappresentativa dell'intero subset.
+    Per ogni coppia ordinata (lens_a, lens_b) nel subset (incluse le self-pair
+    lens_a == lens_b), calcola x_focus con la formula thin-lens e scrive una riga
+    per punto valido — fuoco specifico per coppia, non mediato tra coppie diverse.
     """
-    import math as _math, statistics as _stats
-    from collections import defaultdict as _dd
-
     subset_ids = [s.strip() for s in lens_subset.split(",") if s.strip()]
     if len(subset_ids) < 2:
         raise ValueError(f"lens_subset deve contenere ≥2 lenti, ricevuto: {lens_subset!r}")
@@ -872,14 +870,17 @@ def compute_focus_tsv(cfg: dict, lens_subset: str, out_path: Path) -> Path:
         raise ValueError("Meno di 2 lenti trovate nei cataloghi per il subset indicato")
 
     found = list(lens_data.keys())
-    # Tutte le coppie ordinate (a come lens1, b come lens2 e viceversa)
-    pairs = [(a, b) for i, a in enumerate(found) for b in found if a != b]
+    # Tutte le coppie ordinate, incluse le self-pair (a == b)
+    pairs = [(a, b) for a in found for b in found]
 
     x_min        = cfg['x_min']
     x_max        = cfg['x_max']
     dx           = cfg['dx']
     lens_det_gap = cfg.get('lens_det_gap', 10.0)
     margin_col   = 1.0  # margine collisione identico a run.sh
+    # Limite superiore fisico: oltre questo x_focus esce dal world volume GDML
+    # (world x=1600mm → half-length 800mm); usa lo stesso bound del DOF scan.
+    x_focus_max  = cfg.get('dof_x_scan_max', 700.0)
 
     def arange_grid(start, stop, step):
         vals, v = [], start
@@ -891,8 +892,7 @@ def compute_focus_tsv(cfg: dict, lens_subset: str, out_path: Path) -> Path:
     x1_vals = arange_grid(x_min, x_max, dx)
     x2_vals = arange_grid(x_min, x_max, dx)
 
-    focus_map: dict[tuple[float, float], list[float]] = _dd(list)
-
+    rows = []
     for lid1, lid2 in pairs:
         efl1, h1 = lens_data[lid1]
         efl2, h2 = lens_data[lid2]
@@ -909,24 +909,20 @@ def compute_focus_tsv(cfg: dict, lens_subset: str, out_path: Path) -> Path:
                         continue
                     v2 = 1.0 / (1.0/efl2 - 1.0/u2)
                     x_focus = x2 + v2
-                    if x_focus < x2 + lens_det_gap:
+                    if x_focus < x2 + lens_det_gap or x_focus > x_focus_max:
                         continue
-                    focus_map[(x1, x2)].append(x_focus)
+                    rows.append((x1, x2, x_focus, lid1, lid2))
                 except (ZeroDivisionError, OverflowError):
                     continue
 
-    rows = []
-    for (x1, x2), focuses in sorted(focus_map.items()):
-        rows.append((x1, x2, _stats.median(focuses)))
-
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
-        f.write("x1\tx2\tx_focus\n")
+        f.write("x1\tx2\tx_focus\tlens1_id\tlens2_id\n")
         for r in rows:
-            f.write(f"{r[0]:.3f}\t{r[1]:.3f}\t{r[2]:.3f}\n")
+            f.write(f"{r[0]:.3f}\t{r[1]:.3f}\t{r[2]:.3f}\t{r[3]}\t{r[4]}\n")
     logging.info(
-        f"focus TSV (thin-lens, {len(pairs)} coppie, {len(lens_data)} lenti): "
-        f"{len(rows)} punti griglia → {out_path}"
+        f"focus TSV (thin-lens per-coppia, {len(pairs)} coppie, {len(lens_data)} lenti): "
+        f"{len(rows)} righe → {out_path}"
     )
     return out_path
 
@@ -1107,6 +1103,8 @@ def main() -> int:
                         help="IDs lenti comma-separated per lo screening (es. LB4592,LB4553)")
     parser.add_argument("--top-n-lenses",      type=int, default=3,
                         help="Top-N coppie da selezionare dallo screening (default: 3)")
+    parser.add_argument("--screening-only",    action="store_true",
+                        help="Con --all-lenses: ferma dopo il ranking di Fase 0 (nessun DOF/refine/Fase1/Fase2)")
     parser.add_argument("--screening-photons", type=int, default=1000,
                         help="n_photons per la fase 0 di screening (default: 1000)")
     parser.add_argument("--mobile-focus",      action="store_true",
@@ -1115,6 +1113,8 @@ def main() -> int:
                         help="n_photons per il re-run opt con fuoco accurato (0=usa config.json)")
     parser.add_argument("--dx",               type=float, default=None,
                         help="Passo griglia x1/x2 in mm (default: valore da config.json)")
+    parser.add_argument("--config-profile",   choices=["fast", "intermediate", "detailed"], default=None,
+                        help="Preset di config (dx=3/2/1 mm): fast, intermediate, detailed. Default: config.json (dx=1.0, come detailed)")
     parser.add_argument("--keep-lens",       action="store_true", default=False,
                         help="Non eliminare lens.root dopo psf_extractor (debug)")
     parser.add_argument("--keep-psf-dof",   action="store_true", default=False,
@@ -1138,9 +1138,10 @@ def main() -> int:
     logging.info(f"dry_run={args.dry_run}  two_phase={args.two_phase and not args.fast}  "
                  f"jobs={args.jobs}  max_hours={args.max_hours}")
 
-    base_cfg = load_base_config()
+    base_cfg = load_base_config(args.config_profile)
     if args.dx is not None:
         base_cfg["dx"] = args.dx
+    logging.info(f"config profile={args.config_profile or 'default'}  dx={base_cfg['dx']}")
     ap       = load_analysis_params(args.analysis_params)
 
     # Pre-flight
@@ -1202,6 +1203,10 @@ def main() -> int:
         else:
             top_pairs = parse_ranking_csv(ranking_csv, args.top_n_lenses)
         logging.info(f"Top-{args.top_n_lenses} coppie: {top_pairs}")
+
+        if args.screening_only:
+            logging.info(f"--screening-only: ranking completo in {ranking_csv}, events in {events_all}")
+            return 0
 
         if args.mobile_focus:
             # DOF per le top coppie → fuochi accurati

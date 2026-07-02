@@ -76,6 +76,7 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
 
   if (all_lenses) {
     LensCutter cutter("lens_cutter/lens_data/thorlabs_biconvex.tsv");
+    cutter.load_catalog("lens_cutter/lens_data/thorlabs_planoconvex.tsv");
     const auto& lenses = cutter.get_lenses();
     std::set<std::string> subset_ids;
     if (!lens_subset.empty()) {
@@ -155,10 +156,19 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
     global_x_det = config.value("x_det", 0.0);
   }
 
-  // Carica mappa fuochi se richiesto
-  FocusMap focus_map;
-  if (use_focus_map)
+  // Carica mappa fuochi se richiesto. Rileva automaticamente il formato:
+  // TSV con colonne lens1_id/lens2_id -> fuoco thin-lens per-coppia;
+  // TSV a 3 colonne (x1,x2,x_focus) -> mappa condivisa legacy (singola coppia,
+  // es. lens_runner.py --mobile-focus).
+  FocusMap        focus_map;
+  PerPairFocusMap per_pair_map;
+  bool            per_pair_mode = use_focus_map && focus_tsv_has_pair_columns(focus_tsv);
+  if (per_pair_mode) {
+    per_pair_map = load_per_pair_focus_map(focus_tsv);
+    spdlog::info("focus-tsv: modalità per-coppia rilevata ({} coppie)", per_pair_map.size());
+  } else if (use_focus_map) {
     focus_map = load_focus_map(focus_tsv);
+  }
 
   // Parametri sorgente GPS
   double source_width     = config.value("source_width", 60.0);
@@ -196,6 +206,17 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
     double h1 = det->GetL1Thickness();
     double h2 = det->GetL2Thickness();
 
+    const FocusMap* pair_focus_map = &focus_map;
+    if (per_pair_mode) {
+      auto it = per_pair_map.find(make_pair_key(model.id75, model.id60));
+      if (it == per_pair_map.end()) {
+        spdlog::warn("focus-tsv: nessun fuoco per coppia {}/{} — coppia saltata", model.id75,
+                     model.id60);
+        continue;
+      }
+      pair_focus_map = &it->second;
+    }
+
     std::vector<std::pair<double, double>> pairs;
     if (config.contains("pairs")) {
       for (const auto& p : config["pairs"]) {
@@ -205,7 +226,7 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
       // Coppie estratte direttamente dal TSV per garantire allineamento
       double x1_start = config.value("x1_start", x_min);
       double x1_end   = config.value("x1_end", x_max);
-      for (auto& p : get_pairs_from_focus_map(focus_map)) {
+      for (auto& p : get_pairs_from_focus_map(*pair_focus_map)) {
         if (p.first >= x1_start - 1e-6 && p.first <= x1_end + 1e-6 &&
             p.second <= x_max + 1e-6)
           pairs.push_back(p);
@@ -238,7 +259,7 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
       double x_det_config = global_x_det;
       int    focus_valid  = 1;
       if (use_focus_map) {
-        auto fopt = lookup_focus(focus_map, x1, x2);
+        auto fopt = lookup_focus(*pair_focus_map, x1, x2);
         if (!fopt) {
           focus_valid  = 0;
           x_det_config = 0.0;
