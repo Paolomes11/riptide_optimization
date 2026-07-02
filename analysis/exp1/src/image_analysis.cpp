@@ -278,6 +278,8 @@ void apply_riptide_style() {
   gStyle->SetNdivisions(505, "X");
   gStyle->SetNdivisions(505, "Y");
   gStyle->SetNumberContours(255);
+  // Sposta l'esponente (es. "x10^6") leggermente più in alto sopra la color palette
+  TGaxis::SetExponentOffset(0.0, 0.02, "y");
 }
 
 // Helpers TH2D
@@ -338,13 +340,13 @@ TH1D* project_x(const DiffImage& img, const std::string& name, const std::string
   }
 
   h->GetXaxis()->SetTitle("Pixel X");
-  h->GetYaxis()->SetTitle("Intensità integrata [ADU]");
+  h->GetYaxis()->SetTitle("Intensit#grave{a} integrata [ADU]");
   h->GetXaxis()->CenterTitle(true);
   h->GetYaxis()->CenterTitle(true);
   h->GetXaxis()->SetTitleSize(0.055);
   h->GetYaxis()->SetTitleSize(0.055);
   h->GetXaxis()->SetTitleOffset(1.20);
-  h->GetYaxis()->SetTitleOffset(0.9);
+  h->GetYaxis()->SetTitleOffset(0.7);
   return h;
 }
 
@@ -361,13 +363,13 @@ TH1D* project_y(const DiffImage& img, const std::string& name, const std::string
   }
 
   h->GetXaxis()->SetTitle("Pixel Y");
-  h->GetYaxis()->SetTitle("Intensità integrata [ADU]");
+  h->GetYaxis()->SetTitle("Intensit#grave{a} integrata [ADU]");
   h->GetXaxis()->CenterTitle(true);
   h->GetYaxis()->CenterTitle(true);
   h->GetXaxis()->SetTitleSize(0.055);
   h->GetYaxis()->SetTitleSize(0.055);
   h->GetXaxis()->SetTitleOffset(1.20);
-  h->GetYaxis()->SetTitleOffset(0.9);
+  h->GetYaxis()->SetTitleOffset(0.7);
   return h;
 }
 
@@ -489,7 +491,7 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
     auto draw_pad = [&](int idx, TH2D* h, const std::string& lbl) {
       auto* pad = static_cast<TPad*>(c.GetPad(idx));
       pad->SetLeftMargin(0.16);
-      pad->SetRightMargin(0.14);
+      pad->SetRightMargin(0.23);
       pad->SetTopMargin(0.11);
       pad->SetBottomMargin(0.14);
       pad->cd();
@@ -501,10 +503,12 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       h_disp->SetMinimum(vmin);
       h_disp->SetMaximum(vmax);
       h_disp->GetZaxis()->SetMaxDigits(4);
-      h_disp->Draw("COLZ");
+      // Il titolo va impostato PRIMA del Draw: TPaletteAxis viene creato al
+      // momento del Draw("COLZ") e non riflette modifiche successive.
       h_disp->GetZaxis()->SetTitle("ADU  (#times10^{3})");
       h_disp->GetZaxis()->CenterTitle(kTRUE);
-      h_disp->GetZaxis()->SetTitleOffset(1.6);
+      h_disp->GetZaxis()->SetTitleOffset(1.5);
+      h_disp->Draw("COLZ");
 
       TLatex t;
       t.SetNDC();
@@ -565,7 +569,7 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
     auto draw_pad = [&](int idx, TH2D* h, const std::string& lbl) {
       auto* pad = static_cast<TPad*>(c.GetPad(idx));
       pad->SetLeftMargin(0.16);
-      pad->SetRightMargin(0.14);
+      pad->SetRightMargin(0.23);
       pad->SetTopMargin(0.11);
       pad->SetBottomMargin(0.14);
       pad->cd();
@@ -576,10 +580,11 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       h_disp->SetMinimum(smin);
       h_disp->SetMaximum(smax);
       h_disp->GetZaxis()->SetMaxDigits(4);
-      h_disp->Draw("COLZ");
+      // Titolo prima del Draw: vedi commento nel blocco stacked_means sopra.
       h_disp->GetZaxis()->SetTitle("ADU  (#times10^{3})");
       h_disp->GetZaxis()->CenterTitle(kTRUE);
-      h_disp->GetZaxis()->SetTitleOffset(1.6);
+      h_disp->GetZaxis()->SetTitleOffset(1.5);
+      h_disp->Draw("COLZ");
 
       TLatex t;
       t.SetNDC();
@@ -631,7 +636,7 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
     auto draw_pad = [&](int idx, TH2D* h, const std::string& lbl, double absmax) {
       auto* pad = static_cast<TPad*>(c.GetPad(idx));
       pad->SetLeftMargin(0.14);
-      pad->SetRightMargin(0.20);
+      pad->SetRightMargin(0.23);
       pad->SetTopMargin(0.11);
       pad->SetBottomMargin(0.14);
       pad->SetGridx();
@@ -643,7 +648,7 @@ void produce_output(const DiffImage& good_diff, const DiffImage& bad_diff,
       h_disp->SetMaximum(absmax);
       h_disp->GetZaxis()->SetTitle("ADU");
       h_disp->GetZaxis()->CenterTitle(kTRUE);
-      h_disp->GetZaxis()->SetTitleOffset(1.3);
+      h_disp->GetZaxis()->SetTitleOffset(1.5);
       h_disp->Draw("COLZ");
 
       TLatex t;

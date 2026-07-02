@@ -74,6 +74,8 @@ int main(int argc, char** argv) {
   gStyle->SetGridStyle(3);
   gStyle->SetGridWidth(1);
   TGaxis::SetMaxDigits(4);
+  // Sposta l'esponente (es. "x10^6") leggermente più in alto sopra la color palette
+  TGaxis::SetExponentOffset(0.0, 0.02, "y");
 
   // 1. Stacked Means
   TH2D* hg  = (TH2D*)f->Get("hg_mean");
@@ -97,7 +99,7 @@ int main(int argc, char** argv) {
     auto draw = [&](int i, TH2D* h, const char* t) {
       c.cd(i);
       gPad->SetLeftMargin(0.14);
-      gPad->SetRightMargin(0.16);
+      gPad->SetRightMargin(0.23);
       gPad->SetTopMargin(0.10);
       gPad->SetGridx();
       gPad->SetGridy();
@@ -105,7 +107,7 @@ int main(int argc, char** argv) {
       h->SetMaximum(vmax);
       h->GetZaxis()->SetTitle("ADU");
       h->GetZaxis()->CenterTitle(kTRUE);
-      h->GetZaxis()->SetTitleOffset(1.6);
+      h->GetZaxis()->SetTitleOffset(1.5);
       h->GetZaxis()->SetMaxDigits(2);
       h->Draw("COLZ");
       TLatex l;
@@ -118,7 +120,53 @@ int main(int argc, char** argv) {
     draw(1, hg, "Good");
     draw(2, hb, "Bad");
     draw(3, hbg, "Background");
-    c.Print("output/exp1/restacked_means.png");
+    c.Print("output/exp1/stacked_means.png");
+  }
+
+  // 1b. Sigma Maps
+  TH2D* hg_sig  = (TH2D*)f->Get("hg_sig");
+  TH2D* hb_sig  = (TH2D*)f->Get("hb_sig");
+  TH2D* hbg_sig = (TH2D*)f->Get("hbg_sig");
+
+  hg_sig->SetTitle("");
+  hb_sig->SetTitle("");
+  hbg_sig->SetTitle("");
+
+  if (hg_sig && hb_sig && hbg_sig) {
+    TCanvas c("c_sigma", "Sigma", 1800, 600);
+    c.Divide(3, 1);
+    double smin = std::min({get_th2d_percentile(hg_sig, z_min_perc),
+                            get_th2d_percentile(hb_sig, z_min_perc),
+                            get_th2d_percentile(hbg_sig, z_min_perc)});
+    double smax = std::max({get_th2d_percentile(hg_sig, z_max_perc),
+                            get_th2d_percentile(hb_sig, z_max_perc),
+                            get_th2d_percentile(hbg_sig, z_max_perc)});
+
+    auto draw = [&](int i, TH2D* h, const char* t) {
+      c.cd(i);
+      gPad->SetLeftMargin(0.14);
+      gPad->SetRightMargin(0.23);
+      gPad->SetTopMargin(0.10);
+      gPad->SetGridx();
+      gPad->SetGridy();
+      h->SetMinimum(smin);
+      h->SetMaximum(smax);
+      h->GetZaxis()->SetTitle("ADU");
+      h->GetZaxis()->CenterTitle(kTRUE);
+      h->GetZaxis()->SetTitleOffset(1.5);
+      h->GetZaxis()->SetMaxDigits(2);
+      h->Draw("COLZ");
+      TLatex l;
+      l.SetNDC();
+      l.SetTextFont(42);
+      l.SetTextSize(0.055);
+      l.SetTextAlign(22);
+      l.DrawLatex(0.50, 0.935, t);
+    };
+    draw(1, hg_sig, "#sigma_{good}");
+    draw(2, hb_sig, "#sigma_{bad}");
+    draw(3, hbg_sig, "#sigma_{bg}");
+    c.Print("output/exp1/sigma_maps.png");
   }
 
   // 2. Diff Maps
@@ -135,7 +183,7 @@ int main(int argc, char** argv) {
     auto draw = [&](int i, TH2D* h, const char* t, double vmax) {
       c.cd(i);
       gPad->SetLeftMargin(0.14);
-      gPad->SetRightMargin(0.20);
+      gPad->SetRightMargin(0.23);
       gPad->SetTopMargin(0.10);
       gPad->SetGridx();
       gPad->SetGridy();
@@ -143,7 +191,7 @@ int main(int argc, char** argv) {
       h->SetMaximum(vmax);
       h->GetZaxis()->SetTitle("ADU");
       h->GetZaxis()->CenterTitle(kTRUE);
-      h->GetZaxis()->SetTitleOffset(1.3);
+      h->GetZaxis()->SetTitleOffset(1.5);
       h->Draw("COLZ");
       TLatex l;
       l.SetNDC();
