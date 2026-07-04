@@ -62,6 +62,11 @@ class EventAction : public G4UserEventAction {
   std::vector<int> m_spotKilledVLens2;
   std::vector<int> m_spotKilledVBack;
 
+  // Hit grezzi al piano virtuale (opt-in, default disattivo — vedi SetSaveVirtualHits)
+  bool m_saveVirtualHits = false;
+  std::vector<std::vector<float>> m_spotVirtualHitsY;
+  std::vector<std::vector<float>> m_spotVirtualHitsZ;
+
   // Parametri griglia sorgente (per calcolo spot_id in ProcessHits)
   double m_xSrcMin = 0.0;
   double m_dxSrc   = 1.0;
@@ -86,6 +91,11 @@ class EventAction : public G4UserEventAction {
   void AddKilledVLens1(int spot_id);
   void AddKilledVLens2(int spot_id);
   void AddKilledVBack(int spot_id);
+
+  // Abilita/disabilita il salvataggio degli hit grezzi al piano virtuale (default: off)
+  void SetSaveVirtualHits(bool enable) {
+    m_saveVirtualHits = enable;
+  }
 
   bool IsSpotMode() const {
     return m_spotMode;
@@ -123,6 +133,12 @@ class EventAction : public G4UserEventAction {
   }
   const std::vector<int>& GetSpotKilledVBack() const {
     return m_spotKilledVBack;
+  }
+  const std::vector<std::vector<float>>& GetSpotVirtualHitsY() const {
+    return m_spotVirtualHitsY;
+  }
+  const std::vector<std::vector<float>>& GetSpotVirtualHitsZ() const {
+    return m_spotVirtualHitsZ;
   }
 
   // Getter legacy

@@ -273,6 +273,63 @@ static void test_TD_REG() {
   }
 }
 
+static void test_TD_ROT() {
+  std::cout << "\n[TD_ROT] Rotazione PSF in build_trace_3d per phi non banale\n";
+  const std::string T = "TD_ROT";
+
+  const double mu_y0   = 2.0;
+  const double cov_yy0 = 0.09;
+  const double cov_yz0 = 0.02;
+  const double cov_zz0 = 0.01;
+  const int N_H        = 500;
+
+  riptide::PSFDatabase db;
+  riptide::LensConfig cfg{50.0, 120.0};
+
+  // PSF costante rispetto a r: isola la sola rotazione azimutale (phi),
+  // senza mescolare effetti di interpolazione radiale.
+  for (double r = 0.0; r <= 10.0; r += 1.0) {
+    db[cfg].push_back({0.0, r, mu_y0, 0.0, cov_yy0, cov_yz0, cov_zz0, true,
+                       static_cast<double>(N_H), static_cast<double>(N_H)});
+  }
+
+  // Segmento che non passa per l'asse ottico: phi varia con continuità
+  // (da atan2(1,5)~11.3° a atan2(5,1)~78.7°, passando per 45°).
+  riptide::Point3D p1{0.0, 5.0, 1.0};
+  riptide::Point3D p2{0.0, 1.0, 5.0};
+  auto trace = riptide::build_trace_3d(p1, p2, cfg, db, 1.5);
+  check(trace.size() >= 4, "traccia con almeno 4 punti", T);
+
+  bool tested_nontrivial_phi = false;
+  for (const auto& pt : trace) {
+    double phi = std::atan2(pt.z_src, pt.y_src);
+    if (std::abs(phi) > 1e-6)
+      tested_nontrivial_phi = true;
+
+    double c = std::cos(phi), s = std::sin(phi);
+    double exp_mu_y = mu_y0 * c;
+    double exp_mu_z = mu_y0 * s;
+    double exp_c_yy = c * c * cov_yy0 - 2.0 * c * s * cov_yz0 + s * s * cov_zz0;
+    double exp_c_zz = s * s * cov_yy0 + 2.0 * c * s * cov_yz0 + c * c * cov_zz0;
+    double exp_c_yz = c * s * cov_yy0 + (c * c - s * s) * cov_yz0 - c * s * cov_zz0;
+    double n_count  = static_cast<double>(N_H);
+
+    std::ostringstream lbl;
+    lbl << "phi=" << phi * 180.0 / M_PI << "deg";
+
+    near(pt.mu_y, exp_mu_y, 1e-9, lbl.str() + " mu_y_rot", T);
+    near(pt.mu_z, exp_mu_z, 1e-9, lbl.str() + " mu_z_rot", T);
+    near(pt.cov.yy, exp_c_yy / n_count, 1e-9, lbl.str() + " cov.yy", T);
+    near(pt.cov.zz, exp_c_zz / n_count, 1e-9, lbl.str() + " cov.zz", T);
+    near(pt.cov.yz, exp_c_yz / n_count, 1e-9, lbl.str() + " cov.yz", T);
+
+    // Invariante di rotazione: la traccia della covarianza non ruotata
+    // deve essere preservata (indipendente da phi).
+    near(exp_c_yy + exp_c_zz, cov_yy0 + cov_zz0, 1e-9, lbl.str() + " trace(cov) invariante", T);
+  }
+  check(tested_nontrivial_phi, "almeno un punto ha phi non banale (!=0)", T);
+}
+
 static void test_TD2() {
   std::cout << "\n[TD2] Candidato 1: scaling covarianza vs n_hits (rumore i.i.d.)\n";
   const std::string T = "TD2";
@@ -436,6 +493,7 @@ int main() {
   std::cout << "test_chi2_diagnostics — riptide chi2 diagnostic tests\n\n";
 
   test_TD_REG();
+  test_TD_ROT();
   test_TD1();
   test_TD2();
   test_TD3();

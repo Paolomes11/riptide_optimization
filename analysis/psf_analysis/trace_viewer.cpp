@@ -364,8 +364,8 @@ int main(int argc, char** argv) {
   //  │           info panel              │  ← 12% altezza
   //  └───────────────────────────────────┘
 
-  TPad* pad_plot = new TPad("pad_plot", "", 0.00, 0.12, 0.88, 1.00);
-  TPad* pad_cb   = new TPad("pad_cb", "", 0.88, 0.12, 0.96, 1.00);
+  TPad* pad_plot = new TPad("pad_plot", "", 0.00, 0.12, 0.86, 1.00);
+  TPad* pad_cb   = new TPad("pad_cb", "", 0.86, 0.12, 0.985, 1.00);
   TPad* pad_info = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.12);
 
   // Bordi e margini del pad principale
@@ -378,7 +378,7 @@ int main(int argc, char** argv) {
   pad_plot->SetFrameLineWidth(2);
 
   pad_cb->SetLeftMargin(0.25);
-  pad_cb->SetRightMargin(0.30);
+  pad_cb->SetRightMargin(0.24);
   pad_cb->SetTopMargin(0.06);
   pad_cb->SetBottomMargin(0.13);
 
@@ -572,12 +572,19 @@ int main(int argc, char** argv) {
   cb_axis->SetLabelSize(0.18);
   cb_axis->SetTickSize(0.35);
   cb_axis->SetLabelOffset(0.03);
-  cb_axis->SetTitle("t  [mm]");
-  cb_axis->SetTitleFont(42);
-  cb_axis->SetTitleSize(0.20);
-  cb_axis->CenterTitle(kTRUE);
-  cb_axis->SetTitleOffset(1.8);
   cb_axis->Draw();
+
+  // Titolo disegnato a mano (TLatex NDC) invece di TGaxis::SetTitle: la
+  // posizione automatica di TGaxis (centrata o in cima) collide con le
+  // etichette numeriche a seconda di dove ROOT sceglie i tick "belli",
+  // che dipende dal range (t_end) e quindi cambia da run a run.
+  TLatex cb_title;
+  cb_title.SetNDC();
+  cb_title.SetTextFont(42);
+  cb_title.SetTextSize(0.085);
+  cb_title.SetTextAlign(22);
+  cb_title.SetTextAngle(90);
+  cb_title.DrawLatex(0.965, 0.5, "t  [mm]");
 
   //  Pad info: riepilogo parametri fisici in due colonne
 

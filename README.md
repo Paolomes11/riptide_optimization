@@ -1175,6 +1175,30 @@ Genera la mappa 2D della linearità della risposta ottica. Per ogni configurazio
     --psf output/psf/psf_data.root --log
 ```
 
+#### psf\_gaussianity
+
+Verifica se la PSF (hit non troncati dal piano virtuale, Tecnica E — `PsfDofRuns/y_virtual_hits,z_virtual_hits`) è ben approssimata da una gaussiana bivariata, separando formalmente il **nucleo** dalla **contaminazione** (luce spuria da riflessione totale interna/scattering ai bordi lente, tipicamente <1% degli hit) prima di applicare il test di curtosi multivariata di Mardia. Il test di Mardia sull'intero campione grezzo è estremamente sensibile anche a contaminazioni minime e da solo non distingue "nucleo non gaussiano" da "nucleo gaussiano + coda di contaminazione separata".
+
+```bash
+./build/analysis/psf_analysis/Release/psf_gaussianity \
+    --input output/lens_simulation/<coppia>/data/lens.root \
+    --output output/psf_analysis/psf_gaussianity_analysis.png
+```
+
+| Opzione | Default | Descrizione |
+|---|---|---|
+| `--input` | — | **Obbligatorio.** File ROOT con `Configurations`+`Runs`/`PsfDofRuns` |
+| `--output` | auto | PNG di output |
+| `--sigma-cut` | 3.0 | Cutoff σ del filtro Mahalanobis iterativo (`compute_psf`) |
+| `--n-iter` | 4 | Iterazioni del filtro |
+| `--min-hits` | — | Hit minime per run valido |
+| `--contamination-alpha` | 0.05 | Errore family-wise α per il cutoff Bonferroni-χ²₂ nucleo/contaminazione |
+| `--hz-subsample-size` | 2000 | Dimensione sottocampione per il test Henze-Zirkler (seed fisso, riproducibile) |
+
+**Metodo**: sotto H0 (nucleo gaussiano bivariato) la distanza di Mahalanobis quadra D² di ogni hit segue χ²₂, la cui coda ha forma chiusa esatta `P(D²>x) = exp(-x/2)`. Con N hit pooled ed errore family-wise α_fw, il cutoff Bonferroni-corretto è `x_cutoff = -2·ln(α_fw/N)`; gli hit con D² oltre il cutoff sono classificati come contaminazione e la curtosi di Mardia γ₂ = mean(D⁴)/8 − 1 viene ricalcolata solo sul nucleo (D² ≤ cutoff), atteso vicino a 0 per una gaussiana bivariata. A titolo di diagnostica secondaria (più potente di Mardia ma O(n²), quindi limitata a un sottocampione del nucleo) viene riportato anche il test di Henze-Zirkler. Nota: a N dell'ordine di 10⁷ hit, l'errore standard asintotico di γ₂ è talmente piccolo che anche deviazioni di piccola entità pratica risultano formalmente "significative" — l'entità della riduzione di |γ₂| dopo il taglio (non il solo p-value) è l'indicatore rilevante. Dettagli e citazioni in [Riferimenti metodologici § Test di gaussianità multivariata](#test-di-gaussianità-multivariata-psf_gaussianity).
+
+**Origine fisica della contaminazione**: la frazione di hit oltre il cutoff (tipicamente ~0.01–0.1% del campione) non è un artefatto del fit ma un effetto ottico reale del sistema. La fisica ottica di Geant4 (`G4OpticalPhysics` in `src/common/physics_list.cpp`, mai disabilitata) modella la riflessione parziale di Fresnel a ogni interfaccia dielettrica lente/aria (nessuna `G4OpticalSurface` custom è definita, quindi vale il comportamento di default con ~4% di riflettività per superficie in UVFS, n≈1.5). Una piccola frazione di fotoni subisce una riflessione anziché una rifrazione a una delle interfacce (una probabilità di ordine 4%×4%≈0.16% per una doppia riflessione tra le due lenti, coerente in ordine di grandezza con la contaminazione osservata) ed esce con un angolo del tutto diverso da quello atteso, colpendo il detector lontano dal fuoco primario. Questo produce visivamente due firme distinte e coerenti tra loro: (1) nello scatter dei hit sul detector, un nucleo gaussiano stretto circondato da un alone sparso a raggi maggiori; (2) nel Q-Q plot, un andamento sub-diagonale concavo (tipo logaritmo) per il nucleo seguito da un salto quasi verticale oltre il cutoff, dove i pochi punti di contaminazione hanno D² enormi rispetto al resto del campione — la firma tipica di una mistura `(1-ε)·N(μ,Σ) + ε·coda estranea` piuttosto che di code pesanti di un'unica gaussiana.
+
 ---
 
 ## Temporal Unfolding
@@ -1625,6 +1649,24 @@ python3 scripts/pareto_runner.py --l1-id LA4464 --l2-id LA4464R
 - **Nir, G. et al.** *pyradon: Python tools for streak detection in astronomical images using the Fast Radon Transform*. GitHub: [guynir42/pyradon](https://github.com/guynir42/pyradon). Riferimento per la trasformata di Radon veloce applicata a immagini con streak diffuse.
 
 - **Yanagisawa, T. et al. (2015)**. *Streak Detection and Analysis Pipeline for Space-debris Optical Images*. ResearchGate. Base per la pipeline di estrazione di features (centroide, larghezza, flusso) da immagini ottiche con streak lineari a basso SNR.
+
+---
+
+### Test di gaussianità multivariata (`psf_gaussianity`)
+
+- **Mardia, K.V. (1970)**. *Measures of multivariate skewness and kurtosis with applications*. Biometrika, 57(3), 519–530. DOI: [10.1093/biomet/57.3.519](https://doi.org/10.1093/biomet/57.3.519). Origine del test di curtosi multivariata γ₂ = mean(D⁴)/8 − 1 già implementato in `psf_gaussianity`; noto per l'estrema sensibilità a qualunque contaminazione, motivo per cui va applicato al nucleo e non al campione grezzo.
+
+- **Rousseeuw, P.J. & Van Driessen, K. (1999)**. *A Fast Algorithm for the Minimum Covariance Determinant Estimator*. Technometrics, 41(3), 212–223. DOI: [10.1080/00401706.1999.10485670](https://doi.org/10.1080/00401706.1999.10485670). Origine concettuale dello stimatore robusto iterativo (MCD) a cui si ispira il filtro Mahalanobis 3σ di `compute_psf` (`analysis/psf_common.hpp`).
+
+- **Hardin, J. & Rocke, D.M. (2005)**. *The Distribution of Robust Distances*. Journal of Computational and Graphical Statistics, 14(4), 928–946. DOI: [10.1198/106186005X77685](https://doi.org/10.1198/106186005X77685). Correzione finite-sample F-scaled per distanze robuste MCD, pensata per quando il sottoinsieme robusto h è una frazione consistente (es. 50%) di n; non applicata qui perché irrilevante quando il filtro scarta <1% degli hit (h/n>99%), regime in cui la coda esatta di χ²₂ è già un'approssimazione adeguata.
+
+- **Cerioli, A. (2010)**. *Multivariate Outlier Detection with High-Breakdown Estimators*. Journal of the American Statistical Association, 105(489), 147–156. DOI: [10.1198/jasa.2009.tm09147](https://doi.org/10.1198/jasa.2009.tm09147). Framework iterato (reweighted-MCD) con controllo formale dell'errore family-wise, di cui il cutoff Bonferroni-χ²₂ usato in `bonferroni_chi2_2_cutoff` è la versione semplificata valida nel regime h/n≈1 di questa analisi.
+
+- **Henze, N. & Zirkler, B. (1990)**. *A class of invariant consistent tests for multivariate normality*. Communications in Statistics - Theory and Methods, 19(10), 3595–3617. DOI: [10.1080/03610929008830400](https://doi.org/10.1080/03610929008830400). Test diagnostico secondario (più potente di Mardia contro varie alternative, ma O(n²)) implementato in `psf_gaussianity` su un sottocampione casuale del nucleo (`--hz-subsample-size`, seed fisso per riproducibilità).
+
+- **Moffat, A.F.J. (1969)**. *A Theoretical Investigation of Focal Stellar Images in the Photographic and Television Fields, and a Comparison with Existing Models*. Astronomy & Astrophysics, 3, 455. Contesto ottico/astronomico: code non gaussiane nelle PSF reali (profili Moffat/King) sono un fenomeno noto e atteso, non necessariamente un artefatto numerico — motiva la separazione nucleo/contaminazione piuttosto che un taglio spaziale arbitrario.
+
+- **Hecht, E. (2017)**. *Optics*, 5th ed., Pearson, cap. 4 (Fresnel equations). Riferimento standard per la riflettività di Fresnel alle interfacce dielettriche (~4% per superficie UVFS/aria, n≈1.5); è il meccanismo fisico — non un artefatto numerico — dietro la coda di contaminazione (hit oltre il cutoff Bonferroni) osservata in `psf_gaussianity`: fotoni riflessi anziché rifratti a una o più interfacce lente-aria (`G4OpticalPhysics`, mai disabilitata in `src/common/physics_list.cpp`) escono con angolo anomalo e colpiscono il detector lontano dal fuoco primario.
 
 ---
 

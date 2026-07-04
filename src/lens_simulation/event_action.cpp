@@ -45,6 +45,8 @@ void EventAction::InitSpotMode(int n_spots, double x_src_min, double dx_src,
   m_spotKilledVLens1.assign(n_spots, 0);
   m_spotKilledVLens2.assign(n_spots, 0);
   m_spotKilledVBack.assign(n_spots, 0);
+  m_spotVirtualHitsY.assign(n_spots, {});
+  m_spotVirtualHitsZ.assign(n_spots, {});
 }
 
 void EventAction::ResetSpotAccumulators() {
@@ -55,6 +57,8 @@ void EventAction::ResetSpotAccumulators() {
   m_spotKilledVLens1.clear();
   m_spotKilledVLens2.clear();
   m_spotKilledVBack.clear();
+  m_spotVirtualHitsY.clear();
+  m_spotVirtualHitsZ.clear();
 }
 
 void EventAction::AddVirtualHit(int spot_id, double y, double z,
@@ -73,6 +77,11 @@ void EventAction::AddVirtualHit(int spot_id, double y, double z,
   m.sum_dz_dz += w * dz * dz;
   m.sum_y_dy  += w * y * dy;
   m.sum_z_dz  += w * z * dz;
+
+  if (m_saveVirtualHits) {
+    m_spotVirtualHitsY[spot_id].push_back(static_cast<float>(y));
+    m_spotVirtualHitsZ[spot_id].push_back(static_cast<float>(z));
+  }
 }
 
 void EventAction::AddKilledVLens1(int spot_id) {

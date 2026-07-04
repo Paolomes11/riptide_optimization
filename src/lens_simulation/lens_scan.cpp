@@ -140,6 +140,12 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   std::vector<float> y_hits_vec;
   std::vector<float> z_hits_vec;
 
+  // Hit grezzi al piano virtuale (opt-in, default off — non deve comparire nelle
+  // run di produzione lanciate da lens_runner.py)
+  bool lens_save_virtual_hits = config.value("lens_save_virtual_hits", false);
+  std::vector<float> y_virtual_hits_vec;
+  std::vector<float> z_virtual_hits_vec;
+
   // Ntuple 1: posizione sorgente / run + Hits (vettori)
   analysisManager->CreateNtuple("Runs", "PSF data");
   analysisManager->CreateNtupleIColumn("config_id");
@@ -183,6 +189,10 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
   analysisManager->CreateNtupleIColumn("n_killed_lens2");
   analysisManager->CreateNtupleIColumn("n_killed_back");
   analysisManager->CreateNtupleDColumn("is_weight");
+  if (lens_save_virtual_hits) {
+    analysisManager->CreateNtupleFColumn("y_virtual_hits", y_virtual_hits_vec);
+    analysisManager->CreateNtupleFColumn("z_virtual_hits", z_virtual_hits_vec);
+  }
   analysisManager->FinishNtuple(3);
 
   // Parametri di scansione lenti e sorgente
@@ -296,6 +306,7 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
       const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
   if (!eventAction)
     throw std::runtime_error("EventAction non trovato in lens_scan");
+  eventAction->SetSaveVirtualHits(lens_save_virtual_hits);
 
   auto* primaryGen = const_cast<PrimaryGeneratorAction*>(
       static_cast<const PrimaryGeneratorAction*>(run_manager->GetUserPrimaryGeneratorAction()));
@@ -444,6 +455,8 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
         const auto& vkl1     = eventAction->GetSpotKilledVLens1();
         const auto& vkl2     = eventAction->GetSpotKilledVLens2();
         const auto& vkback   = eventAction->GetSpotKilledVBack();
+        const auto& vhits_y  = eventAction->GetSpotVirtualHitsY();
+        const auto& vhits_z  = eventAction->GetSpotVirtualHitsZ();
 
         for (int spot_idx = 0; spot_idx < n_spots; ++spot_idx) {
           double x_source    = spots[spot_idx].pos.x();
@@ -471,6 +484,10 @@ void lens_scan(G4RunManager* run_manager, const std::filesystem::path& macro_fil
           analysisManager->FillNtupleIColumn(3, 17, vkl2[spot_idx]);
           analysisManager->FillNtupleIColumn(3, 18, vkback[spot_idx]);
           analysisManager->FillNtupleDColumn(3, 19, is_w);
+          if (lens_save_virtual_hits) {
+            y_virtual_hits_vec.assign(vhits_y[spot_idx].begin(), vhits_y[spot_idx].end());
+            z_virtual_hits_vec.assign(vhits_z[spot_idx].begin(), vhits_z[spot_idx].end());
+          }
           analysisManager->AddNtupleRow(3);
         }
       }

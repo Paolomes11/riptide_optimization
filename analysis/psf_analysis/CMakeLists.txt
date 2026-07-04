@@ -66,6 +66,20 @@ target_include_directories(chi2_map
 )
 target_compile_features(chi2_map PRIVATE cxx_std_17)
 
+# Eseguibile psf_gaussianity
+add_executable(psf_gaussianity
+    psf_gaussianity.cpp
+)
+target_link_libraries(psf_gaussianity
+    PRIVATE psf_analysis ${ROOT_LIBRARIES} spdlog::spdlog
+)
+target_include_directories(psf_gaussianity
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${ROOT_INCLUDE_DIRS}
+)
+target_compile_features(psf_gaussianity PRIVATE cxx_std_17)
+
 # Test unitari fit_trace e compute_Q
 add_executable(test_fit_trace
     test_fit_trace.cpp

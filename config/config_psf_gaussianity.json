@@ -1,0 +1,24 @@
+{
+  "x_min": 100.0,
+  "x_max": 150.0,
+  "dx": 1.0,
+
+  "pairs": [[100.0, 150.0]],
+
+  "x_det": 228.82,
+  "lens_det_gap": 10.0,
+  "lens_gap_margin": 1.0,
+
+  "source_x_min": 0.0,
+  "source_x_max": 0.0,
+  "source_dx": 5.0,
+  "source_y_min": 0.0,
+  "source_y_max": 13.5,
+  "source_dy": 1.5,
+
+  "lens_n_photons": 3000000,
+  "use_importance_sampling": true,
+
+  "psf_dof_x_virtual_offset": 78.32,
+  "lens_save_virtual_hits": true
+}
