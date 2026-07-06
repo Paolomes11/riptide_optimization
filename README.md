@@ -136,7 +136,7 @@ riptide_optimization/
 │   │   ├── exp2_main.cpp
 │   │   ├── include/
 │   │   └── src/
-│   ├── exp3/                                # Calibrazione omografica + analisi laser
+│   ├── exp3/                                # Calibrazione lineare + confronto Q_exp/Q_sim + M(r) + preview FITS
 │   │   ├── exp3_main.cpp
 │   │   ├── include/
 │   │   └── src/
@@ -979,57 +979,66 @@ Robusto a profili non-gaussiani e a profili troncati ai bordi del FOV.
 
 ### exp3\_main
 
-**Scopo**: confronto sperimentale su banco ottico. Prima fase: calibrazione geometrica tramite omografia DLT (Hartley 1997) su griglia di punti di riferimento a diverse distanze assiali. Seconda fase: analisi di tracce laser (σ_minor, χ²/ndof) e confronto quantitativo tra qualità sperimentale Q_exp e qualità simulata Q_sim.
+**Scopo**: confronto sperimentale su banco ottico (display smartphone) tra qualità
+sperimentale Q_exp e qualità simulata Q_sim, più stima del fattore di
+non-linearità M(r) (Exp3b). Modalità separate, eseguite in sequenza
+(`calib` → `measure` → `exp3b` → `plots`); `fits-preview` è indipendente e
+serve solo per ispezione visiva dei frame FITS grezzi.
 
 **Pipeline:**
 ```
-Griglia calibrazione FITS → sottrazione background → fit gaussiano 2D sui nodi
-  → omografia DLT (Hartley normalizzato) → homography_d{dist}mm.json
+Linea di calibrazione FITS → sottrazione background
+  → scale_d{dist}mm.json (mm/px sensore, L_sensore)
 
-Tracce laser FITS → sottrazione background → stima angolo (PCA)
-  → centroide pesato ISO 11146 per slice → fit ODR lineare
-    → Q_exp (χ²/ndof medio) → confronto con Q_sim da TSV q_map
-      → rapporto R = Q_exp / Q_sim
+Tracce laser parallele FITS (Exp3) → sottrazione background
+  → centroide pesato per slice → fit ODR lineare (outlier rejection Mahalanobis)
+    → Q_exp = χ²/ndof per traccia → q_exp_map.tsv
+      → confronto con Q_sim (fisso da config o nearest-neighbor su q_map.tsv)
+        → q_comparison.png, q_vs_dax_r{idx}.png
+
+Colonna di dot FITS (Exp3b) → M(r) locale/globale → M_summary.tsv
+  → M_vs_dax.png, M_profile_d{dist}_{config}.png, M_nonlinearity_d{dist}_{config}.png
+
+FITS grezzi (qualsiasi cartella) → fits-preview → PNG 1:1 per ispezione
 ```
 
 ```bash
-./build/analysis/exp3/Release/exp3_main --full \
-    --config   config/exp3/exp3_config.json \
-    --data-dir data/exp3/ \
-    --output   output/exp3/ \
-    --lens-config all
+./build/analysis/exp3/Release/exp3_main --mode calib   --config config/exp3/exp3_config.json --data-dir data/exp3/ --output output/exp3/
+./build/analysis/exp3/Release/exp3_main --mode measure --config config/exp3/exp3_config.json --data-dir data/exp3/ --output output/exp3/
+./build/analysis/exp3/Release/exp3_main --mode exp3b   --config config/exp3/exp3_config.json --data-dir-b data/exp3b/ --output-b output/exp3b/
+./build/analysis/exp3/Release/exp3_main --mode plots   --config config/exp3/exp3_config.json --output output/exp3/ --output-b output/exp3b/
 ```
 
 | Opzione | Default | Descrizione |
 |---|---|---|
-| `--calibrate` | — | Solo calibrazione geometrica (fase 1) |
-| `--analyze` | — | Solo analisi tracce (richiede calibrazione già eseguita) |
-| `--full` | — | Calibrazione + analisi in sequenza |
-| `--config` | `config/exp3/exp3_config.json` | Parametri exp3 (distanze, orientazioni) |
-| `--data-dir` | `data/exp3/` | Radice cartella dati |
-| `--output` | `output/exp3/` | Radice cartella output |
-| `--lens-config` | `all` | `good`, `bad`, o `all` |
-| `--no-png` | off | Disabilita salvataggio PNG |
-| `--no-root` | on | ROOT disabilitato di default |
+| `--mode` | *(obbligatoria)* | `calib`, `measure`, `exp3b`, `plots`, `fits-preview` |
+| `--config` | `config/exp3/exp3_config.json` | Parametri exp3 (distanze, soglie estrazione traccia, config Q_sim) |
+| `--data-dir` | `data/exp3/` | Radice dati Exp3 (`calib`, `measure`, `fits-preview`) |
+| `--data-dir-b` | `data/exp3b/` | Radice dati Exp3b (`exp3b`) |
+| `--output` | `output/exp3/` | Radice output Exp3 |
+| `--output-b` | `output/exp3b/` | Radice output Exp3b |
+| `--lens-config` | `all` | `good`, `bad`, o `all` (per `measure`/`exp3b`) |
+| `--no-png` | off | Salta la generazione PNG in `plots` |
 | `--verbose` | off | Output dettagliato |
 
 **Struttura dati attesa:**
 ```
 data/exp3/
-├── calib/d{dist}/           # FITS griglia calibrazione a distanza d [mm]
-├── calib/background/        # FITS background calibrazione
-├── {good,bad}/d{dist}/theta{angle}/   # FITS tracce laser
-└── {good,bad}/background/   # FITS background segnale
+├── calib/d{dist}/{signal,background}/       # FITS linea di calibrazione a distanza d [mm]
+└── {good,bad}/d{dist}/{signal,background}/  # FITS tracce laser parallele
+
+data/exp3b/
+└── {good,bad}/d{dist}/{signal,background}/  # FITS colonna di dot
 ```
 
 **Output:**
-- `output/exp3/calib/homography_d{dist}mm.json` — matrice omografia 3×3
-- `output/exp3/calib/calib_report.png` — scatter punti + RMS residui omografia
-- `output/exp3/{good,bad}/trace_d{dist}_theta{angle}.png` — profili tracce
-- `output/exp3/{good,bad}/Q_profile.png` — Q_exp vs distanza assiale
-- `output/exp3/summary.png` — confronto Q_exp_global, Q_sim, R
-- `output/exp3/results.tsv` — metriche per ogni traccia
-- `output/exp3/summary.tsv` — Q_exp_global, Q_sim, R per configurazione
+- `output/exp3/calib/scale_d{dist}mm.json` — scala mm/px e lunghezza sensore per distanza
+- `output/exp3/{good,bad}/q_exp_map.tsv` — Q_exp per traccia (d_ax, r_idx, χ²/ndof, n_valid_slices, warning)
+- `output/exp3/q_comparison.png` — Q_exp(d_ax) good/bad vs Q_sim di riferimento (linee tratteggiate; valori fissi impostabili in `q_comparison.q_sim_good`/`q_sim_bad` nel config, altrimenti nearest-neighbor da `q_map_tsv`)
+- `output/exp3/q_vs_dax_r{idx}.png` — Q_exp vs distanza assiale per ogni offset radiale
+- `output/exp3b/{good,bad}/M_summary.tsv` — M globale e residuo RMS per distanza
+- `output/exp3b/M_vs_dax.png`, `M_profile_d{dist}_{config}.png`, `M_nonlinearity_d{dist}_{config}.png`
+- `output/exp3/fits_preview/<stessa struttura di --data-dir>.png` — anteprima 1:1 di ogni FITS grezzo (titolo con config/d_ax/categoria/esposizione/frame, assi in px, colorbar in ADU)
 
 ---
 
@@ -1596,12 +1605,6 @@ python3 scripts/pareto_runner.py --l1-id LA4464 --l2-id LA4464R
 
 ---
 
-### Calibrazione geometrica (exp3 — omografia)
-
-- **Hartley, R. & Zisserman, A. (2003)**. *Multiple View Geometry in Computer Vision*, 2nd ed. Cambridge University Press. §4.1: Direct Linear Transform (DLT) con normalizzazione isotropica dei punti (normalizzazione di Hartley). Algoritmo usato in `analysis/exp3/` per la calibrazione geometrica dell'esperimento laser.
-
----
-
 ### Fit robusto (ODR / IRLS)
 
 - **Boggs, P.T. & Rogers, J.E. (1990)**. *Orthogonal Distance Regression*. Contemporary Mathematics, 112, 183–194. Formulazione teorica dell'IRLS per ODR pesato con matrici di covarianza generali. Implementato in `fit_trace` (`analysis/psf_analysis/psf_interpolator.cpp`).
@@ -1620,7 +1623,7 @@ python3 scripts/pareto_runner.py --l1-id LA4464 --l2-id LA4464R
 
 - **Zhang, C. & Couloigner, I. (2007)**. *Accurate Centerline Detection and Line Width Estimation of Thick Lines Using the Radon Transform*. IEEE Transactions on Image Processing, 16(2), 310–316. DOI: [10.1109/TIP.2006.887731](https://doi.org/10.1109/TIP.2006.887731). Riferimento per robustezza del centroide pesato nella localizzazione di linee diffuse.
 
-- **PCA per stima orientazione**: la stima dell'angolo della traccia via decomposizione spettrale della matrice di covarianza 2D del profilo di intensità è usata in `exp2/` e `exp3/` come inizializzazione prima del raffinamento ODR iterativo.
+- **PCA per stima orientazione**: la stima dell'angolo della traccia via decomposizione spettrale della matrice di covarianza 2D del profilo di intensità è usata in `exp2/` come inizializzazione prima del raffinamento ODR iterativo.
 
 ---
 
