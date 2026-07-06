@@ -4,6 +4,7 @@
 #include <TCanvas.h>
 #include <TFile.h>
 #include <TH2D.h>
+#include <TLatex.h>
 #include <TStyle.h>
 #include <TTree.h>
 
@@ -758,16 +759,6 @@ int main(int argc, char** argv) {
     }
   }
 
-  auto build_warn_boxes = [&]() {
-    TH2D h_warn_c = h_focus_warn;
-    double level[1] = {0.5};
-    h_warn_c.SetContour(1, level);
-    h_warn_c.SetLineColor(kOrange + 7);
-    h_warn_c.SetLineWidth(2);
-    h_warn_c.SetLineStyle(kDashed);
-    h_warn_c.DrawCopy("CONT3 same");
-  };
-
   auto build_mask_boxes = [&](TH2D& h_mask) {
     std::vector<std::unique_ptr<TBox>> boxes;
     boxes.reserve(static_cast<size_t>(n_bins_x1 * n_bins_x2));
@@ -790,16 +781,32 @@ int main(int argc, char** argv) {
     return boxes;
   };
 
+  static const std::unordered_map<std::string, std::string> kMapTitles = {
+      {"resolution_dof_mean_map",       "Profondit#grave{a} di campo media (DoF_{mean})"},
+      {"resolution_delta_y_min_mean_map", "#delta y_{min} medio"},
+      {"resolution_EE80_mean_map",      "Diametro EE80 medio (EE80_{mean})"},
+  };
+
   auto save_map = [&](TH2D& h, TH2D& h_mask, const std::string& name, int palette) {
     gStyle->SetPalette(palette);
     TCanvas c(("c_" + name).c_str(), name.c_str(), 1100, 900);
     c.SetLeftMargin(0.16);
     c.SetBottomMargin(0.14);
     c.SetRightMargin(0.16);
-    c.SetTopMargin(0.08);
+    c.SetTopMargin(0.10);
+    h.GetZaxis()->CenterTitle(kTRUE);
+    h.GetZaxis()->SetTitleOffset(1.6);
     h.Draw("COLZ");
-    build_warn_boxes();
     auto boxes = build_mask_boxes(h_mask);
+    auto it = kMapTitles.find(name);
+    if (it != kMapTitles.end()) {
+      TLatex tit;
+      tit.SetNDC();
+      tit.SetTextFont(42);
+      tit.SetTextSize(0.042);
+      tit.SetTextAlign(22);
+      tit.DrawLatex(0.50, 0.955, it->second.c_str());
+    }
     std::string out = (std::filesystem::path(cli.output_dir) / (name + ".png")).string();
     c.SaveAs(out.c_str());
   };

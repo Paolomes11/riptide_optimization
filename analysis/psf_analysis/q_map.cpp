@@ -82,8 +82,6 @@
 #include <TGaxis.h>
 #include <TH2D.h>
 #include <TLatex.h>
-#include <TLine.h>
-#include <TMarker.h>
 #include <TStyle.h>
 
 #include <algorithm>
@@ -245,7 +243,6 @@ struct PadLayout {
   TCanvas* canvas;
   TPad* pad_plot;
   TPad* pad_cb;
-  TPad* pad_info;
 };
 
 static PadLayout make_canvas(bool log_z) {
@@ -256,9 +253,8 @@ static PadLayout make_canvas(bool log_z) {
   pl.canvas->SetTopMargin(0.0);
   pl.canvas->SetBottomMargin(0.0);
 
-  pl.pad_plot = new TPad("pad_plot", "", 0.00, 0.12, 0.88, 1.00);
-  pl.pad_cb   = new TPad("pad_cb", "", 0.88, 0.12, 0.96, 1.00);
-  pl.pad_info = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.12);
+  pl.pad_plot = new TPad("pad_plot", "", 0.00, 0.00, 0.80, 1.00);
+  pl.pad_cb   = new TPad("pad_cb", "", 0.80, 0.00, 0.99, 1.00);
 
   pl.pad_plot->SetLeftMargin(0.16);
   pl.pad_plot->SetRightMargin(0.015);
@@ -271,19 +267,13 @@ static PadLayout make_canvas(bool log_z) {
     pl.pad_plot->SetLogz();
 
   pl.pad_cb->SetLeftMargin(0.25);
-  pl.pad_cb->SetRightMargin(0.30);
+  pl.pad_cb->SetRightMargin(0.65);
   pl.pad_cb->SetTopMargin(0.11);
   pl.pad_cb->SetBottomMargin(0.13);
-
-  pl.pad_info->SetLeftMargin(0.02);
-  pl.pad_info->SetRightMargin(0.02);
-  pl.pad_info->SetTopMargin(0.05);
-  pl.pad_info->SetBottomMargin(0.05);
 
   pl.canvas->cd();
   pl.pad_plot->Draw();
   pl.pad_cb->Draw();
-  pl.pad_info->Draw();
 
   return pl;
 }
@@ -333,129 +323,15 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale
   TGaxis* cb_axis =
       new TGaxis(cb_x1, cb_y0, cb_x1, cb_y1, vmin, vmax, 505, log_scale ? "+LG" : "+L");
   cb_axis->SetLabelFont(42);
-  cb_axis->SetLabelSize(0.18);
+  cb_axis->SetLabelSize(0.13);
   cb_axis->SetTickSize(0.35);
   cb_axis->SetLabelOffset(0.03);
   cb_axis->SetTitle(title.c_str());
   cb_axis->SetTitleFont(42);
-  cb_axis->SetTitleSize(0.20);
+  cb_axis->SetTitleSize(0.12);
   cb_axis->CenterTitle(kTRUE);
   cb_axis->SetTitleOffset(1.8);
   cb_axis->Draw();
-}
-
-// Disegno info panel comune
-static void draw_info_panel_q(TPad* pad_info, const riptide::QConfig& qcfg, int total_cfgs,
-                              int n_invalid, double best_x1, double best_x2, double best_metric,
-                              double best_Q_raw, double best_rho, double best_target,
-                              bool dist_to_target) {
-  pad_info->cd();
-  pad_info->SetFillColor(TColor::GetColor(245, 245, 248));
-
-  TLine* sep = new TLine(0.0, 0.97, 1.0, 0.97);
-  sep->SetNDC(true);
-  sep->SetLineColor(kGray + 1);
-  sep->SetLineWidth(1);
-  sep->Draw();
-
-  TLatex info;
-  info.SetNDC(true);
-  info.SetTextFont(42);
-
-  const double col1 = 0.03, col2 = 0.52;
-  const double hdr = 0.82, row1 = 0.60, row_mid = 0.38, row2 = 0.16;
-
-  info.SetTextSize(0.13);
-  info.SetTextColor(kGray + 2);
-  info.SetTextAlign(12);
-  info.DrawLatex(col1, hdr, "TRACCE CASUALI 3D NELLO SCINTILLATORE");
-  info.DrawLatex(col2, hdr,
-                 ("OTTIMO  (valide: " + std::to_string(total_cfgs - n_invalid) + "/"
-                  + std::to_string(total_cfgs) + " config)")
-                     .c_str());
-
-  info.SetTextSize(0.18);
-  info.SetTextColor(kBlack);
-
-  info.DrawLatex(col1, row1,
-                 ("Scint: " + fmt(qcfg.scint_x, 0) + "x" + fmt(qcfg.scint_y, 0) + "x"
-                  + fmt(qcfg.scint_z, 0) + " mm^3   #tracce = " + std::to_string(qcfg.n_tracks))
-                     .c_str());
-  info.DrawLatex(col1, row2,
-                 ("#Deltat = " + fmt(qcfg.trace_dt, 2)
-                  + " mm   min_hits = " + fmt(qcfg.min_hits_per_point, 0)
-                  + "   soglia tr: " + fmt(qcfg.trace_valid_fraction * 100, 0) + "%")
-                     .c_str());
-
-  info.DrawLatex(
-      col2, row1,
-      ("#bf{x_{1}^{*}} = " + fmt(best_x1, 1) + " mm,   #bf{x_{2}^{*}} = " + fmt(best_x2, 1) + " mm")
-          .c_str());
-  {
-    std::ostringstream ss_metric;
-    ss_metric << std::scientific << std::setprecision(3) << best_metric;
-    std::ostringstream ss_qraw;
-    ss_qraw << std::scientific << std::setprecision(3) << best_Q_raw;
-    std::ostringstream ss_tgt;
-    ss_tgt << std::scientific << std::setprecision(3) << best_target;
-    std::ostringstream ss_rho;
-    ss_rho << std::fixed << std::setprecision(3) << best_rho;
-
-    // Riga superiore: metrica e Q_raw; riga inferiore: Q_target e rho
-    std::string line_top, line_bot;
-    if (dist_to_target) {
-      line_top = "#bf{|Q-Q_{target}|_{min}} = " + ss_metric.str() + "   Q_{raw} = " + ss_qraw.str();
-    } else {
-      line_top = "#bf{Q_{min}} = " + ss_qraw.str();
-    }
-    line_bot = "Q_{target} = " + ss_tgt.str() + "   #hat{#rho} = " + ss_rho.str();
-    info.DrawLatex(col2, row_mid, line_top.c_str());
-    info.DrawLatex(col2, row2,   line_bot.c_str());
-  }
-}
-
-static void draw_info_panel_coverage(TPad* pad_info, const riptide::QConfig& qcfg, int total_cfgs,
-                                     int n_invalid, double best_x1, double best_x2,
-                                     double best_cov) {
-  pad_info->cd();
-  pad_info->SetFillColor(TColor::GetColor(245, 245, 248));
-
-  TLine* sep = new TLine(0.0, 0.97, 1.0, 0.97);
-  sep->SetNDC(true);
-  sep->SetLineColor(kGray + 1);
-  sep->SetLineWidth(1);
-  sep->Draw();
-
-  TLatex info;
-  info.SetNDC(true);
-  info.SetTextFont(42);
-
-  const double col1 = 0.03, col2 = 0.52;
-  const double hdr = 0.82, row1 = 0.52, row2 = 0.18;
-
-  info.SetTextSize(0.13);
-  info.SetTextColor(kGray + 2);
-  info.SetTextAlign(12);
-  info.DrawLatex(col1, hdr, "TRACCE CASUALI 3D  [MAPPA DI COPERTURA]");
-  info.DrawLatex(col2, hdr,
-                 ("MASSIMO COPERTURA  (valide: " + std::to_string(total_cfgs - n_invalid) + "/"
-                  + std::to_string(total_cfgs) + " config)")
-                     .c_str());
-
-  info.SetTextSize(0.20);
-  info.SetTextColor(kBlack);
-
-  info.DrawLatex(col1, row1,
-                 ("Scint: " + fmt(qcfg.scint_x, 0) + "x" + fmt(qcfg.scint_y, 0) + "x"
-                  + fmt(qcfg.scint_z, 0) + " mm^3   #tracce = " + std::to_string(qcfg.n_tracks))
-                     .c_str());
-  info.DrawLatex(col1, row2, ("#Deltat = " + fmt(qcfg.trace_dt, 2) + " mm").c_str());
-
-  info.DrawLatex(
-      col2, row1,
-      ("#bf{x_{1}^{*}} = " + fmt(best_x1, 1) + " mm,   #bf{x_{2}^{*}} = " + fmt(best_x2, 1) + " mm")
-          .c_str());
-  info.DrawLatex(col2, row2, ("#bf{copertura_{max}} = " + fmt(best_cov * 100.0, 1) + " %").c_str());
 }
 
 // main
@@ -710,23 +586,6 @@ int main(int argc, char** argv) {
       }
     }
 
-    // Marker stella sul massimo
-    {
-      TMarker* mk = new TMarker(it_best->x1, it_best->x2, 29);
-      mk->SetMarkerColor(kRed);
-      mk->SetMarkerSize(2.8);
-      mk->Draw("same");
-
-      TLatex lbl;
-      lbl.SetTextFont(42);
-      lbl.SetTextSize(0.032);
-      lbl.SetTextColor(kRed + 1);
-      lbl.SetTextAlign(12);
-      lbl.DrawLatex(
-          it_best->x1, it_best->x2,
-          (" #bf{max} (" + fmt(it_best->x1, 1) + ", " + fmt(it_best->x2, 1) + ")").c_str());
-    }
-
     // Titolo
     {
       TLatex title;
@@ -742,9 +601,6 @@ int main(int argc, char** argv) {
 
     draw_colorbar(pl.pad_cb, 0.0, 100.0, cli.log_scale, "copertura [%]", invalid_color,
                   /*show_invalid_box=*/true);
-
-    draw_info_panel_coverage(pl.pad_info, qcfg, total_cfgs, n_cfg_invalid, it_best->x1, it_best->x2,
-                             it_best->coverage);
 
     pl.canvas->Update();
     std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());
@@ -942,35 +798,29 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Marker stella sul minimo
+  // Titolo
   {
-    TMarker* mk = new TMarker(it_best->x1, it_best->x2, 29);
-    mk->SetMarkerColor(kRed);
-    mk->SetMarkerSize(2.8);
-    mk->Draw("same");
-
-    TLatex lbl;
-    lbl.SetTextFont(42);
-    lbl.SetTextSize(0.032);
-    lbl.SetTextColor(kRed + 1);
-    lbl.SetTextAlign(12);
-    lbl.DrawLatex(it_best->x1, it_best->x2,
-                  (" #bf{min} (" + fmt(it_best->x1, 1) + ", " + fmt(it_best->x2, 1) + ")").c_str());
+    TLatex title;
+    title.SetNDC();
+    title.SetTextFont(42);
+    title.SetTextSize(0.046);
+    title.SetTextAlign(22);
+    title.SetTextColor(kBlack);
+    if (cli.dist_to_target)
+      title.DrawLatex(0.535, 0.953, "Risoluzione tracce 3D  -  distanza da target");
+    else
+      title.DrawLatex(0.535, 0.953, "Risoluzione tracce 3D  #LT#chi^{2}_{red}#GT(x_{1}, x_{2})");
   }
 
   pl.pad_plot->RedrawAxis();
 
   std::string z_lbl_cb;
   if (cli.dist_to_target)
-    z_lbl_cb = "|#LT#chi^{2}_{red}#GT - Q_{target}|";
+    z_lbl_cb = "|#LT#chi_{red}^{2}#GT - Q_{target}|";
   else
-    z_lbl_cb = "#LT#chi^{2}_{red}#GT";
+    z_lbl_cb = "#LT#chi_{red}^{2}#GT";
   draw_colorbar(pl.pad_cb, h_Q.GetMinimum(), h_Q.GetMaximum(), cli.log_scale, z_lbl_cb,
                 invalid_color, /*show_invalid_box=*/true);
-
-  draw_info_panel_q(pl.pad_info, qcfg, total_cfgs, n_cfg_invalid, it_best->x1, it_best->x2,
-                    it_best->metric, it_best->Q_raw, it_best->rho_est, it_best->Q_target,
-                    cli.dist_to_target);
 
   pl.canvas->Update();
   std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());

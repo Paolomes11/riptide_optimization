@@ -29,8 +29,6 @@
 #include <TGaxis.h>
 #include <TH2D.h>
 #include <TLatex.h>
-#include <TLine.h>
-#include <TMarker.h>
 #include <TStyle.h>
 
 #include <omp.h>
@@ -363,7 +361,6 @@ struct PadLayout {
   TCanvas* canvas;
   TPad* pad_plot;
   TPad* pad_cb;
-  TPad* pad_info;
 };
 
 static PadLayout make_canvas(bool log_z) {
@@ -374,9 +371,8 @@ static PadLayout make_canvas(bool log_z) {
   pl.canvas->SetTopMargin(0.0);
   pl.canvas->SetBottomMargin(0.0);
 
-  pl.pad_plot = new TPad("pad_plot", "", 0.00, 0.12, 0.88, 1.00);
-  pl.pad_cb   = new TPad("pad_cb", "", 0.88, 0.12, 0.96, 1.00);
-  pl.pad_info = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.12);
+  pl.pad_plot = new TPad("pad_plot", "", 0.00, 0.00, 0.80, 1.00);
+  pl.pad_cb   = new TPad("pad_cb", "", 0.80, 0.00, 0.99, 1.00);
 
   pl.pad_plot->SetLeftMargin(0.16);
   pl.pad_plot->SetRightMargin(0.015);
@@ -389,19 +385,13 @@ static PadLayout make_canvas(bool log_z) {
     pl.pad_plot->SetLogz();
 
   pl.pad_cb->SetLeftMargin(0.25);
-  pl.pad_cb->SetRightMargin(0.35);
+  pl.pad_cb->SetRightMargin(0.65);
   pl.pad_cb->SetTopMargin(0.11);
   pl.pad_cb->SetBottomMargin(0.13);
-
-  pl.pad_info->SetLeftMargin(0.02);
-  pl.pad_info->SetRightMargin(0.02);
-  pl.pad_info->SetTopMargin(0.05);
-  pl.pad_info->SetBottomMargin(0.05);
 
   pl.canvas->cd();
   pl.pad_plot->Draw();
   pl.pad_cb->Draw();
-  pl.pad_info->Draw();
 
   return pl;
 }
@@ -445,95 +435,15 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale
   TGaxis* cb_axis =
       new TGaxis(cb_x1, cb_y0, cb_x1, cb_y1, vmin, vmax, 505, log_scale ? "+LG" : "+L");
   cb_axis->SetLabelFont(42);
-  cb_axis->SetLabelSize(0.18);
+  cb_axis->SetLabelSize(0.13);
   cb_axis->SetTickSize(0.35);
   cb_axis->SetLabelOffset(0.03);
   cb_axis->SetTitle(title.c_str());
   cb_axis->SetTitleFont(42);
-  cb_axis->SetTitleSize(0.20);
+  cb_axis->SetTitleSize(0.12);
   cb_axis->CenterTitle(kTRUE);
   cb_axis->SetTitleOffset(1.8);
   cb_axis->Draw();
-}
-
-static void draw_info_panel(TPad* pad_info, int total_cfgs, int n_invalid, double best_x1,
-                            double best_x2, double best_metric, double best_chi2_red,
-                            double best_chi2_red_raw, double best_rho, double best_chi2_target,
-                            double min_hits, bool use_reduced, bool dist_to_n, double dist_n,
-                            bool corr_mode, bool adaptive_target) {
-  pad_info->cd();
-  pad_info->SetFillColor(TColor::GetColor(245, 245, 248));
-
-  TLine* sep = new TLine(0.0, 0.97, 1.0, 0.97);
-  sep->SetNDC(true);
-  sep->SetLineColor(kGray + 1);
-  sep->SetLineWidth(1);
-  sep->Draw();
-
-  TLatex info;
-  info.SetNDC(true);
-  info.SetTextFont(42);
-
-  const double col1 = 0.03, col2 = 0.48;
-  const double hdr = 0.82, row1 = 0.52, row2 = 0.18;
-
-  info.SetTextSize(0.13);
-  info.SetTextColor(kGray + 2);
-  info.SetTextAlign(12);
-  info.DrawLatex(col1, hdr, "FIT PIANO: mu_{y,z} = a + b*y_{0} + c*x_{0}");
-  info.DrawLatex(col2, hdr,
-                 ("OTTIMO  (valide: " + std::to_string(total_cfgs - n_invalid) + "/"
-                  + std::to_string(total_cfgs) + " config)")
-                     .c_str());
-
-  info.SetTextSize(0.20);
-  info.SetTextColor(kBlack);
-  info.DrawLatex(col1, row1, ("Min hits PSF: " + fmt(min_hits, 0)).c_str());
-  if (corr_mode) {
-    info.DrawLatex(col1, row2, "Metrica: #rho residui vicini (Y+Z)");
-  } else if (adaptive_target) {
-    info.DrawLatex(col1, row2, "Metrica: |#chi^{2}/ndof - #chi^{2}_{target}(#hat{#rho})|  (Y+Z)");
-  } else if (dist_to_n) {
-    info.DrawLatex(col1, row2,
-                   ("Metrica: |#chi^{2}/ndof - " + fmt(dist_n, 3) + "|  (Y+Z)").c_str());
-  } else {
-    info.DrawLatex(col1, row2,
-                   (use_reduced ? "Metrica: #chi^{2}/ndof (Y+Z)" : "Metrica: #chi^{2} (Y+Z)"));
-  }
-  info.DrawLatex(
-      col2, row1,
-      ("#bf{x_{1}^{*}} = " + fmt(best_x1, 1) + " mm,   #bf{x_{2}^{*}} = " + fmt(best_x2, 1) + " mm")
-          .c_str());
-
-  std::ostringstream ms;
-  ms << std::fixed << std::setprecision(4) << best_metric;
-  if (corr_mode) {
-    std::ostringstream cr;
-    cr << std::fixed << std::setprecision(3) << best_chi2_red;
-    info.DrawLatex(
-        col2, row2,
-        ("#bf{max #rho} = " + ms.str() + "   (#chi^{2}/ndof = " + cr.str() + ")").c_str());
-  } else if (adaptive_target) {
-    std::ostringstream cr;
-    std::ostringstream ct;
-    std::ostringstream rr;
-    cr << std::fixed << std::setprecision(3) << best_chi2_red_raw;
-    ct << std::fixed << std::setprecision(3) << best_chi2_target;
-    rr << std::fixed << std::setprecision(3) << best_rho;
-    info.DrawLatex(col2, row2,
-                   ("#bf{min} = " + ms.str() + "   (#chi^{2}/ndof = " + cr.str()
-                    + "   target = " + ct.str() + "   #hat{#rho} = " + rr.str() + ")")
-                       .c_str());
-  } else if (dist_to_n) {
-    std::ostringstream cr;
-    cr << std::fixed << std::setprecision(3) << best_chi2_red;
-    info.DrawLatex(col2, row2,
-                   ("#bf{min |#chi^{2}/ndof - " + fmt(dist_n, 3) + "|} = " + ms.str()
-                    + "   (#chi^{2}/ndof = " + cr.str() + ")")
-                       .c_str());
-  } else {
-    info.DrawLatex(col2, row2, ("#bf{min} = " + ms.str()).c_str());
-  }
 }
 
 int main(int argc, char** argv) {
@@ -740,27 +650,6 @@ int main(int argc, char** argv) {
     }
   }
 
-  auto it_best = cli.corr_map ? std::max_element(entries.begin(), entries.end(),
-                                                 [](const Chi2Entry& a, const Chi2Entry& b) {
-                                                   if (!a.valid)
-                                                     return true;
-                                                   if (!b.valid)
-                                                     return false;
-                                                   if (a.metric != b.metric)
-                                                     return a.metric < b.metric;
-                                                   return a.chi2_red < b.chi2_red;
-                                                 })
-                              : std::min_element(entries.begin(), entries.end(),
-                                                 [](const Chi2Entry& a, const Chi2Entry& b) {
-                                                   if (!a.valid)
-                                                     return false;
-                                                   if (!b.valid)
-                                                     return true;
-                                                   if (a.metric != b.metric)
-                                                     return a.metric < b.metric;
-                                                   return a.chi2_red < b.chi2_red;
-                                                 });
-
   if (!cli.tsv_path.empty()) {
     std::filesystem::create_directories(std::filesystem::path(cli.tsv_path).parent_path());
     std::ofstream out(cli.tsv_path);
@@ -831,11 +720,6 @@ int main(int argc, char** argv) {
   h_inv.SetFillColor(TColor::GetColor(80, 80, 80));
   h_inv.Draw("BOX same");
 
-  TMarker* mk = new TMarker(it_best->x1, it_best->x2, 29);
-  mk->SetMarkerColor(kRed);
-  mk->SetMarkerSize(2.8);
-  mk->Draw("same");
-
   TLatex title;
   title.SetNDC();
   title.SetTextFont(42);
@@ -844,7 +728,7 @@ int main(int argc, char** argv) {
   if (cli.corr_map) {
     title.DrawLatex(0.535, 0.953, "Correlazione residui (fit piano #mu_{y,z})");
   } else if (cli.adaptive_target) {
-    title.DrawLatex(0.535, 0.953, "Distanza da target adattivo (fit piano #mu_{y,z})");
+    title.DrawLatex(0.535, 0.953, "Linearit#grave{a} della risposta  -  distanza da target");
   } else if (cli.dist_to_n) {
     title.DrawLatex(
         0.535, 0.953,
@@ -857,20 +741,13 @@ int main(int argc, char** argv) {
   if (cli.corr_map) {
     cb_title = "#rho  [a.d.]";
   } else if (cli.adaptive_target) {
-    cb_title = "|#chi^{2}/ndof - #chi^{2}_{target}|";
+    cb_title = "|#chi^{2}/ndof - #chi_{target}^{2}|";
   } else if (cli.dist_to_n) {
     cb_title = "|#chi^{2}/ndof - n|";
   } else if (cli.use_reduced) {
     cb_title = "#chi^{2}/ndof";
   }
   draw_colorbar(pl.pad_cb, z_min, z_max, cli.log_scale, cb_title, TColor::GetColor(80, 80, 80));
-
-  draw_info_panel(
-      pl.pad_info, total_cfgs,
-      std::count_if(entries.begin(), entries.end(), [](const Chi2Entry& e) { return !e.valid; }),
-      it_best->x1, it_best->x2, it_best->metric, it_best->chi2_red, it_best->chi2_red_raw,
-      it_best->rho, it_best->chi2_target, cli.min_hits, cli.use_reduced, cli.dist_to_n, cli.dist_n,
-      cli.corr_map, cli.adaptive_target);
 
   pl.canvas->Update();
   std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());

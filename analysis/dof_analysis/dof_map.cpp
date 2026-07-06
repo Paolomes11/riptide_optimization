@@ -6,7 +6,6 @@
 #include <TColor.h>
 #include <TFile.h>
 #include <TH2D.h>
-#include <TMarker.h>
 #include <TStyle.h>
 #include <TTree.h>
 
@@ -707,7 +706,7 @@ int main(int argc, char** argv) {
                x1_max_data + dx / 2.0, n_bins_x2, x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
   TH2D h_dof("h_dof", ";x1 [mm];x2 [mm];DoF [mm]", n_bins_x1, x1_min_data - dx / 2.0,
              x1_max_data + dx / 2.0, n_bins_x2, x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
-  TH2D h_M("h_M", ";x1 [mm];x2 [mm];M", n_bins_x1, x1_min_data - dx / 2.0, x1_max_data + dx / 2.0,
+  TH2D h_M("h_M", ";x1 [mm];x2 [mm];M  [a.d.]", n_bins_x1, x1_min_data - dx / 2.0, x1_max_data + dx / 2.0,
            n_bins_x2, x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
   TH2D h_M_abs_err("h_M_abs_err", ";x1 [mm];x2 [mm];|M - M_{target}|", n_bins_x1,
                    x1_min_data - dx / 2.0, x1_max_data + dx / 2.0, n_bins_x2,
@@ -728,14 +727,8 @@ int main(int argc, char** argv) {
     }
   }
 
-  TH2D h_warn("h_warn", "", n_bins_x1, x1_min_data - dx / 2.0, x1_max_data + dx / 2.0, n_bins_x2,
+  TH2D h_warn("h_warn", ";x1 [mm];x2 [mm]", n_bins_x1, x1_min_data - dx / 2.0, x1_max_data + dx / 2.0, n_bins_x2,
               x2_min_data - dx / 2.0, x2_max_data + dx / 2.0);
-
-  const double x_photocathode      = 180.0;
-  const ResultRow* best_focus_near = nullptr;
-  const ResultRow* best_dof_max    = nullptr;
-  const ResultRow* best_M_neutral  = nullptr;
-  const ResultRow* best_M_target   = nullptr;
 
   double focus_min  = std::numeric_limits<double>::infinity();
   double focus_max  = -std::numeric_limits<double>::infinity();
@@ -780,21 +773,6 @@ int main(int argc, char** argv) {
     stripe_max = std::max(stripe_max, r.stripe_width);
     margin_min = std::min(margin_min, margin);
     margin_max = std::max(margin_max, margin);
-
-    if (!best_focus_near
-        || std::abs(r.x_focus - x_photocathode)
-               < std::abs(best_focus_near->x_focus - x_photocathode)) {
-      best_focus_near = &r;
-    }
-    if (!best_dof_max || r.dof > best_dof_max->dof) {
-      best_dof_max = &r;
-    }
-    if (!best_M_neutral || std::abs(r.M - 1.0) < std::abs(best_M_neutral->M - 1.0)) {
-      best_M_neutral = &r;
-    }
-    if (!best_M_target || r.M_abs_err < best_M_target->M_abs_err) {
-      best_M_target = &r;
-    }
   }
 
   if (std::isfinite(focus_min) && std::isfinite(focus_max)) {
@@ -825,16 +803,6 @@ int main(int argc, char** argv) {
     h_margin.SetMinimum(-max_abs);
     h_margin.SetMaximum(+max_abs);
   }
-
-  auto build_warn_boxes = [&]() {
-    TH2D h_warn_c = h_warn;
-    double level[1] = {0.5};
-    h_warn_c.SetContour(1, level);
-    h_warn_c.SetLineColor(kOrange + 7);
-    h_warn_c.SetLineWidth(2);
-    h_warn_c.SetLineStyle(kDashed);
-    h_warn_c.DrawCopy("CONT3 same");
-  };
 
   auto build_mask_boxes = [&]() {
     std::vector<std::unique_ptr<TBox>> boxes;
@@ -868,7 +836,7 @@ int main(int argc, char** argv) {
       {"dof_within_photocathode", "Margine fotocatodo"},
   };
 
-  auto save_map = [&](TH2D& h, const std::string& name, int palette, const ResultRow* star) {
+  auto save_map = [&](TH2D& h, const std::string& name, int palette) {
     gStyle->SetPalette(palette);
     TCanvas c(("c_" + name).c_str(), name.c_str(), 1100, 900);
     c.SetLeftMargin(0.10);
@@ -881,14 +849,7 @@ int main(int argc, char** argv) {
     h.GetZaxis()->SetTitleOffset(1.6);
     h.Draw("COLZ");
     c.Update();
-    if (star) {
-      TMarker m(star->x1, star->x2, 29);
-      m.SetMarkerSize(2.0);
-      m.SetMarkerColor(kBlack);
-      m.Draw("same");
-    }
     auto boxes = build_mask_boxes();
-    build_warn_boxes();
     auto it    = kMapTitles.find(name);
     if (it != kMapTitles.end()) {
       TLatex tit;
@@ -902,12 +863,12 @@ int main(int argc, char** argv) {
     c.SaveAs(out.c_str());
   };
 
-  save_map(h_focus, "dof_focus_map", kRainBow, best_focus_near);
-  save_map(h_dof, "dof_dof_map", kBird, best_dof_max);
-  save_map(h_M, "dof_M_map", kViridis, best_M_neutral);
-  save_map(h_EE80, "dof_EE80_map", kViridis, nullptr);
-  save_map(h_stripe, "dof_stripe_map", kViridis, nullptr);
-  save_map(h_M_abs_err, "dof_M_error_map", kViridis, best_M_target);
+  save_map(h_focus, "dof_focus_map", kRainBow);
+  save_map(h_dof, "dof_dof_map", kBird);
+  save_map(h_M, "dof_M_map", kViridis);
+  save_map(h_EE80, "dof_EE80_map", kViridis);
+  save_map(h_stripe, "dof_stripe_map", kViridis);
+  save_map(h_M_abs_err, "dof_M_error_map", kViridis);
 
   {
     const int nRGBs     = 3;
@@ -930,7 +891,6 @@ int main(int argc, char** argv) {
     h_margin.Draw("COLZ");
     c.Update();
     auto boxes = build_mask_boxes();
-    build_warn_boxes();
     TLatex tit_w;
     tit_w.SetNDC();
     tit_w.SetTextFont(42);
