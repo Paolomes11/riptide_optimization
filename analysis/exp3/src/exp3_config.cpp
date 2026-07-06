@@ -110,6 +110,10 @@ Exp3Config load_exp3_config(const std::filesystem::path& path) {
         cfg.q_comparison.good_x2_mm = q.value("good_x2_mm", 0.0);
         cfg.q_comparison.bad_x1_mm  = q.value("bad_x1_mm",  0.0);
         cfg.q_comparison.bad_x2_mm  = q.value("bad_x2_mm",  0.0);
+        cfg.q_comparison.q_sim_good = q.value("q_sim_good",
+            std::numeric_limits<double>::quiet_NaN());
+        cfg.q_comparison.q_sim_bad  = q.value("q_sim_bad",
+            std::numeric_limits<double>::quiet_NaN());
     } else {
         // Retrocompatibilità: q_map_tsv al livello radice
         cfg.q_comparison.q_map_tsv = j.value("q_map_tsv",

@@ -35,10 +35,11 @@ static void print_usage(const char* prog) {
   std::cout
       << "Uso: " << prog << " --mode <modalita> [opzioni]\n"
       << "\nModalita:\n"
-      << "  calib     Calibrazione via linea di riferimento\n"
-      << "  measure   Misura Q sulle 3 tracce parallele (usa calib gia' eseguita)\n"
-      << "  exp3b     Misura M(r) tramite colonna di dot\n"
-      << "  plots     Produce tutti i grafici ROOT\n"
+      << "  calib        Calibrazione via linea di riferimento\n"
+      << "  measure      Misura Q sulle 3 tracce parallele (usa calib gia' eseguita)\n"
+      << "  exp3b        Misura M(r) tramite colonna di dot\n"
+      << "  plots        Produce tutti i grafici ROOT\n"
+      << "  fits-preview Converte ogni .fit/.fits sotto --data-dir in PNG\n"
       << "\nOpzioni:\n"
       << "  --config <path>         Config JSON [default: config/exp3/exp3_config.json]\n"
       << "  --data-dir <path>       Root dati Exp3 [default: data/exp3/]\n"
@@ -62,6 +63,8 @@ static void print_usage(const char* prog) {
       << "Output prodotti (plots):\n"
       << "  output/exp3/q_vs_r_d{dist}.png\n"
       << "  output/exp3/q_vs_dax_r{idx}.png\n"
+      << "Output prodotti (fits-preview):\n"
+      << "  output/exp3/fits_preview/<stessa struttura di --data-dir>.png\n"
       << "  output/exp3b/M_profile_d{dist}_{config}.png\n"
       << "  output/exp3b/M_vs_dax.png\n"
       << "  output/exp3b/M_nonlinearity_d{dist}_{config}.png\n";
@@ -118,6 +121,15 @@ static std::vector<std::string> active_configs(const std::string& lens_config) {
 // ---------------------------------------------------------------------------
 // Fase calib
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Fase fits-preview: conversione frame FITS grezzi in PNG di ispezione
+// ---------------------------------------------------------------------------
+static void run_fits_preview(const CliOptions& opt, const riptide::exp3::Exp3Config&) {
+  int n = riptide::exp3::produce_fits_previews(opt.data_dir, opt.output_dir);
+  std::cout << "[exp3 fits-preview] " << n << " PNG generati in "
+            << (opt.output_dir / "fits_preview") << "\n";
+}
+
 static void run_calib(const CliOptions& opt, const riptide::exp3::Exp3Config& cfg) {
   namespace exp3 = riptide::exp3;
   fs::path calib_data = opt.data_dir / "calib";
@@ -442,10 +454,11 @@ int main(int argc, char** argv) {
   }
 
   try {
-    if      (opt.mode == "calib")   { run_calib(opt, cfg); }
-    else if (opt.mode == "measure") { run_measure(opt, cfg); }
-    else if (opt.mode == "exp3b")   { run_exp3b(opt, cfg); }
-    else if (opt.mode == "plots")   { run_plots(opt, cfg); }
+    if      (opt.mode == "calib")        { run_calib(opt, cfg); }
+    else if (opt.mode == "measure")      { run_measure(opt, cfg); }
+    else if (opt.mode == "exp3b")        { run_exp3b(opt, cfg); }
+    else if (opt.mode == "plots")        { run_plots(opt, cfg); }
+    else if (opt.mode == "fits-preview") { run_fits_preview(opt, cfg); }
     else {
       std::cerr << "[exp3] Modalita' sconosciuta: " << opt.mode << "\n";
       print_usage(argv[0]);

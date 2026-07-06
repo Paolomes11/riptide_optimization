@@ -29,6 +29,8 @@
         "good_x1_mm": 110.0,
         "good_x2_mm": 130.0,
         "bad_x1_mm":  60.0,
-        "bad_x2_mm":  125.0
+        "bad_x2_mm":  125.0,
+        "q_sim_good": 0.87,
+        "q_sim_bad":  1.72
     }
 }

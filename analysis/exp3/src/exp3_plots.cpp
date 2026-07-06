@@ -14,6 +14,7 @@
 
 #include "exp3_analysis.hpp"
 #include "exp3b_analysis.hpp"
+#include "fits_io.hpp"
 
 // ROOT
 #include <TAxis.h>
@@ -23,6 +24,8 @@
 #include <TGraphAsymmErrors.h>
 #include <TGraphErrors.h>
 #include <TH1F.h>
+#include <TH2D.h>
+#include <TLatex.h>
 #include <TLegend.h>
 #include <TLine.h>
 #include <TPad.h>
@@ -33,6 +36,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iomanip>
+#include <iostream>
 #include <map>
 #include <numeric>
 #include <sstream>
@@ -85,6 +89,38 @@ static std::string fmt(double v, int prec = 1) {
     std::ostringstream s;
     s << std::fixed << std::setprecision(prec) << v;
     return s.str();
+}
+
+// Percentile robusto su TH2D (ignora pixel ~0) per una scala colore che non
+// venga dominata da hot pixel/outlier. Adattato da exp1/image_analysis.cpp.
+static double get_th2d_percentile(TH2D* h, double percentile) {
+    if (!h || percentile <= 0.0 || percentile >= 1.0) return 0.0;
+    std::vector<double> vals;
+    vals.reserve(static_cast<size_t>(h->GetNbinsX() * h->GetNbinsY()));
+    for (int iy = 1; iy <= h->GetNbinsY(); ++iy)
+        for (int ix = 1; ix <= h->GetNbinsX(); ++ix) {
+            double v = h->GetBinContent(ix, iy);
+            if (v > 1e-9) vals.push_back(v);
+        }
+    if (vals.empty()) return 0.0;
+    size_t idx = static_cast<size_t>(static_cast<double>(vals.size()) * percentile);
+    std::nth_element(vals.begin(), vals.begin() + static_cast<long>(idx), vals.end());
+    return vals[idx];
+}
+
+// Rebinna un TH2D se troppo grande per il rendering PNG (safety memoria).
+// Adattato da exp1/image_analysis.cpp.
+static TH2D* rebin_for_display(TH2D* h) {
+    if (!h) return nullptr;
+    int nx = h->GetNbinsX();
+    int ny = h->GetNbinsY();
+    int rx = (nx > 2000) ? nx / 1024 : 1;
+    int ry = (ny > 2000) ? ny / 1024 : 1;
+    if (rx <= 1 && ry <= 1) return static_cast<TH2D*>(h->Clone());
+    auto* h_rebinned = static_cast<TH2D*>(
+        h->Rebin2D(rx, ry, (std::string(h->GetName()) + "_disp").c_str()));
+    h_rebinned->Scale(1.0 / (static_cast<double>(rx) * ry));
+    return h_rebinned;
 }
 
 } // anonymous namespace
@@ -227,7 +263,7 @@ void produce_q_vs_dax(const std::vector<QResult>& good,
 }
 
 // ---------------------------------------------------------------------------
-// Exp3: confronto Q_exp(d_ax) vs Q_sim per good e bad  (due pad: top + ratio)
+// Exp3: confronto Q_exp(d_ax) vs Q_sim per good e bad  (pannello singolo)
 // ---------------------------------------------------------------------------
 void produce_q_comparison(const std::vector<QResult>& good,
                           const std::vector<QResult>& bad,
@@ -235,7 +271,12 @@ void produce_q_comparison(const std::vector<QResult>& good,
                           const fs::path& output_path) {
     apply_riptide_style();
 
-    // Filtra misure valide
+    // Filtra misure valide. Nota: alcune distanze reali (es. d_ax=150mm per
+    // "good", d_ax=210mm per "bad") non compaiono nel grafico aggregato
+    // perche' quelle specifiche acquisizioni FITS hanno warning=true
+    // (n_valid_slices sotto soglia min_valid_slices, o traccia non
+    // caratterizzabile/troppo defocused) - filtro di qualita' dato
+    // legittimo, non un bug di plotting.
     auto filter_valid = [](const std::vector<QResult>& v) {
         std::vector<QResult> out;
         for (const auto& r : v)
@@ -267,46 +308,47 @@ void produce_q_comparison(const std::vector<QResult>& good,
     auto gs = group_stats(gv);
     auto bs = group_stats(bv);
 
-    // Q_sim via nearest-neighbor
-    double q_sim_good = load_Q_sim(cmp.q_map_tsv, cmp.good_x1_mm, cmp.good_x2_mm);
-    double q_sim_bad  = load_Q_sim(cmp.q_map_tsv, cmp.bad_x1_mm,  cmp.bad_x2_mm);
+    // Q_sim: preferisce i valori fissi da config (banco exp3 a fuoco fisso
+    // 180mm), non ricavabili da q_map_tsv perche' quest'ultimo viene da run
+    // a fuoco mobile e non e' confrontabile con l'esperimento. Fallback sul
+    // lookup nearest-neighbor in q_map_tsv se non impostati.
+    double q_sim_good = std::isfinite(cmp.q_sim_good)
+        ? cmp.q_sim_good
+        : load_Q_sim(cmp.q_map_tsv, cmp.good_x1_mm, cmp.good_x2_mm);
+    double q_sim_bad = std::isfinite(cmp.q_sim_bad)
+        ? cmp.q_sim_bad
+        : load_Q_sim(cmp.q_map_tsv, cmp.bad_x1_mm, cmp.bad_x2_mm);
 
     const double x_lo = 143.0, x_hi = 217.0;
     // -------------------------------------------------------------------
-    // Canvas a due pad
+    // Canvas a pannello singolo
     // -------------------------------------------------------------------
-    auto* c = new TCanvas("qcomp", "Q confronto sim vs exp", 820, 760);
+    auto* c = new TCanvas("qcomp", "Q confronto sim vs exp", 820, 620);
     c->SetFillColor(0);
-
-    // === Pad superiore: Q_exp(d_ax) ===
-    auto* pad_top = new TPad("pad_top", "", 0.0, 0.34, 1.0, 1.0);
-    pad_top->SetLeftMargin(0.16f);
-    pad_top->SetRightMargin(0.04f);
-    pad_top->SetTopMargin(0.08f);
-    pad_top->SetBottomMargin(0.015f);
-    pad_top->SetGrid();
-    pad_top->Draw();
-    pad_top->cd();
+    c->SetLeftMargin(0.16f);
+    c->SetRightMargin(0.06f);
+    c->SetTopMargin(0.12f);
+    c->SetBottomMargin(0.14f);
+    c->SetGrid();
 
     double y_max = 1.5;
     for (const auto& s : bs) y_max = std::max(y_max, s.hi);
     for (const auto& s : gs) y_max = std::max(y_max, s.hi);
     if (std::isfinite(q_sim_bad))  y_max = std::max(y_max, q_sim_bad);
     if (std::isfinite(q_sim_good)) y_max = std::max(y_max, q_sim_good);
-    y_max *= 1.18;
+    // Margine ampio: lascia una fascia libera in alto per la legenda,
+    // cosi' non interseca mai le curve dati.
+    y_max *= 1.55;
 
-    auto* frame_top = static_cast<TH1F*>(
-        pad_top->DrawFrame(x_lo, 0.0, x_hi, y_max, ";;Q = #chi^{2}/ndof"));
-    frame_top->GetYaxis()->SetTitleOffset(1.10f);
-    frame_top->GetYaxis()->SetTitleSize(0.065f);
-    frame_top->GetYaxis()->SetLabelSize(0.055f);
-    frame_top->GetXaxis()->SetLabelSize(0.0f);
-    frame_top->GetXaxis()->SetTitleSize(0.0f);
-    frame_top->GetXaxis()->SetNdivisions(506);
+    auto* frame = static_cast<TH1F*>(
+        c->DrawFrame(x_lo, 0.0, x_hi, y_max, ";d_{ax} [mm];Q = #chi^{2}/ndof"));
+    frame->GetYaxis()->SetTitleOffset(1.30f);
+    frame->GetXaxis()->SetTitleOffset(1.10f);
 
-    auto* leg = new TLegend(0.50, 0.45, 0.95, 0.92);
+    auto* leg = new TLegend(0.18, 0.76, 0.92, 0.885);
     leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42);
-    leg->SetTextSize(0.055f);
+    leg->SetTextSize(0.032f);
+    leg->SetNColumns(2);
 
     auto draw_series = [&](const std::vector<DAXStats>& sv, int color, int marker,
                             const char* label) {
@@ -350,87 +392,143 @@ void produce_q_comparison(const std::vector<QResult>& good,
     }
     leg->Draw();
 
-    auto* pave = new TPaveText(0.17, 0.87, 0.62, 0.97, "NDC");
-    pave->SetFillColor(0); pave->SetBorderSize(0); pave->SetTextFont(42);
-    pave->SetTextSize(0.060f);
-    pave->AddText("LA4464 / LA4464R  --  Q simulato vs sperimentale");
-    pave->Draw();
-
-    // === Pad inferiore: ratio Q_exp / Q_sim ===
-    c->cd();
-    auto* pad_bot = new TPad("pad_bot", "", 0.0, 0.0, 1.0, 0.34);
-    pad_bot->SetLeftMargin(0.16f);
-    pad_bot->SetRightMargin(0.04f);
-    pad_bot->SetTopMargin(0.02f);
-    pad_bot->SetBottomMargin(0.25f);
-    pad_bot->SetGrid();
-    pad_bot->Draw();
-    pad_bot->cd();
-
-    // Calcola ratio: media/min/max divise per Q_sim
-    auto compute_ratio = [](const std::vector<DAXStats>& sv, double q_sim)
-        -> std::vector<DAXStats> {
-        if (!std::isfinite(q_sim) || q_sim <= 0.0 || sv.empty()) return {};
-        std::vector<DAXStats> out;
-        out.reserve(sv.size());
-        for (const auto& s : sv)
-            out.push_back({s.d_ax, s.mean / q_sim, s.lo / q_sim, s.hi / q_sim});
-        return out;
-    };
-    auto ratio_g = compute_ratio(gs, q_sim_good);
-    auto ratio_b = compute_ratio(bs, q_sim_bad);
-
-    double r_max = 2.0;
-    for (const auto& s : ratio_g) r_max = std::max(r_max, s.hi);
-    for (const auto& s : ratio_b) r_max = std::max(r_max, s.hi);
-    r_max *= 1.15;
-
-    auto* frame_bot = static_cast<TH1F*>(
-        pad_bot->DrawFrame(x_lo, 0.0, x_hi, r_max,
-                           ";d_{ax} [mm];Q_{exp}/Q_{sim}"));
-    frame_bot->GetXaxis()->SetTitleOffset(1.0f);
-    frame_bot->GetXaxis()->SetTitleSize(0.105f);
-    frame_bot->GetXaxis()->SetLabelSize(0.095f);
-    frame_bot->GetXaxis()->SetNdivisions(506);
-    frame_bot->GetYaxis()->SetTitleOffset(0.60f);
-    frame_bot->GetYaxis()->SetTitleSize(0.105f);
-    frame_bot->GetYaxis()->SetLabelSize(0.095f);
-    frame_bot->GetYaxis()->SetNdivisions(504);
-
-    // Linea di riferimento a ratio=1
-    auto* lref = new TLine(x_lo, 1.0, x_hi, 1.0);
-    lref->SetLineColor(kGray + 1); lref->SetLineStyle(7); lref->SetLineWidth(2);
-    lref->Draw();
-
-    auto draw_ratio = [&](const std::vector<DAXStats>& sv, int color, int marker) {
-        if (sv.empty()) return;
-        int n = static_cast<int>(sv.size());
-        std::vector<double> xs(n), ys(n), exl(n, 0.0), exh(n, 0.0), eyl(n), eyh(n);
-        for (int i = 0; i < n; ++i) {
-            xs[i]  = sv[i].d_ax;
-            ys[i]  = sv[i].mean;
-            eyl[i] = sv[i].mean - sv[i].lo;
-            eyh[i] = sv[i].hi   - sv[i].mean;
-        }
-        auto* gr = new TGraphAsymmErrors(n,
-            xs.data(), ys.data(),
-            exl.data(), exh.data(),
-            eyl.data(), eyh.data());
-        gr->SetMarkerStyle(marker);
-        gr->SetMarkerColor(color);
-        gr->SetLineColor(color);
-        gr->SetLineWidth(2);
-        gr->SetMarkerSize(1.2f);
-        gr->SetFillColorAlpha(color, 0.15f);
-        gr->Draw("PL E2 SAME");
-    };
-
-    draw_ratio(ratio_g, kBlue + 1, 21);
-    draw_ratio(ratio_b, kRed, 25);
+    TLatex title;
+    title.SetNDC();
+    title.SetTextFont(42);
+    title.SetTextSize(0.045f);
+    title.SetTextAlign(22);
+    title.DrawLatex(0.5, 0.955, "LA4464 / LA4464R  --  Q simulato vs sperimentale");
 
     fs::create_directories(output_path.parent_path());
     c->SaveAs(output_path.c_str());
     delete c;
+}
+
+// ---------------------------------------------------------------------------
+// Conversione FITS grezzi -> PNG di ispezione visiva
+// ---------------------------------------------------------------------------
+
+// Titolo leggibile a partire dal path relativo, atteso nella forma
+// <config>/d<d_ax>/<signal|background>/<timestamp>/<file>. Se la struttura
+// non corrisponde (dataset diverso da exp3), ripiega sul nome file grezzo.
+static std::string build_fits_preview_title(const fs::path& rel) {
+    std::vector<std::string> parts;
+    for (const auto& p : rel) parts.push_back(p.string());
+    if (parts.size() < 4) return rel.filename().string();
+
+    const std::string& config   = parts[0];
+    const std::string& d_dir    = parts[1];
+    const std::string& category = parts[2];
+    const std::string& filename = parts.back();
+
+    if (d_dir.size() < 2 || d_dir[0] != 'd') return rel.filename().string();
+    double d_ax_mm = 0.0;
+    try {
+        d_ax_mm = std::stod(d_dir.substr(1));
+    } catch (...) {
+        return rel.filename().string();
+    }
+
+    std::string exposure_s, frame_no;
+    std::stringstream ss(filename);
+    std::string token;
+    while (std::getline(ss, token, '_')) {
+        if (exposure_s.empty() && token.size() > 3 &&
+            token.substr(token.size() - 3) == "sec")
+            exposure_s = token.substr(0, token.size() - 3);
+        if (token.rfind("frame", 0) == 0) {
+            std::size_t dot = token.find('.');
+            std::string digits = token.substr(5, dot == std::string::npos ? std::string::npos
+                                                                            : dot - 5);
+            try { frame_no = std::to_string(std::stoi(digits)); } catch (...) {}
+        }
+    }
+
+    std::ostringstream out;
+    out << config << "  --  d_{ax} = " << std::fixed << std::setprecision(0) << d_ax_mm
+        << " mm  --  " << category;
+    if (!exposure_s.empty()) out << "  --  esp. " << exposure_s << " s";
+    if (!frame_no.empty())   out << "  --  frame " << frame_no;
+    return out.str();
+}
+
+int produce_fits_previews(const fs::path& data_dir, const fs::path& output_dir) {
+    if (!fs::exists(data_dir))
+        throw std::runtime_error("produce_fits_previews: data_dir non trovata: " + data_dir.string());
+
+    apply_riptide_style();
+    gStyle->SetPalette(kViridis);
+
+    const fs::path preview_root = output_dir / "fits_preview";
+    int n_written = 0;
+
+    for (const auto& entry : fs::recursive_directory_iterator(data_dir)) {
+        if (!entry.is_regular_file()) continue;
+        std::string ext = entry.path().extension().string();
+        if (ext != ".fit" && ext != ".fits" && ext != ".fts") continue;
+
+        riptide::fits::FitsFrame frame;
+        try {
+            frame = riptide::fits::read_fits(entry.path());
+        } catch (const std::exception& e) {
+            std::cerr << "[fits_preview] WARNING: impossibile leggere " << entry.path()
+                      << ": " << e.what() << "\n";
+            continue;
+        }
+
+        auto* h = new TH2D("h_fits", entry.path().stem().string().c_str(),
+                           frame.width(), 0.0, static_cast<double>(frame.width()),
+                           frame.height(), 0.0, static_cast<double>(frame.height()));
+        for (int y = 0; y < frame.height(); ++y)
+            for (int x = 0; x < frame.width(); ++x)
+                h->SetBinContent(x + 1, y + 1, frame.pixel(x, y));
+        h->GetXaxis()->SetTitle("Pixel X [px]");
+        h->GetYaxis()->SetTitle("Pixel Y [px]");
+        h->GetXaxis()->CenterTitle(true);
+        h->GetYaxis()->CenterTitle(true);
+        h->GetXaxis()->SetTitleOffset(1.20f);
+        h->GetYaxis()->SetTitleOffset(1.55f);
+
+        TH2D* h_disp = rebin_for_display(h);
+        double vmin = get_th2d_percentile(h_disp, 0.01);
+        double vmax = get_th2d_percentile(h_disp, 0.99);
+        if (vmax <= vmin) { vmin = 0.0; vmax = h_disp->GetMaximum(); }
+        h_disp->SetTitle("");
+        h_disp->SetMinimum(vmin);
+        h_disp->SetMaximum(vmax);
+        h_disp->GetZaxis()->SetTitle("ADU");
+        h_disp->GetZaxis()->CenterTitle(true);
+        h_disp->GetZaxis()->SetTitleOffset(1.35f);
+        h_disp->GetZaxis()->SetTitleSize(0.045f);
+        h_disp->GetZaxis()->SetLabelSize(0.032f);
+
+        auto* c = new TCanvas("c_fits_preview", "", 900, 700);
+        c->SetLeftMargin(0.16f);
+        c->SetRightMargin(0.20f);
+        c->SetTopMargin(0.13f);
+        c->SetBottomMargin(0.14f);
+        h_disp->Draw("COLZ");
+
+        fs::path rel = fs::relative(entry.path(), data_dir);
+        TLatex t;
+        t.SetNDC();
+        t.SetTextFont(42);
+        t.SetTextSize(0.032f);
+        t.SetTextAlign(22);
+        t.DrawLatex(0.53, 0.955, build_fits_preview_title(rel).c_str());
+
+        fs::path png_path = preview_root / rel;
+        png_path.replace_extension(".png");
+        fs::create_directories(png_path.parent_path());
+        c->SaveAs(png_path.c_str());
+
+        delete c;
+        delete h_disp;
+        delete h;
+        ++n_written;
+    }
+
+    return n_written;
 }
 
 } // namespace riptide::exp3

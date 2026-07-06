@@ -5,6 +5,7 @@
 
 #include <array>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,12 @@ struct QComparisonConfig {
   double good_x2_mm = 0.0;
   double bad_x1_mm  = 0.0;
   double bad_x2_mm  = 0.0;
+
+  /// Q_sim di riferimento a fuoco fisso (banco exp3), non ricavabili da
+  /// q_map_tsv perche' quest'ultimo proviene da run a fuoco mobile. Se
+  /// finiti, hanno precedenza sul lookup nearest-neighbor in q_map_tsv.
+  double q_sim_good = std::numeric_limits<double>::quiet_NaN();
+  double q_sim_bad  = std::numeric_limits<double>::quiet_NaN();
 };
 
 /// Configurazione completa dell'esperimento 3.

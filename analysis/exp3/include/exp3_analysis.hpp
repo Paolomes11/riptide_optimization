@@ -175,6 +175,18 @@ void produce_q_comparison(const std::vector<QResult>& good,
                           const QComparisonConfig& cmp,
                           const std::filesystem::path& output_path);
 
+/**
+ * Converte ricorsivamente ogni file .fit/.fits/.fts sotto data_dir in un
+ * PNG di ispezione visiva (scala colore percentile, palette kViridis),
+ * mantenendo la struttura di sottocartelle sotto output_dir/fits_preview/.
+ *
+ * @param data_dir    Cartella radice con i frame FITS grezzi (scansione ricorsiva)
+ * @param output_dir  Cartella di output exp3 (i PNG finiscono in output_dir/fits_preview/...)
+ * @return            Numero di PNG generati
+ */
+int produce_fits_previews(const std::filesystem::path& data_dir,
+                          const std::filesystem::path& output_dir);
+
 } // namespace riptide::exp3
 
 #endif // RIPTIDE_EXP3_ANALYSIS_HPP
