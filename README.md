@@ -1,6 +1,6 @@
 # riptide_optimization
 
-Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende quattro programmi di simulazione, dodici strumenti di analisi, una libreria PSF con fit ODR e test unitari.
+Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sistema ottico a doppia lente (UVFS) davanti a un fotocatodo GaAsP. Il progetto fa parte dell'esperimento **RIPTIDE** e comprende quattro programmi di simulazione, una suite di strumenti di analisi (mappe di efficienza/PSF/DoF/risoluzione, selezione Pareto, calibrazione sperimentale FITS), una libreria PSF con fit ODR, test unitari e di regressione, e script di gestione simulazioni/trasferimento CNAF.
 
 ---
 
@@ -19,9 +19,10 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
 6. [Esecuzione Parallela e Dashboard](#esecuzione-parallela-e-dashboard)
 7. [Output su SSD esterna](#output-su-ssd-esterna)
 8. [Log delle simulazioni](#log-delle-simulazioni)
-9. [Ottimizzazione autonoma](#ottimizzazione-autonoma)
-10. [Simulazione singola coppia di lenti](#simulazione-singola-coppia-di-lenti)
-11. [Strumenti di analisi](#strumenti-di-analisi)
+9. [Script di gestione e CNAF](#script-di-gestione-e-cnaf)
+10. [Ottimizzazione autonoma](#ottimizzazione-autonoma)
+11. [Simulazione singola coppia di lenti](#simulazione-singola-coppia-di-lenti)
+12. [Strumenti di analisi](#strumenti-di-analisi)
     - [plot2D](#plot2d)
     - [plot3D](#plot3d)
     - [beam\_scan\_plot](#beam_scan_plot)
@@ -33,16 +34,22 @@ Simulazione Monte Carlo Geant4 per l'ottimizzazione del posizionamento di un sis
     - [exp1\_main](#exp1_main)
     - [exp2\_main](#exp2_main)
     - [exp3\_main](#exp3_main)
-11. [Libreria psf\_analysis](#libreria-psf_analysis)
-12. [Temporal Unfolding](#temporal-unfolding)
-13. [Importance Sampling](#importance-sampling)
-14. [Test unitari](#test-unitari)
+13. [Libreria psf\_analysis](#libreria-psf_analysis)
+    - [trace\_viewer](#trace_viewer)
+    - [q\_map](#q_map)
+    - [chi2\_map](#chi2_map)
+    - [psf\_gaussianity](#psf_gaussianity)
+14. [Temporal Unfolding](#temporal-unfolding)
+15. [Importance Sampling](#importance-sampling)
+16. [Test unitari](#test-unitari)
     - [Regression testing (pytest)](#regression-testing-pytest)
-15. [Configurazione raccomandata per `q_map`](#configurazione-raccomandata-per-q_map)
-16. [File di configurazione](#file-di-configurazione)
-17. [Formato dei file ROOT](#formato-dei-file-root)
-18. [Workflow completo](#workflow-completo)
-19. [Riferimenti metodologici](#riferimenti-metodologici)
+17. [Bibliografia](#bibliografia)
+18. [Configurazione raccomandata per `q_map`](#configurazione-raccomandata-per-q_map)
+19. [File di configurazione](#file-di-configurazione)
+20. [Formato dei file ROOT](#formato-dei-file-root)
+21. [Workflow completo](#workflow-completo)
+22. [Riferimenti metodologici](#riferimenti-metodologici)
+23. [References — Pipeline di ottimizzazione RIPTIDE (Tecniche A/C/E)](#references--pipeline-di-ottimizzazione-riptide-tecniche-ace)
 
 ---
 
@@ -70,7 +77,16 @@ riptide_optimization/
 │   ├── simulation_log.csv                   # Registro persistente di tutte le simulazioni eseguite
 │   ├── run.sh                               # Lancia lens_simulation, optimization o dof_simulation (locale o SSD)
 │   ├── monitor.sh                           # Monitoraggio progresso chunk paralleli (bash)
-│   └── dashboard.py                         # Dashboard Python/rich (prioritario su monitor.sh)
+│   ├── dashboard.py                         # Dashboard Python/rich (prioritario su monitor.sh)
+│   ├── sim_manager.py                       # Gestione simulation_log.csv e cartelle output/lens_simulations/ (list/delete/sync)
+│   ├── verify_chos.sh                       # Verifica rapida risultati di una coppia già simulata
+│   ├── sync_to_cnaf.sh                      # Push del progetto su CNAF (rsync, esclude build/output/ROOT)
+│   ├── fetch_from_cnaf.sh                   # Pull output/sweep da CNAF (esclude ROOT di default)
+│   ├── fetch_lens_from_cnaf.sh              # Pull output/lens_simulations da CNAF (opzioni --pair/--with-root/--log-only)
+│   ├── fetch_any_from_cnaf.sh               # Pull generico da cartella CNAF arbitraria (--filter)
+│   ├── cnaf_sbatch.sh                       # Job SLURM per autonomous_optimizer.py su CNAF
+│   ├── validate_tecnica_c.py                # Validazione Tecnica C: confronto momenti PSF+DoF a 10k vs 5k fotoni
+│   └── validate_tecnica_e.py                # Validazione Tecnica E: confronto PsfDofRuns embedded vs standalone
 │
 ├── programs/
 │   ├── optimization_main.cpp                # Scansione efficienza geometrica
@@ -108,12 +124,15 @@ riptide_optimization/
 │   ├── beam_scan_plot.cpp                   # Posizione fotoni vs posizione sorgente
 │   ├── m_c_creator.cpp                      # Istogramma 2D hit su detector
 │   ├── psf_extractor.cpp                    # Estrazione media e covarianza PSF
+│   ├── lens_ranking.hpp                     # Ranking robusto coppie di lenti (score mean-variance), usato da plot2D/plot3D --ranking-only
 │   ├── psf_analysis/                        # Libreria PSF + analisi traccia + ottimizzazione
 │   │   ├── psf_interpolator.hpp/cpp         # API: load, interpolate, build_trace, fit_trace, compute_Q
 │   │   ├── trace_viewer.cpp                 # Traccia 2D/3D con ellissi di covarianza
 │   │   ├── q_map.cpp                        # Mappa 2D Q(x1,x2) o copertura geometrica
 │   │   ├── chi2_map.cpp                     # Mappa 2D linearità risposta
+│   │   ├── psf_gaussianity.cpp              # Test di gaussianità multivariata nucleo/contaminazione (Mardia, Henze-Zirkler)
 │   │   ├── test_fit_trace.cpp               # Test unitari: T1–T7, TV1–TV3, TQ1–TQ5
+│   │   ├── test_chi2_diagnostics.cpp        # Test unitari diagnostica χ²/ndof: TD1–TD5, TD_REG, TD_ROT
 │   │   └── CMakeLists.txt
 │   ├── dof_analysis/                        # Profondità di campo e magnificazione
 │   │   ├── dof_map.cpp                      # Piano di fuoco, DoF, M, EE80 da focal.root
@@ -139,7 +158,8 @@ riptide_optimization/
 │   ├── exp3/                                # Calibrazione lineare + confronto Q_exp/Q_sim + M(r) + preview FITS
 │   │   ├── exp3_main.cpp
 │   │   ├── include/
-│   │   └── src/
+│   │   ├── src/
+│   │   └── test_exp3_calib.cpp              # Test unitari: C1–C6 su immagini FITS sintetiche
 │   ├── exp_common/                          # Moduli FITS condivisi
 │   │   ├── stacking.hpp                     # Sigma-clipping, mean, median stack
 │   │   └── fits_io.hpp                      # Lettura/scrittura FITS
@@ -167,6 +187,8 @@ riptide_optimization/
 │   ├── config.json
 │   ├── config_profile.json
 │   ├── analysis_params.json                 # Parametri di tuning per autonomous_optimizer
+│   ├── config_{detailed,intermediate,fast,screening,test,psf_gaussianity,validate_c_10k,validate_c_5k,validate_e}.json
+│   │                                         # Varianti velocità/validazione, vedi tabella in File di configurazione
 │   └── exp3/                                # Configurazione exp3
 │
 ├── external/
@@ -229,7 +251,9 @@ build/analysis/Release/psf_extractor
 build/analysis/psf_analysis/Release/trace_viewer
 build/analysis/psf_analysis/Release/q_map
 build/analysis/psf_analysis/Release/chi2_map
+build/analysis/psf_analysis/Release/psf_gaussianity
 build/analysis/psf_analysis/Release/test_fit_trace
+build/analysis/psf_analysis/Release/test_chi2_diagnostics
 
 build/analysis/dof_analysis/Release/dof_map
 build/analysis/dof_analysis/Release/dof_plot
@@ -243,6 +267,7 @@ build/analysis/pareto_analysis/Release/test_pareto_selector
 build/analysis/exp1/Release/exp1_main
 build/analysis/exp2/Release/exp2_main
 build/analysis/exp3/Release/exp3_main
+build/analysis/exp3/Release/test_exp3_calib
 ```
 
 > **Build Release**: aggiunge automaticamente `-march=native -O3 -ffast-math`.
@@ -465,6 +490,44 @@ Il log include stdout/stderr di ogni step della pipeline, con timestamp e livell
 | `notes` | Note libere (aggiungibili con `--notes "..."`) |
 
 Il file è pre-popolato con le simulazioni storiche estratte da `exp.txt`. Le nuove simulazioni vengono aggiunte automaticamente al termine di ogni run `lens_runner.py`.
+
+---
+
+## Script di gestione e CNAF
+
+### Gestione simulazioni locali
+
+`scripts/sim_manager.py` opera su `simulation_log.csv` e sulle cartelle `output/lens_simulations/`:
+
+```bash
+python3 scripts/sim_manager.py list [--json]                    # elenca le coppie simulate
+python3 scripts/sim_manager.py delete <l1_id> <l2_id> [--yes]   # rimuove una coppia (log + output)
+python3 scripts/sim_manager.py sync [--dry-run]                 # riallinea log e cartelle su disco
+```
+
+### Trasferimento CNAF
+
+Il cluster remoto CNAF (`cnaf-ntof`, path remoto `/home/NTOF/mesini/riptide_optimization`) è usato per eseguire scan pesanti via SLURM. Script di trasferimento:
+
+| Script | Direzione | Note |
+|---|---|---|
+| `sync_to_cnaf.sh` | locale → CNAF | rsync del progetto, esclude `build/`, `output/`, `.git/`, `*.root` |
+| `fetch_from_cnaf.sh` | CNAF → locale | pull di `output/sweep`, esclude i ROOT di default (`--with-root` per includerli) |
+| `fetch_lens_from_cnaf.sh` | CNAF → locale | pull di `output/lens_simulations`; opzioni `--with-root`, `--pair L1ID_L2ID`, `--dry-run`, `--log-only` |
+| `fetch_any_from_cnaf.sh` | CNAF → locale | pull generico: `bash scripts/fetch_any_from_cnaf.sh <remote_dir> [local_dest] [opzioni]`, opzioni `--with-root`, `--filter GLOB` (ripetibile), `--dry-run` |
+| `cnaf_sbatch.sh` | — | job SLURM per `autonomous_optimizer.py` (`--time=52:00:00 --cpus-per-task=16 --mem=32G`); adattare partition/cpus/mem/module prima del submit |
+
+### Validazione e diagnostica
+
+- `validate_tecnica_c.py` — confronta i momenti PSF+DoF calcolati a `lens_n_photons=10000` vs `5000`; approva la riduzione a 5k fotoni (speedup ×2) se l'errore relativo medio su `sigma_y`, `sigma_dz`, `cov_z_dz` è sotto soglia (default 5%):
+  ```bash
+  python3 scripts/validate_tecnica_c.py psf_dof_10k.root psf_dof_5k.root [--threshold 0.05] [--csv report.csv]
+  ```
+- `validate_tecnica_e.py` — confronta spot-per-spot i `PsfDofRuns` prodotti embedded (`lens_simulation_main`) vs standalone (`psf_dof_scan_main`):
+  ```bash
+  python3 scripts/validate_tecnica_e.py embedded_lens.root standalone_psf_dof.root [--threshold 3] [--csv report.csv]
+  ```
+- `verify_chos.sh` — verifica rapida dei risultati per una coppia già simulata (default `L1=CHOS60R`, `L2=CHOS25R`); richiede che `simulation_summary.json` esista già (eseguire prima `lens_runner.py`).
 
 ---
 
@@ -1290,6 +1353,9 @@ cd build && ctest -R pareto_selector_unit -V
 
 # Test diagnostica chi2
 ./build/analysis/psf_analysis/Release/test_chi2_diagnostics
+
+# Test calibrazione exp3
+./build/analysis/exp3/Release/test_exp3_calib
 ```
 
 ### Suite T — `fit_trace`
@@ -1325,6 +1391,33 @@ cd build && ctest -R pareto_selector_unit -V
 ### Suite Pareto — `test_pareto_selector`
 
 Test unitari per `pareto_core.hpp`: filtri hard (η, DoF, EE80), calcolo Mtot con normalizzazione, fronte di Pareto (dominanza), join su (x1,x2) con tolleranza.
+
+### Suite TD — `test_chi2_diagnostics`
+
+Verifica la diagnostica χ²/ndof di `fit_trace` su dati sintetici con proprietà statistiche note:
+
+| Test | Scenario | Verifica |
+|---|---|---|
+| **TD_REG** | Regressione: `build_trace_3d` con `n_hits_count` variabile | La covarianza è scalata correttamente per 1/n_hits |
+| **TD_ROT** | PSF ruotata (angolo azimutale φ non banale) | `mu_y`/`mu_z`/`cov` ruotati correttamente, `trace(cov)` invariante |
+| **TD1** | Baseline, dati perfetti (cov = errore sulla media) | χ²≈0, `ndof=N-2`, fit convergente |
+| **TD2** | Scaling della covarianza vs n_hits, rumore i.i.d. | Confronto scenari "over"/"correct"/"under" scaling su 200 realizzazioni Monte Carlo |
+| **TD3** | Residui correlati AR(1), covarianza marginale corretta | χ²/ndof confrontato con formula chiusa `expected_chi2_ndof_ar1_linear_fit` per ρ={0, 0.5, 0.9} |
+| **TD4** | Combinato: covarianza di distribuzione + rumore AR(1) sulla media | Coerenza tra i due effetti |
+| **TD5** | Monotonia χ²/ndof vs densità di campionamento N, lunghezza di correlazione fisica fissa | Andamento atteso al crescere di N |
+
+### Suite C — `test_exp3_calib`
+
+Test unitari per il modulo di calibrazione sperimentale `exp3` (calibrazione via linea, tracce parallele, `exp3b`), interamente su immagini sintetiche costruite in memoria (nessun file FITS reale richiesto):
+
+| Test | Scenario | Verifica |
+|---|---|---|
+| **C1** | `calibrate_line()` su profilo rettangolare sintetico | Rilevamento soglia, calcolo scala mm/px |
+| **C2** | `segment_parallel_lines()` su 3 strisce gaussiane a offset noti | Segmentazione corretta delle linee |
+| **C3** | `run_exp3b()` fit lineare su colonna di punti sintetica (`M_true=0.5`, `q_true=5.0`) | Recupero dei parametri M, q |
+| **C4** | `load_exp3_config()` su vecchio schema JSON piatto | Retrocompatibilità |
+| **C5** | `LineCalib` save/load JSON | Round-trip senza perdita di dati |
+| **C6** | `write_q_results_tsv()` | Header contiene `r_idx`, non contiene `theta_deg` |
 
 ### Note sui dati sintetici
 
@@ -1528,6 +1621,21 @@ Parametri di tuning usati esclusivamente da `autonomous_optimizer.py` per config
 | `chi2_map.adaptive_target` | Target χ² adattivo per range configurabile con `p_low`/`p_high` |
 | `dof_map.m_target` | Magnificazione target per calcolo `M_abs_err` |
 | `pareto_selector.w_*` | Pesi per Mtot: `w_eta` (η), `w_Q` (qualità), `w_dof` (DoF), `w_M` (magnificazione) |
+
+### Varianti di config per velocità/validazione
+
+Oltre a `config.json` (default), `config/` contiene varianti con passo di scan e numero di fotoni diversi, per bilanciare velocità e precisione o per le validazioni delle Tecniche C/E:
+
+| File | dx | lens/psf_dof photons | Uso |
+|---|---|---|---|
+| `config_detailed.json` | 1.0 | 10000 | Scan fine, pipeline completa |
+| `config_intermediate.json` | 2.0 | 5000 | Compromesso velocità/precisione |
+| `config_fast.json` | 3.0 | 1000 | Iterazione rapida |
+| `config_screening.json` | 3.0 | 1000 (n_photons 1000) | Screening `--all-lenses` |
+| `config_test.json` | 10.0 | 100 | Smoke test pipeline |
+| `config_psf_gaussianity.json` | 1.0, range 100-150 | lens_n_photons 3M | Statistica per test di gaussianità |
+| `config_validate_c_10k.json` / `_5k.json` | 50.0, range 100-200 | 10000 / 5000 | Validazione Tecnica C |
+| `config_validate_e.json` | 50.0, range 100-200 | 2000 | Validazione Tecnica E |
 
 ---
 
