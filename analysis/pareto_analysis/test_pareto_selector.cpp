@@ -8,6 +8,16 @@
  * T5: coords_match con tolleranza
  * T6: apply_dof_filter
  * T7: compute_pareto_front casi degeneri (singolo punto, punti identici)
+ * T8: apply_mtot con normalizzatori precalcolati == compute_mtot (regressione)
+ * T9: generate_barycentric_grid(0.05): 1771 punti, ognuno somma a 1.0
+ * T10: sweep pesi sul caso a 3 punti di T4 == vincitore rank-1 di T4
+ * T11: ternary_to_xy sanity sui vertici
+ * T12: apply_focus_filter con mobile_focus=true è no-op
+ * T13: resolve_dof_bounds — valori TSV vs fallback ±DoF/2 attorno a x_focus
+ * T14: reflect_across_line — apici dei 3 lembi ribaltati del net del tetraedro
+ *      a due a due a distanza esatta 2.0 (tassellazione senza buchi/sovrapposizioni)
+ * T15: solve_face_affine — vertici canonici locali mappati esattamente sui
+ *      vertici globali noti
  *
  * Ritorna 0 se tutti i test passano, 1 altrimenti.
  */
@@ -268,6 +278,191 @@ static void test_T7() {
     }
 }
 
+// ── T8: apply_mtot con normalizzatori precalcolati == compute_mtot ──────────
+
+static void test_T8() {
+    std::cout << "\n[T8] apply_mtot(normalizers) == compute_mtot (regressione bit-per-bit)\n";
+
+    std::vector<ConfigData> cfgs_a;
+    cfgs_a.push_back(make_config(1.0, 1.0, 1.0, 1.0, 180.0, 0.5, 1.0, 0.0));
+    cfgs_a.push_back(make_config(2.0, 2.0, 0.8, 0.6, 180.0, 1.0, 1.0, 0.5));
+    cfgs_a.push_back(make_config(3.0, 3.0, 0.6, 0.3, 180.0, 0.8, 1.0, 1.0));
+    std::vector<ConfigData> cfgs_b = cfgs_a;
+
+    WeightConfig wc;
+    compute_mtot(cfgs_a, wc);
+
+    const MtotNormalizers norm = compute_mtot_normalizers(cfgs_b);
+    apply_mtot(cfgs_b, norm, wc);
+
+    for (size_t i = 0; i < cfgs_a.size(); ++i)
+        near(cfgs_a[i].Mtot, cfgs_b[i].Mtot, 1e-12,
+             "Mtot identico per punto " + std::to_string(i));
+}
+
+// ── T9: generate_barycentric_grid ────────────────────────────────────────────
+
+static void test_T9() {
+    std::cout << "\n[T9] generate_barycentric_grid(0.05): 1771 punti, somme=1.0\n";
+
+    auto grid = generate_barycentric_grid(0.05);
+    check(grid.size() == 1771, "grid.size() == 1771 (C(23,3))");
+
+    bool all_sum_to_one = true;
+    for (const auto& wc : grid) {
+        const double s = wc.w_eta + wc.w_Q + wc.w_dof + wc.w_M;
+        if (std::abs(s - 1.0) >= 1e-9) { all_sum_to_one = false; break; }
+    }
+    check(all_sum_to_one, "ogni vettore di pesi somma esattamente a 1.0");
+}
+
+// ── T10: sweep pesi == vincitore rank-1 di T4 ────────────────────────────────
+
+static void test_T10() {
+    std::cout << "\n[T10] run_weight_sweep sul caso T4: vincitore == P2 (rank 1)\n";
+
+    std::vector<ConfigData> cfgs;
+    cfgs.push_back(make_config(1.0, 1.0, 1.0, 1.0, 180.0, 0.5, 1.0, 0.0));  // P1
+    cfgs.push_back(make_config(2.0, 2.0, 0.8, 0.6, 180.0, 1.0, 1.0, 0.5));  // P2
+    cfgs.push_back(make_config(3.0, 3.0, 0.6, 0.3, 180.0, 0.8, 1.0, 1.0));  // P3
+
+    const MtotNormalizers norm = compute_mtot_normalizers(cfgs);
+
+    WeightConfig wc;  // default: w_eta=0.35, w_Q=0.40, w_dof=0.15, w_M=0.10
+    auto grid = generate_barycentric_grid(0.05);
+
+    // Il punto di default è esattamente sulla griglia con step=0.05
+    // (0.35,0.40,0.15,0.10)*20 = (7,8,3,2), somma=20=n.
+    const bool grid_has_default = std::any_of(grid.begin(), grid.end(), [&wc](const WeightConfig& g) {
+        return std::abs(g.w_eta - wc.w_eta) < 1e-9 && std::abs(g.w_Q - wc.w_Q) < 1e-9 &&
+               std::abs(g.w_dof - wc.w_dof) < 1e-9 && std::abs(g.w_M - wc.w_M) < 1e-9;
+    });
+    check(grid_has_default, "il peso di default è presente nella griglia step=0.05");
+
+    auto sweep = run_weight_sweep(cfgs, norm, grid);
+
+    const SweepPoint* found = nullptr;
+    for (const auto& sp : sweep) {
+        if (std::abs(sp.wc.w_eta - wc.w_eta) < 1e-9 &&
+            std::abs(sp.wc.w_Q   - wc.w_Q)   < 1e-9 &&
+            std::abs(sp.wc.w_dof - wc.w_dof) < 1e-9 &&
+            std::abs(sp.wc.w_M   - wc.w_M)   < 1e-9) {
+            found = &sp;
+            break;
+        }
+    }
+    if (check(found != nullptr, "punto di sweep per il peso di default trovato")) {
+        near(found->x1_winner, 2.0, 1e-9, "x1_winner == P2.x1 (2.0)");
+        near(found->x2_winner, 2.0, 1e-9, "x2_winner == P2.x2 (2.0)");
+        near(found->Mtot_winner, 0.640, 1e-9, "Mtot_winner == 0.640 (P2, rank 1 in T4)");
+    }
+}
+
+// ── T11: ternary_to_xy sanity sui vertici ────────────────────────────────────
+
+static void test_T11() {
+    std::cout << "\n[T11] ternary_to_xy sanity sui vertici\n";
+
+    auto [xa, ya] = ternary_to_xy(1.0, 0.0, 0.0);
+    near(xa, 0.0, 1e-9, "vertice A=(1,0,0) -> x=0");
+    near(ya, 0.0, 1e-9, "vertice A=(1,0,0) -> y=0");
+
+    auto [xb, yb] = ternary_to_xy(0.0, 1.0, 0.0);
+    near(xb, 1.0, 1e-9, "vertice B=(0,1,0) -> x=1");
+    near(yb, 0.0, 1e-9, "vertice B=(0,1,0) -> y=0");
+
+    auto [xc, yc] = ternary_to_xy(0.0, 0.0, 1.0);
+    near(xc, 0.5, 1e-9, "vertice C=(0,0,1) -> x=0.5");
+    near(yc, std::sqrt(3.0) / 2.0, 1e-9, "vertice C=(0,0,1) -> y=sqrt(3)/2");
+}
+
+// ── T12: apply_focus_filter con mobile_focus=true è no-op ───────────────────
+
+static void test_T12() {
+    std::cout << "\n[T12] apply_focus_filter con mobile_focus=true è no-op\n";
+
+    // Stesso set di T3 (x_focus fuori tolleranza per 160/200), ma con mobile_focus
+    // attivo il filtro non deve scartare nulla, indipendentemente da x_det/focus_tol.
+    std::vector<double> xf = {160.0, 170.0, 180.0, 190.0, 200.0};
+    std::vector<ConfigData> cfgs;
+    for (double f : xf)
+        cfgs.push_back(make_config(0.0, 0.0, 0.9, 1.0, f, 50.0));
+
+    FilterConfig fc;
+    fc.x_det        = 180.0;
+    fc.focus_tol    = 15.0;
+    fc.mobile_focus = true;
+
+    auto result = apply_focus_filter(cfgs, fc);
+    check(result.size() == cfgs.size(), "N sopravvissuti == N input (nessun filtro applicato)");
+}
+
+// ── T13: resolve_dof_bounds ──────────────────────────────────────────────────
+
+static void test_T13() {
+    std::cout << "\n[T13] resolve_dof_bounds: valori TSV vs fallback ±DoF/2\n";
+
+    // Colonne x_lo/x_hi presenti nel TSV: usate direttamente (asimmetriche)
+    ConfigData cd1 = make_config(0.0, 0.0, 0.9, 1.0, /*x_focus*/180.0, /*DoF*/50.0);
+    resolve_dof_bounds(cd1, /*has_x_lo_hi*/true, /*x_lo_raw*/160.0, /*x_hi_raw*/205.0);
+    near(cd1.x_lo, 160.0, 1e-9, "x_lo == valore TSV (160.0), non il fallback simmetrico");
+    near(cd1.x_hi, 205.0, 1e-9, "x_hi == valore TSV (205.0), non il fallback simmetrico");
+
+    // Colonne assenti (TSV vecchio): fallback simmetrico attorno a x_focus
+    ConfigData cd2 = make_config(0.0, 0.0, 0.9, 1.0, /*x_focus*/180.0, /*DoF*/50.0);
+    resolve_dof_bounds(cd2, /*has_x_lo_hi*/false, 0.0, 0.0);
+    near(cd2.x_lo, 155.0, 1e-9, "x_lo == x_focus - DoF/2 (fallback, 180-25)");
+    near(cd2.x_hi, 205.0, 1e-9, "x_hi == x_focus + DoF/2 (fallback, 180+25)");
+}
+
+// ── T14: reflect_across_line — apici del net a distanza esatta 2.0 ──────────
+
+static double dist(std::pair<double, double> P, std::pair<double, double> Q) {
+    return std::sqrt((P.first - Q.first) * (P.first - Q.first) +
+                      (P.second - Q.second) * (P.second - Q.second));
+}
+
+static void test_T14() {
+    std::cout << "\n[T14] reflect_across_line: apici dei lembi a distanza 2.0\n";
+
+    const auto A = ternary_to_xy(1.0, 0.0, 0.0);
+    const auto B = ternary_to_xy(0.0, 1.0, 0.0);
+    const auto C = ternary_to_xy(0.0, 0.0, 1.0);
+
+    // Lembo w_eta=0 (condivide BC): ribalta A attorno a BC.
+    const auto apex_eta = reflect_across_line(A, B, C);
+    // Lembo w_Q=0 (condivide AC): ribalta B attorno ad AC.
+    const auto apex_Q = reflect_across_line(B, A, C);
+    // Lembo w_dof=0 (condivide AB): ribalta C attorno ad AB.
+    const auto apex_dof = reflect_across_line(C, A, B);
+
+    near(dist(apex_eta, apex_Q), 2.0, 1e-9, "dist(apex_eta, apex_Q) == 2.0");
+    near(dist(apex_eta, apex_dof), 2.0, 1e-9, "dist(apex_eta, apex_dof) == 2.0");
+    near(dist(apex_Q, apex_dof), 2.0, 1e-9, "dist(apex_Q, apex_dof) == 2.0");
+}
+
+// ── T15: solve_face_affine — vertici canonici mappati sui vertici globali ────
+
+static void test_T15() {
+    std::cout << "\n[T15] solve_face_affine: L0/L1/L2 -> G0/G1/G2 esatti\n";
+
+    const std::pair<double, double> G0{1.5, -2.7};
+    const std::pair<double, double> G1{3.2, 0.4};
+    const std::pair<double, double> G2{-0.8, 4.1};
+
+    const FaceAffine fa = solve_face_affine(G0, G1, G2);
+    const auto p0 = fa.apply(0.0, 0.0);
+    const auto p1 = fa.apply(1.0, 0.0);
+    const auto p2 = fa.apply(0.5, std::sqrt(3.0) / 2.0);
+
+    near(p0.first, G0.first, 1e-9, "L0.x -> G0.x");
+    near(p0.second, G0.second, 1e-9, "L0.y -> G0.y");
+    near(p1.first, G1.first, 1e-9, "L1.x -> G1.x");
+    near(p1.second, G1.second, 1e-9, "L1.y -> G1.y");
+    near(p2.first, G2.first, 1e-9, "L2.x -> G2.x");
+    near(p2.second, G2.second, 1e-9, "L2.y -> G2.y");
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -280,6 +475,14 @@ int main() {
     test_T5();
     test_T6();
     test_T7();
+    test_T8();
+    test_T9();
+    test_T10();
+    test_T11();
+    test_T12();
+    test_T13();
+    test_T14();
+    test_T15();
 
     std::cout << "\nTEST SUMMARY: " << g_n_pass << " PASS, " << g_n_fail << " FAIL\n";
     return (g_n_fail == 0) ? 0 : 1;

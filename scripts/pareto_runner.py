@@ -181,6 +181,10 @@ Esempi:
             "--l1-id",      l1_id,
             "--l2-id",      l2_id,
         ]
+        if "dof_min" in run:
+            cmd += ["--dof-min", str(run["dof_min"])]
+        if run.get("mobile_focus", False):
+            cmd += ["--mobile-focus"]
 
         ok = run_cmd(cmd, log_path, args.dry_run)
         if ok:
@@ -192,7 +196,49 @@ Esempi:
 
     status = "COMPLETATI" if n_ok == len(runs) else "PARZIALI"
     logging.info(f"{status}: {n_ok}/{len(runs)} run Pareto per {pair_tag}")
-    return 0 if n_ok == len(runs) else 1
+    n_ok_total = n_ok
+    n_runs_total = len(runs)
+
+    sweep_cfg = cfg.get("weight_sweep")
+    if sweep_cfg:
+        logging.info(f"--- weight_sweep ---")
+
+        out_dir  = pareto_base / "weight_sweep"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        tsv_out  = out_dir / "weight_sweep_results.tsv"
+        png_out  = out_dir / "pareto_ternary.png"
+        log_path = out_dir / "pareto.log"
+
+        cmd = [
+            pareto_bin,
+            "--events",     str(required["events.root"]),
+            "--qmap",       str(required["q_map.tsv"]),
+            "--chi2map",    str(required["chi2_map.tsv"]),
+            "--dofmap",     str(required["dof_map.tsv"]),
+            "--resolution", str(required["resolution_map.tsv"]),
+            "--ee80-max",   str(sweep_cfg.get("ee80_max", 10.0)),
+            "--weight-sweep",
+            "--weight-step",      str(sweep_cfg.get("step", 0.05)),
+            "--weight-sweep-tsv", str(tsv_out),
+            "--output",     str(png_out),
+            "--l1-id",      l1_id,
+            "--l2-id",      l2_id,
+        ]
+        if "dof_min" in sweep_cfg:
+            cmd += ["--dof-min", str(sweep_cfg["dof_min"])]
+        if sweep_cfg.get("mobile_focus", False):
+            cmd += ["--mobile-focus"]
+
+        ok = run_cmd(cmd, log_path, args.dry_run)
+        n_runs_total += 1
+        if ok:
+            logging.info(f"  TSV : {tsv_out}")
+            logging.info(f"  PNG : {png_out}")
+            n_ok_total += 1
+        else:
+            logging.error("  Run 'weight_sweep' FALLITA")
+
+    return 0 if n_ok_total == n_runs_total else 1
 
 
 if __name__ == "__main__":

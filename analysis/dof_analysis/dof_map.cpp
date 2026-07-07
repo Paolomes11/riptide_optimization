@@ -325,6 +325,8 @@ struct ResultRow {
   double x_focus          = 0.0;
   double x_focus_scan     = 0.0;
   double dof              = 0.0;
+  double x_lo             = 0.0;
+  double x_hi             = 0.0;
   double M                = 0.0;
   double M_abs_err        = 0.0;
   double stripe_width     = 0.0;
@@ -408,6 +410,8 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
   double x_lo = x_scan[static_cast<size_t>(i_lo)];
   double x_hi = x_scan[static_cast<size_t>(i_hi)];
   out.dof     = x_hi - x_lo;
+  out.x_lo    = x_lo;
+  out.x_hi    = x_hi;
 
   std::vector<double> y0_f   = y0;
   std::vector<double> z0_f   = z0;
@@ -678,13 +682,14 @@ int main(int argc, char** argv) {
     }
     std::ofstream out(tsv_path);
     out << "x1\tx2\tx_focus\tx_focus_scan\tdof\tM\tm_target\tM_abs_err\tEE80\tstripe_width\t"
-           "within_photocathode\tn_rays\tn_rays_core\tcore_fraction\tconfig_id\tfocus_before_lens2\n";
+           "within_photocathode\tn_rays\tn_rays_core\tcore_fraction\tconfig_id\tfocus_before_lens2\t"
+           "x_lo\tx_hi\n";
     for (const auto& r : results) {
       out << r.x1 << "\t" << r.x2 << "\t" << r.x_focus << "\t" << r.x_focus_scan << "\t" << r.dof
           << "\t" << r.M << "\t" << m_target << "\t" << r.M_abs_err << "\t" << r.EE80 << "\t"
           << r.stripe_width << "\t" << r.within_photocathode << "\t" << r.n_rays << "\t"
           << r.n_rays_core << "\t" << core_fraction << "\t" << r.config_id << "\t"
-          << (r.focus_before_lens2 ? 1 : 0) << "\n";
+          << (r.focus_before_lens2 ? 1 : 0) << "\t" << r.x_lo << "\t" << r.x_hi << "\n";
     }
   }
 

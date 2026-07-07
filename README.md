@@ -874,6 +874,43 @@ Seleziona la configurazione ottica ottimale aggregando i risultati di tutti gli 
 cd build && ctest -R pareto_selector_unit -V
 ```
 
+#### Modalità `--weight-sweep` (mappa dei pesi)
+
+Invece del singolo peso `(w_eta, w_Q, w_dof, w_M)`, calcola quale configurazione vince (Mtot massimo) su una **griglia densa di combinazioni di pesi** (vedi [Bibliografia](#bibliografia) per la tecnica). Il join, i pre-filtri (`--eta-frac`, `--focus-tol`, `--dof-min`, `--ee80-max`) e il fronte di Pareto restano **fissi** per tutto lo sweep — solo `Mtot` viene ricalcolato per ogni combinazione di pesi, il che rende lo sweep economico anche su griglie con migliaia di punti:
+
+```bash
+./build/analysis/pareto_analysis/Release/pareto_selector \
+    --events   output/optimization/events.root \
+    --qmap     output/psf_analysis/q_map.tsv \
+    --chi2map  output/psf_analysis/chi2_map.tsv \
+    --dofmap   output/dof_analysis/dof_map.tsv \
+    --resolution output/resolution_analysis/resolution_map.tsv \
+    --ee80-max 10.0 \
+    --weight-sweep --weight-step 0.05 \
+    --weight-sweep-tsv output/pareto_analysis/weight_sweep_results.tsv \
+    --output   output/pareto_analysis/pareto_ternary.png
+```
+
+| Opzione | Default | Descrizione |
+|---|---|---|
+| `--weight-sweep` | off | Attiva la modalità sweep pesi invece del plot singolo-peso |
+| `--weight-step` | `0.05` | Passo della griglia baricentrica dei 4 pesi (per `0.05` → 1771 combinazioni) |
+| `--weight-sweep-tsv` | `output/pareto_analysis/weight_sweep_results.tsv` | TSV aggregato con un vincitore per combinazione di pesi |
+
+**Colonne TSV**: `w_eta w_Q w_dof w_M x1_winner x2_winner Mtot_winner category_id` (una riga per punto della griglia dei pesi).
+
+**Output**: due PNG puliti (tassellazione triangolare esatta, nessuna intersezione/buco per costruzione):
+- **Ternario a sviluppo del tetraedro** (`--output`): le 4 facce del tetraedro dei pesi `(w_eta, w_Q, w_dof, w_M)` disegnate come **net** (sviluppo) — un triangolo centrale (faccia `w_M=0`, coordinate baricentriche `(w_eta, w_Q, w_dof)`) più 3 lembi ribaltati verso l'esterno sui lati condivisi, uno per ciascuna delle altre 3 facce (`w_eta=0`, `w_Q=0`, `w_dof=0`); i 3 apici esterni sono lo stesso vertice `w_M=1` del tetraedro, ripiegato su ciascuna faccia adiacente. Tecnica standard per diagrammi di composizione quaternari (4 componenti), vedi Shimura & Kemp (2015) in [Bibliografia](#bibliografia). Ogni regione colorata è la proiezione della configurazione vincente per quella combinazione di pesi; il colore non è enumerato in legenda (vedi la mappa fisica per la corrispondenza colore↔(x1,x2)).
+- **Mappa fisica (x1,x2)** (stesso path con suffisso `_map`): stessi colori per categoria, ma nel dominio nativo `(x1,x2)` di `q_map`/`chi2_map`/`dof_map`, con l'intero dominio simulato riempito (grigio chiaro = valido, nero = invalido/fuori vincoli geometrici) e i punti del fronte mai vincenti come cerchi vuoti.
+
+**Caveat**: essendo `Mtot` una scalarizzazione lineare, la mappa mostra solo configurazioni sull'involucro convesso del fronte di Pareto (vedi Das & Dennis 1997 in [Bibliografia](#bibliografia)).
+
+Invocabile anche per l'intera pipeline via `scripts/pareto_runner.py`, aggiungendo la sezione `"weight_sweep"` a `config/pareto_runs.json`:
+```json
+"weight_sweep": {"step": 0.05, "ee80_max": 10.0}
+```
+Output in `output/lens_simulations/{l1_id}_{l2_id}/pareto/weight_sweep/`.
+
 ---
 
 ### exp1\_main
@@ -1319,6 +1356,17 @@ cd tests && pytest -v -k scan_min  # singolo test per nome
 | `test_pareto_join_tolerance` | Join (x1, x2) con tolleranza 1e-3 mm |
 
 CI: `.github/workflows/regression.yml` esegue la suite ad ogni push su `main`.
+
+---
+
+## Bibliografia
+
+Riferimenti usati per progettare la modalità `--weight-sweep` di `pareto_selector` (mappa dei pesi + plot ternario, vedi [Modalità `--weight-sweep`](#pareto_selector) sopra):
+
+- Zintgraf, Kanters, Roijers, Oliehoek, Beau (2015), *"Quality Assessment of Multi-Objective Reinforcement Learning Algorithms"*, weight-space maps — https://ai.vub.ac.be/sites/default/files/efficicent_weights.pdf — tecnica diretta per mappare le regioni dello spazio dei pesi in cui una soluzione è ottima sotto scalarizzazione lineare (usata qui per il plot ternario: ogni regione colorata è la proiezione di questa mappa sul simplex a 4 pesi).
+- Dächert, Klamroth, Lacour, Vanderpooten (2023), *"A weight-set decomposition algorithm for the biobjective/multiobjective case"*, Journal of Global Optimization — https://link.springer.com/article/10.1007/s10898-023-01284-x — decomposizione dello spazio dei pesi in regioni associate a soluzioni Pareto-ottime, generalizzazione dell'idea precedente a più obiettivi.
+- Das & Dennis (1997), *"A closer look at drawbacks of minimizing weighted sums of objectives for Pareto set generation in multicriteria optimization problems"*, Structural Optimization — limite noto della scalarizzazione lineare (Mtot): può selezionare solo soluzioni sull'involucro convesso del fronte di Pareto, mai regioni concave. **Caveat interpretativo**: il ternario e la mappa (x1,x2) mostrano quindi solo i "vincitori" raggiungibili da una combinazione lineare dei pesi — configurazioni Pareto-ottime ma in una regione concava del fronte non compariranno mai come vincitrici, indipendentemente dal peso usato.
+- Shimura & Kemp (2015), *"Tetrahedral plot diagram: A geometrical solution for quaternary systems"*, American Mineralogist 100, DOI 10.2138/am-2015-5371 — sviluppo (net) del tetraedro regolare come tassellazione piana per diagrammi di composizione a 4 componenti; tecnica usata qui per `pareto_ternary.png`, che disegna le 4 facce del tetraedro dei pesi `(w_eta, w_Q, w_dof, w_M)` come un triangolo centrale più 3 lembi ribaltati sui lati condivisi, invece di fette 2D a `w_M` fisso.
 
 ---
 

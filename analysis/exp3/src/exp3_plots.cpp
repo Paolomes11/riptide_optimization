@@ -76,6 +76,7 @@ static void apply_riptide_style() {
     gStyle->SetPadBorderMode(0);
     gStyle->SetNdivisions(505, "X");
     gStyle->SetNdivisions(505, "Y");
+    gStyle->SetEndErrorSize(6.0f);
     TGaxis::SetMaxDigits(4);
 }
 
@@ -370,8 +371,7 @@ void produce_q_comparison(const std::vector<QResult>& good,
         gr->SetLineColor(color);
         gr->SetLineWidth(2);
         gr->SetMarkerSize(1.2f);
-        gr->SetFillColorAlpha(color, 0.15f);
-        gr->Draw("PL E2 SAME");
+        gr->Draw("PL E1 SAME");
         leg->AddEntry(gr, label, "PLE");
     };
 
@@ -397,7 +397,7 @@ void produce_q_comparison(const std::vector<QResult>& good,
     title.SetTextFont(42);
     title.SetTextSize(0.045f);
     title.SetTextAlign(22);
-    title.DrawLatex(0.5, 0.955, "LA4464 / LA4464R  --  Q simulato vs sperimentale");
+    title.DrawLatex(0.5, 0.955, "LA4078 / LA4464R  --  Q simulato vs sperimentale");
 
     fs::create_directories(output_path.parent_path());
     c->SaveAs(output_path.c_str());
@@ -452,6 +452,45 @@ static std::string build_fits_preview_title(const fs::path& rel) {
     return out.str();
 }
 
+// Nome file breve a partire dal path relativo (stessa struttura di
+// build_fits_preview_title). La cartella (config/d<d_ax>/categoria/timestamp)
+// resta invariata: qui si accorcia solo il nome finale, es.
+// "Light_ASIImg_10sec_Bin1_-0.3C_gain0_2026-05-28_131245_frame0001.fit"
+// -> "Light_d150_good_frame1.png". Se la struttura non corrisponde
+// (dataset diverso da exp3), ripiega sul nome file grezzo.
+static std::string build_fits_preview_filename(const fs::path& rel) {
+    std::vector<std::string> parts;
+    for (const auto& p : rel) parts.push_back(p.string());
+    const std::string filename = rel.filename().string();
+    if (parts.size() < 4) return filename;
+
+    const std::string& config = parts[0];
+    const std::string& d_dir  = parts[1];
+    if (d_dir.size() < 2 || d_dir[0] != 'd') return filename;
+    try {
+        std::stod(d_dir.substr(1));
+    } catch (...) {
+        return filename;
+    }
+
+    std::string type = filename.substr(0, filename.find('_'));
+    if (type.empty()) type = "frame";
+
+    std::string frame_no;
+    std::size_t fpos = filename.find("frame");
+    if (fpos != std::string::npos) {
+        std::size_t dot = filename.find('.', fpos);
+        std::string digits = filename.substr(
+            fpos + 5, dot == std::string::npos ? std::string::npos : dot - fpos - 5);
+        try { frame_no = std::to_string(std::stoi(digits)); } catch (...) {}
+    }
+
+    std::ostringstream out;
+    out << type << "_" << d_dir << "_" << config;
+    if (!frame_no.empty()) out << "_frame" << frame_no;
+    return out.str();
+}
+
 int produce_fits_previews(const fs::path& data_dir, const fs::path& output_dir) {
     if (!fs::exists(data_dir))
         throw std::runtime_error("produce_fits_previews: data_dir non trovata: " + data_dir.string());
@@ -493,6 +532,15 @@ int produce_fits_previews(const fs::path& data_dir, const fs::path& output_dir) 
         double vmin = get_th2d_percentile(h_disp, 0.01);
         double vmax = get_th2d_percentile(h_disp, 0.99);
         if (vmax <= vmin) { vmin = 0.0; vmax = h_disp->GetMaximum(); }
+        // ROOT (COLZ) non disegna i bin fuori da [vmin,vmax] (SetMinimum/
+        // SetMaximum non li clampa al colore estremo, li lascia bianchi) ->
+        // saturiamo esplicitamente il contenuto dei bin prima del disegno.
+        for (int iy = 1; iy <= h_disp->GetNbinsY(); ++iy)
+            for (int ix = 1; ix <= h_disp->GetNbinsX(); ++ix) {
+                double v = h_disp->GetBinContent(ix, iy);
+                if (v < vmin) h_disp->SetBinContent(ix, iy, vmin);
+                else if (v > vmax) h_disp->SetBinContent(ix, iy, vmax);
+            }
         h_disp->SetTitle("");
         h_disp->SetMinimum(vmin);
         h_disp->SetMaximum(vmax);
@@ -507,6 +555,7 @@ int produce_fits_previews(const fs::path& data_dir, const fs::path& output_dir) 
         c->SetRightMargin(0.20f);
         c->SetTopMargin(0.13f);
         c->SetBottomMargin(0.14f);
+        gStyle->SetHistMinimumZero(kTRUE);
         h_disp->Draw("COLZ");
 
         fs::path rel = fs::relative(entry.path(), data_dir);
@@ -517,8 +566,8 @@ int produce_fits_previews(const fs::path& data_dir, const fs::path& output_dir) 
         t.SetTextAlign(22);
         t.DrawLatex(0.53, 0.955, build_fits_preview_title(rel).c_str());
 
-        fs::path png_path = preview_root / rel;
-        png_path.replace_extension(".png");
+        fs::path png_path = preview_root / rel.parent_path() /
+            (build_fits_preview_filename(rel) + ".png");
         fs::create_directories(png_path.parent_path());
         c->SaveAs(png_path.c_str());
 
