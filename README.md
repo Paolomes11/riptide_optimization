@@ -744,7 +744,7 @@ Elabora il file `focal.root` prodotto da `dof_simulation_main` e calcola per ogn
 
 - **Piano di fuoco** `x_focus`: posizione che minimizza la deviazione standard trasversa σ_z(x) dei raggi propagati linearmente. Affinamento sub-step con interpolazione parabolica del vertice di σ_z²(x) (tre punti).
 - **Profondità di campo** `DoF`: range assiale dove σ_z(x) ≤ k·σ_z_min (default k = √2).
-- **Magnificazione** `M`: rapporto posizione trasversa media sul detector / posizione sorgente.
+- **Magnificazione** `M`: pendenza della regressione lineare pesata di `y_focus` (posizione trasversa al piano di fuoco) rispetto a `y_source_hits` (posizione trasversa alla sorgente), per fotone. Non un rapporto di deviazioni standard: quella formulazione confonderebbe la magnificazione geometrica con lo spot-blur da aberrazione, sovrastimandola sempre (vedi [Riferimenti](#riferimenti-metodologici)).
 - **EE80**: diametro che raccoglie l'80% dell'energia (vedi [Riferimenti](#riferimenti-metodologici)).
 - **Larghezza striscia** `stripe_width`: estensione del fascio sul fotocatodo 16 mm.
 - **Flag** `focus_before_lens2`: fuoco fisicamente non raggiungibile (x_focus < x2); i bin corrispondenti sono delimitati da una linea di contorno tratteggiata arancione nelle mappe PNG e sintetizzati in una mappa dedicata `dof_focus_zone_map.png` (palette blu→rosso).
@@ -1650,6 +1650,15 @@ python3 scripts/pareto_runner.py --l1-id LA4464 --l2-id LA4464R
 - **Ray transfer matrix analysis (ABCD)** — Usata come termine di confronto: appropriata per sistemi con parametri gaussiani e approssimazione parAssiale; non usata qui perché il campionamento MC include aberrazioni di ordine superiore. URL: https://en.wikipedia.org/wiki/Ray_transfer_matrix_analysis
 - **DevOptical Part 19: A Quick Focus Algorithm** — The Pulsar. Criterio di best focus per minimizzazione RMS spot. URL: https://www.thepulsar.be/article/-devoptical-part-19--a-quick-focus-algorithm
 - **Zemax OpticStudio Manual** — Ansys. Conferma che il piano di best focus minimizza l'RMS radiale dei raggi su scansione assiale. URL: https://neurophysics.ucsd.edu/Manuals/Zemax/ZemaxManual.pdf
+
+---
+
+### Magnificazione ottica (`M`)
+
+`M` è calcolato come pendenza di regressione lineare pesata di `y_focus` (posizione al piano di fuoco) rispetto a `y_source_hits` (posizione sorgente), per fotone — non come rapporto di deviazioni standard: quella formulazione confondeva la magnificazione geometrica vera con lo spot-blur da aberrazione (dimostrato: correlazione di Pearson 0.976 tra il vecchio `M` ed `EE80` su 27730 punti griglia LA4464/LA4464R), sovrastimandola sistematicamente.
+
+- **UCSD Physics 1C, Lecture 9 — Multiple-lens systems**. Derivazione standard `M_totale = M1 × M2 = (−v1/u1)×(−v2/u2)` per sistemi a lenti sottili in cascata (l'immagine della prima lente è l'oggetto della seconda). URL: https://courses.physics.ucsd.edu/2011/Summer/session1/physics1c/lecture9.pdf
+- **Weighted Least Squares** — Wikipedia. Stimatore ai minimi quadrati pesati della pendenza (usato qui per isolare la relazione lineare sistematica `y_focus/y_source_hits` trattando il blur da aberrazione come rumore indipendente attorno alla retta, anziché sommarlo in quadratura nella σ). URL: https://en.wikipedia.org/wiki/Weighted_least_squares
 
 ---
 

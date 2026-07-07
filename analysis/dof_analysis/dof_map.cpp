@@ -342,7 +342,7 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
                                 const std::vector<double>& dz, const std::vector<double>& w,
                                 const std::vector<double>& ysrc, const std::vector<double>& x_scan,
                                 double k_threshold, double core_fraction, double m_target,
-                                double sigma_y_src_theory, double lens_det_gap) {
+                                double lens_det_gap) {
   ResultRow out;
   out.config_id = cfg.config_id;
   out.x1        = cfg.x1;
@@ -504,9 +504,23 @@ static ResultRow analyze_config(const ConfigInfo& cfg, double n_rays, const std:
     z_focus[i] = z0_f[i] + dz_f[i] * dx_focus;
   }
 
-  double sigma_y_det = weighted_std(y_focus, w_f);
-  out.M              = (sigma_y_src_theory > 0.0) ? (sigma_y_det / sigma_y_src_theory) : 0.0;
-  out.M_abs_err      = std::abs(out.M - m_target);
+  // M = pendenza della regressione lineare pesata y_focus vs ysrc_f (magnificazione laterale
+  // dy_focus/dy_src). Non un rapporto di deviazioni standard: quello confonderebbe la
+  // magnificazione vera con lo spot-blur da aberrazione (sistematicamente sovrastimato).
+  double mean_src = weighted_mean(ysrc_f, w_f);
+  double mean_det = weighted_mean(y_focus, w_f);
+  double cov = 0.0, var_src = 0.0;
+  for (size_t i = 0; i < ysrc_f.size(); ++i) {
+    double ds = ysrc_f[i] - mean_src;
+    double dd = y_focus[i] - mean_det;
+    cov += w_f[i] * ds * dd;
+    var_src += w_f[i] * ds * ds;
+  }
+  // std::abs: a valle (magnification_map, pareto_core) M è confrontato con m_target > 0
+  // assumendo una magnificazione non-negativa; un'eventuale inversione d'immagine (segno
+  // della pendenza) non è di interesse per queste metriche, solo l'entita' del rapporto lo e'.
+  out.M         = (var_src > 0.0) ? std::abs(cov / var_src) : 0.0;
+  out.M_abs_err = std::abs(out.M - m_target);
 
   double p10              = weighted_percentile(y_focus, w_f, 0.10);
   double p90              = weighted_percentile(y_focus, w_f, 0.90);
@@ -550,9 +564,7 @@ int main(int argc, char** argv) {
   double k_threshold   = cli.k_threshold.value_or(config.value("dof_k_threshold", std::sqrt(2.0)));
   double core_fraction = cli.core_fraction.value_or(config.value("dof_core_fraction", 1.0));
   double m_target      = cli.m_target.value_or(config.value("m_target", 1.0 / 7.5));
-  double source_halfy       = config.value("dof_source_halfy", 5.0);
-  double sigma_y_src_theory = source_halfy / std::sqrt(3.0);
-  double lens_det_gap       = config.value("lens_det_gap", 0.0);
+  double lens_det_gap  = config.value("lens_det_gap", 0.0);
   if (!(core_fraction > 0.0 && core_fraction <= 1.0)) {
     std::cerr << "Errore: core_fraction deve essere in (0, 1]\n";
     return 1;
@@ -672,7 +684,7 @@ int main(int argc, char** argv) {
     const auto& rd = all_rays[i];
     results[i]     = analyze_config(rd.cfg, rd.n_rays_val, rd.y0, rd.z0, rd.dy, rd.dz, rd.w,
                                     rd.ysrc, x_scan, k_threshold, core_fraction, m_target,
-                                    sigma_y_src_theory, lens_det_gap);
+                                    lens_det_gap);
   }
 
   if (!cli.tsv_out.empty()) {
