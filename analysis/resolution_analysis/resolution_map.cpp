@@ -117,6 +117,11 @@ static void set_root_style() {
   gStyle->SetTitleFont(42, "");
   gStyle->SetStatFont(42);
   gStyle->SetOptStat(0);
+  gStyle->SetCanvasColor(0);
+  gStyle->SetPadColor(0);
+  gStyle->SetFrameBorderMode(0);
+  gStyle->SetCanvasBorderMode(0);
+  gStyle->SetPadBorderMode(0);
   gStyle->SetPadTickX(1);
   gStyle->SetPadTickY(1);
   gStyle->SetNumberContours(255);
@@ -772,8 +777,8 @@ int main(int argc, char** argv) {
         double y_lo = h_mask.GetYaxis()->GetBinLowEdge(by);
         double y_hi = h_mask.GetYaxis()->GetBinUpEdge(by);
         auto box    = std::make_unique<TBox>(x_lo, y_lo, x_hi, y_hi);
-        box->SetFillColor(kBlack);
-        box->SetLineColor(kBlack);
+        box->SetFillColor(kWhite);
+        box->SetLineColor(kWhite);
         box->Draw();
         boxes.push_back(std::move(box));
       }

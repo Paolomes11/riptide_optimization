@@ -99,6 +99,11 @@ static void set_root_style() {
   gStyle->SetStatFont(42);
   gStyle->SetOptStat(0);
   gStyle->SetOptTitle(0);
+  gStyle->SetCanvasColor(0);
+  gStyle->SetPadColor(0);
+  gStyle->SetFrameBorderMode(0);
+  gStyle->SetCanvasBorderMode(0);
+  gStyle->SetPadBorderMode(0);
   gStyle->SetPadTickX(1);
   gStyle->SetPadTickY(1);
   gStyle->SetNumberContours(255);
