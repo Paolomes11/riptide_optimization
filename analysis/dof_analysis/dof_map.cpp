@@ -1,4 +1,5 @@
 #include "dof_stats_common.hpp"
+#include "plot_style_common.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -650,70 +651,40 @@ int main(int argc, char** argv) {
       {"dof_within_photocathode", "Margine fotocatodo"},
   };
 
-  auto save_map = [&](TH2D& h, const std::string& name, int palette) {
-    gStyle->SetPalette(palette);
-    TCanvas c(("c_" + name).c_str(), name.c_str(), 1100, 900);
-    c.SetLeftMargin(0.10);
-    c.SetBottomMargin(0.14);
-    c.SetRightMargin(0.16);
-    c.SetTopMargin(0.10);
-    c.SetGridx();
-    c.SetGridy();
-    h.GetZaxis()->CenterTitle(kTRUE);
-    h.GetZaxis()->SetTitleOffset(1.6);
+  auto save_map = [&](TH2D& h, const std::string& name, bool invert) {
+    set_viridis_palette(invert);
+    TCanvas* c = make_map_canvas(name);
+    apply_zaxis_style(&h);
     h.Draw("COLZ");
-    c.Update();
+    c->Update();
     auto boxes = build_mask_boxes();
     auto it    = kMapTitles.find(name);
     if (it != kMapTitles.end()) {
-      TLatex tit;
-      tit.SetNDC();
-      tit.SetTextFont(42);
-      tit.SetTextSize(0.042);
-      tit.SetTextAlign(22);
-      tit.DrawLatex(0.50, 0.955, it->second.c_str());
+      draw_map_title(it->second);
     }
     std::string out = (std::filesystem::path(cli.output_dir) / (name + ".png")).string();
-    c.SaveAs(out.c_str());
+    c->SaveAs(out.c_str());
   };
 
-  save_map(h_focus, "dof_focus_map", kRainBow);
-  save_map(h_dof, "dof_dof_map", kBird);
-  save_map(h_M, "dof_M_map", kViridis);
-  save_map(h_EE80, "dof_EE80_map", kViridis);
-  save_map(h_stripe, "dof_stripe_map", kViridis);
-  save_map(h_M_abs_err, "dof_M_error_map", kViridis);
+  save_map(h_focus, "dof_focus_map", false);
+  save_map(h_dof, "dof_dof_map", false);
+  save_map(h_M, "dof_M_map", false);
+  save_map(h_EE80, "dof_EE80_map", true);
+  save_map(h_stripe, "dof_stripe_map", true);
+  save_map(h_M_abs_err, "dof_M_error_map", true);
 
   {
-    const int nRGBs     = 3;
-    double stops[nRGBs] = {0.0, 0.5, 1.0};
-    double red[nRGBs]   = {1.0, 1.0, 0.0};
-    double green[nRGBs] = {0.0, 1.0, 1.0};
-    double blue[nRGBs]  = {0.0, 1.0, 0.0};
-    TColor::CreateGradientColorTable(nRGBs, stops, red, green, blue, 255);
-    gStyle->SetNumberContours(255);
+    set_diverging_palette_blue_white_orange();
 
-    TCanvas c("c_within", "within", 1100, 900);
-    c.SetLeftMargin(0.10);
-    c.SetBottomMargin(0.14);
-    c.SetRightMargin(0.16);
-    c.SetTopMargin(0.10);
-    c.SetGridx();
-    c.SetGridy();
-    h_margin.GetZaxis()->CenterTitle(kTRUE);
-    h_margin.GetZaxis()->SetTitleOffset(1.6);
+    TCanvas* c = make_map_canvas("dof_within_photocathode");
+    apply_zaxis_style(&h_margin);
     h_margin.Draw("COLZ");
-    c.Update();
+    c->Update();
     auto boxes = build_mask_boxes();
-    TLatex tit_w;
-    tit_w.SetNDC();
-    tit_w.SetTextFont(42);
-    tit_w.SetTextSize(0.042);
-    tit_w.SetTextAlign(22);
-    tit_w.DrawLatex(0.50, 0.955, "Margine fotocatodo");
+    draw_map_title("Margine fotocatodo");
     std::string out =
         (std::filesystem::path(cli.output_dir) / "dof_within_photocathode.png").string();
-    c.SaveAs(out.c_str());
+    c->SaveAs(out.c_str());
   }
 
   // ── Mappa zone fuoco prima della lente 2 ────────────────────────────────────
@@ -721,35 +692,23 @@ int main(int argc, char** argv) {
     const int nRGBs     = 2;
     double stops[nRGBs] = {0.0, 1.0};
     double red[nRGBs]   = {0.25, 0.90};
-    double green[nRGBs] = {0.50, 0.15};
-    double blue[nRGBs]  = {0.80, 0.10};
+    double green[nRGBs] = {0.50, 0.40};
+    double blue[nRGBs]  = {0.80, 0.00};
     TColor::CreateGradientColorTable(nRGBs, stops, red, green, blue, 2);
     gStyle->SetNumberContours(2);
 
-    TCanvas c_zone("c_focus_zone", "focus_zone", 1100, 900);
-    c_zone.SetLeftMargin(0.10);
-    c_zone.SetBottomMargin(0.14);
-    c_zone.SetRightMargin(0.16);
-    c_zone.SetTopMargin(0.10);
-    c_zone.SetGridx();
-    c_zone.SetGridy();
+    TCanvas* c_zone = make_map_canvas("dof_focus_zone_map");
     h_warn.SetMinimum(-0.5);
     h_warn.SetMaximum(1.5);
     h_warn.GetZaxis()->SetNdivisions(2);
     h_warn.GetZaxis()->SetTitle("Fuoco prima di L2");
-    h_warn.GetZaxis()->CenterTitle(kTRUE);
-    h_warn.GetZaxis()->SetTitleOffset(1.6);
+    apply_zaxis_style(&h_warn);
     h_warn.Draw("COLZ");
     auto boxes_zone = build_mask_boxes();
-    TLatex tit_zone;
-    tit_zone.SetNDC();
-    tit_zone.SetTextFont(42);
-    tit_zone.SetTextSize(0.042);
-    tit_zone.SetTextAlign(22);
-    tit_zone.DrawLatex(0.50, 0.955, "Zone fuoco prima della lente 2");
+    draw_map_title("Zone fuoco prima della lente 2");
     std::string out_zone =
         (std::filesystem::path(cli.output_dir) / "dof_focus_zone_map.png").string();
-    c_zone.SaveAs(out_zone.c_str());
+    c_zone->SaveAs(out_zone.c_str());
   }
 
   return 0;

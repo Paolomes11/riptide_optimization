@@ -71,15 +71,14 @@
  *         [--log] [--norm] [--tsv <path>]
  */
 
+#include "plot_style_common.hpp"
 #include "psf_interpolator.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <TAxis.h>
-#include <TBox.h>
 #include <TCanvas.h>
 #include <TColor.h>
-#include <TGaxis.h>
 #include <TH2D.h>
 #include <TLatex.h>
 #include <TStyle.h>
@@ -195,143 +194,10 @@ static CliConfig parse_args(int argc, char** argv) {
   return cfg;
 }
 
-// Stile ROOT
-static void apply_style() {
-  gStyle->Reset();
-  gStyle->SetTextFont(42);
-  gStyle->SetLabelFont(42, "XYZ");
-  gStyle->SetTitleFont(42, "XYZ");
-  gStyle->SetTitleFont(42, "");
-  gStyle->SetStatFont(42);
-  gStyle->SetTextSize(0.040);
-  gStyle->SetLabelSize(0.038, "XYZ");
-  gStyle->SetTitleSize(0.044, "XYZ");
-  gStyle->SetTitleSize(0.046, "");
-  gStyle->SetTitleOffset(1.50, "Y");
-  gStyle->SetTitleOffset(1.20, "X");
-  gStyle->SetTitleOffset(1.40, "Z");
-  gStyle->SetTickLength(0.018, "X");
-  gStyle->SetTickLength(0.018, "Y");
-  gStyle->SetPadTickX(1);
-  gStyle->SetPadTickY(1);
-  gStyle->SetGridColor(kGray + 1);
-  gStyle->SetGridStyle(3);
-  gStyle->SetGridWidth(1);
-  gStyle->SetOptStat(0);
-  gStyle->SetOptTitle(0);
-  gStyle->SetCanvasColor(0);
-  gStyle->SetPadColor(0);
-  gStyle->SetFrameLineWidth(2);
-  gStyle->SetFrameBorderMode(0);
-  gStyle->SetCanvasBorderMode(0);
-  gStyle->SetPadBorderMode(0);
-  gStyle->SetNdivisions(505, "X");
-  gStyle->SetNdivisions(505, "Y");
-  gStyle->SetNumberContours(255);
-}
-
 static std::string fmt(double v, int n = 1) {
   std::ostringstream o;
   o << std::fixed << std::setprecision(n) << v;
   return o.str();
-}
-
-// Disegno canvas comune
-// Crea canvas + 3 pad (plot | colorbar | info) e li ritorna via puntatori.
-// I pad vengono disegnati sul canvas ma NON inizializzati ulteriormente.
-struct PadLayout {
-  TCanvas* canvas;
-  TPad* pad_plot;
-  TPad* pad_cb;
-};
-
-static PadLayout make_canvas(bool log_z) {
-  PadLayout pl;
-  pl.canvas = new TCanvas("canvas", "q_map", 1200, 1000);
-  pl.canvas->SetLeftMargin(0.0);
-  pl.canvas->SetRightMargin(0.0);
-  pl.canvas->SetTopMargin(0.0);
-  pl.canvas->SetBottomMargin(0.0);
-
-  pl.pad_plot = new TPad("pad_plot", "", 0.00, 0.00, 0.80, 1.00);
-  pl.pad_cb   = new TPad("pad_cb", "", 0.80, 0.00, 0.99, 1.00);
-
-  pl.pad_plot->SetLeftMargin(0.16);
-  pl.pad_plot->SetRightMargin(0.015);
-  pl.pad_plot->SetTopMargin(0.11);
-  pl.pad_plot->SetBottomMargin(0.13);
-  pl.pad_plot->SetGridx();
-  pl.pad_plot->SetGridy();
-  pl.pad_plot->SetFrameLineWidth(2);
-  if (log_z)
-    pl.pad_plot->SetLogz();
-
-  pl.pad_cb->SetLeftMargin(0.25);
-  pl.pad_cb->SetRightMargin(0.65);
-  pl.pad_cb->SetTopMargin(0.11);
-  pl.pad_cb->SetBottomMargin(0.13);
-
-  pl.canvas->cd();
-  pl.pad_plot->Draw();
-  pl.pad_cb->Draw();
-
-  return pl;
-}
-
-// Disegna la colorbar manuale nel pad_cb
-static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale,
-                          const std::string& title, Int_t invalid_color,
-                          bool show_invalid_box = true) {
-  pad_cb->cd();
-  pad_cb->Range(0.0, 0.0, 1.0, 1.0);
-
-  const int NB = 255;
-  double cb_x0 = pad_cb->GetLeftMargin();
-  double cb_x1 = 1.0 - pad_cb->GetRightMargin();
-  double cb_y0 = pad_cb->GetBottomMargin();
-  double cb_y1 = 1.0 - pad_cb->GetTopMargin();
-
-  for (int i = 0; i < NB; ++i) {
-    double f0  = static_cast<double>(i) / NB;
-    double f1  = static_cast<double>(i + 1) / NB;
-    double yb0 = cb_y0 + f0 * (cb_y1 - cb_y0);
-    double yb1 = cb_y0 + f1 * (cb_y1 - cb_y0);
-    TBox* box  = new TBox(cb_x0, yb0, cb_x1, yb1);
-    box->SetFillColor(gStyle->GetColorPalette(i));
-    box->SetLineWidth(0);
-    box->Draw();
-  }
-
-  if (show_invalid_box) {
-    double inv_y0 = std::max(0.0, cb_y0 - 0.09);
-    double inv_y1 = cb_y0 - 0.01;
-    if (inv_y1 > inv_y0) {
-      TBox* inv_box = new TBox(cb_x0, inv_y0, cb_x1, inv_y1);
-      inv_box->SetFillColor(invalid_color);
-      inv_box->SetLineColor(invalid_color);
-      inv_box->Draw();
-      TLatex inv_lbl;
-      inv_lbl.SetNDC();
-      inv_lbl.SetTextFont(42);
-      inv_lbl.SetTextSize(0.12);
-      inv_lbl.SetTextAlign(12);
-      inv_lbl.SetTextColor(kWhite);
-      inv_lbl.DrawLatex(cb_x0 + 0.04, (inv_y0 + inv_y1) / 2.0, "N/A");
-    }
-  }
-
-  TGaxis* cb_axis =
-      new TGaxis(cb_x1, cb_y0, cb_x1, cb_y1, vmin, vmax, 505, log_scale ? "+LG" : "+L");
-  cb_axis->SetLabelFont(42);
-  cb_axis->SetLabelSize(0.13);
-  cb_axis->SetTickSize(0.35);
-  cb_axis->SetLabelOffset(0.03);
-  cb_axis->SetTitle(title.c_str());
-  cb_axis->SetTitleFont(42);
-  cb_axis->SetTitleSize(0.12);
-  cb_axis->CenterTitle(kTRUE);
-  cb_axis->SetTitleOffset(1.8);
-  cb_axis->Draw();
 }
 
 // main
@@ -440,10 +306,6 @@ int main(int argc, char** argv) {
 
   // MODALITÀ COVERAGE
   if (cli.coverage_mode) {
-    gStyle->SetPalette(kRainBow);
-    gStyle->SetPalette(kViridis);
-    gStyle->SetNumberContours(255);
-
     struct CovEntry {
       double x1, x2;
       double coverage; // ∈ [0,1] oppure -1 se invalida
@@ -534,9 +396,8 @@ int main(int argc, char** argv) {
     }
 
     // Plot coverage
-    apply_style();
-    gStyle->SetPalette(kViridis);
-    gStyle->SetNumberContours(255);
+    set_root_style();
+    set_viridis_palette(false);
 
     TH2D h_cov("h_cov", "", bins_x, ax_x1_lo, ax_x1_hi, bins_y, ax_x2_lo, ax_x2_hi);
     TH2D h_inv("h_inv", "", bins_x, ax_x1_lo, ax_x1_hi, bins_y, ax_x2_lo, ax_x2_hi);
@@ -560,6 +421,8 @@ int main(int argc, char** argv) {
     h_cov.GetYaxis()->SetTitleOffset(1.50);
     h_cov.GetXaxis()->SetNdivisions(506);
     h_cov.GetYaxis()->SetNdivisions(505);
+    h_cov.GetZaxis()->SetTitle("copertura [%]");
+    apply_zaxis_style(&h_cov);
 
     // Range colori [0, 100] — percentuale intera
     h_cov.SetMinimum(0.0);
@@ -568,52 +431,21 @@ int main(int argc, char** argv) {
     h_inv.SetFillColor(invalid_color);
     h_inv.SetLineColor(invalid_color);
 
-    auto pl = make_canvas(cli.log_scale);
+    TCanvas* c = make_map_canvas("coverage_map", cli.log_scale);
+    h_cov.Draw("COLZ");
+    h_inv.Draw("BOX same");
+    c->Update();
+    draw_na_legend(&h_cov, invalid_color);
 
-    pl.pad_plot->cd();
-    h_cov.Draw("COL");
-    for (int iy = 1; iy <= h_inv.GetNbinsY(); ++iy) {
-      for (int ix = 1; ix <= h_inv.GetNbinsX(); ++ix) {
-        if (h_inv.GetBinContent(ix, iy) > 0.5) {
-          TBox* b = new TBox(h_inv.GetXaxis()->GetBinLowEdge(ix),
-                             h_inv.GetYaxis()->GetBinLowEdge(iy),
-                             h_inv.GetXaxis()->GetBinUpEdge(ix),
-                             h_inv.GetYaxis()->GetBinUpEdge(iy));
-          b->SetFillColor(invalid_color);
-          b->SetLineColor(invalid_color);
-          b->Draw("same");
-        }
-      }
-    }
+    draw_map_title("Copertura geometrica  coverage(x_{1}, x_{2})  [%]");
 
-    // Titolo
-    {
-      TLatex title;
-      title.SetNDC();
-      title.SetTextFont(42);
-      title.SetTextSize(0.046);
-      title.SetTextAlign(22);
-      title.SetTextColor(kBlack);
-      title.DrawLatex(0.535, 0.953, "Copertura geometrica  coverage(x_{1}, x_{2})  [%]");
-    }
-
-    pl.pad_plot->RedrawAxis();
-
-    draw_colorbar(pl.pad_cb, 0.0, 100.0, cli.log_scale, "copertura [%]", invalid_color,
-                  /*show_invalid_box=*/true);
-
-    pl.canvas->Update();
     std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());
-    pl.canvas->Print(cli.output_path.c_str());
+    c->Print(cli.output_path.c_str());
     std::cout << "\nMappa salvata in: " << cli.output_path << "\n";
-    delete pl.canvas;
     return 0;
   }
 
   // MODALITÀ Q (default)
-  gStyle->SetPalette(kBird);
-  gStyle->SetNumberContours(255);
-
   struct QEntry {
     double x1, x2;
     double metric;
@@ -735,9 +567,8 @@ int main(int argc, char** argv) {
   }
 
   // Plot Q
-  apply_style();
-  gStyle->SetPalette(kBird);
-  gStyle->SetNumberContours(255);
+  set_root_style();
+  set_viridis_palette(true);
 
   TH2D h_Q("h_Q", "", bins_x, ax_x1_lo, ax_x1_hi, bins_y, ax_x2_lo, ax_x2_hi);
   TH2D h_inv("h_inv", "", bins_x, ax_x1_lo, ax_x1_hi, bins_y, ax_x2_lo, ax_x2_hi);
@@ -780,52 +611,27 @@ int main(int argc, char** argv) {
   h_inv.SetFillColor(invalid_color);
   h_inv.SetLineColor(invalid_color);
 
-  auto pl = make_canvas(cli.log_scale);
-
-  pl.pad_plot->cd();
-  h_Q.Draw("COL");
-  for (int iy = 1; iy <= h_inv.GetNbinsY(); ++iy) {
-    for (int ix = 1; ix <= h_inv.GetNbinsX(); ++ix) {
-      if (h_inv.GetBinContent(ix, iy) > 0.5) {
-        TBox* b = new TBox(h_inv.GetXaxis()->GetBinLowEdge(ix),
-                           h_inv.GetYaxis()->GetBinLowEdge(iy),
-                           h_inv.GetXaxis()->GetBinUpEdge(ix),
-                           h_inv.GetYaxis()->GetBinUpEdge(iy));
-        b->SetFillColor(invalid_color);
-        b->SetLineColor(invalid_color);
-        b->Draw("same");
-      }
-    }
-  }
-
-  // Titolo
-  {
-    TLatex title;
-    title.SetNDC();
-    title.SetTextFont(42);
-    title.SetTextSize(0.046);
-    title.SetTextAlign(22);
-    title.SetTextColor(kBlack);
-    if (cli.dist_to_target)
-      title.DrawLatex(0.535, 0.953, "Risoluzione tracce 3D  -  distanza da target");
-    else
-      title.DrawLatex(0.535, 0.953, "Risoluzione tracce 3D  #LT#chi^{2}_{red}#GT(x_{1}, x_{2})");
-  }
-
-  pl.pad_plot->RedrawAxis();
-
   std::string z_lbl_cb;
   if (cli.dist_to_target)
     z_lbl_cb = "|#LT#chi_{red}^{2}#GT - Q_{target}|";
   else
     z_lbl_cb = "#LT#chi_{red}^{2}#GT";
-  draw_colorbar(pl.pad_cb, h_Q.GetMinimum(), h_Q.GetMaximum(), cli.log_scale, z_lbl_cb,
-                invalid_color, /*show_invalid_box=*/true);
+  h_Q.GetZaxis()->SetTitle(z_lbl_cb.c_str());
+  apply_zaxis_style(&h_Q);
 
-  pl.canvas->Update();
+  TCanvas* c = make_map_canvas("q_map", cli.log_scale);
+  h_Q.Draw("COLZ");
+  h_inv.Draw("BOX same");
+  c->Update();
+  draw_na_legend(&h_Q, invalid_color);
+
+  if (cli.dist_to_target)
+    draw_map_title("Risoluzione tracce 3D  -  distanza da target");
+  else
+    draw_map_title("Risoluzione tracce 3D  #LT#chi^{2}_{red}#GT(x_{1}, x_{2})");
+
   std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());
-  pl.canvas->Print(cli.output_path.c_str());
+  c->Print(cli.output_path.c_str());
   std::cout << "\nMappa salvata in: " << cli.output_path << "\n";
-  delete pl.canvas;
   return 0;
 }

@@ -6,7 +6,6 @@
 #include <TColor.h>
 #include <TH2D.h>
 #include <TLatex.h>
-#include <TMarker.h>
 #include <TStyle.h>
 
 #include <algorithm>
@@ -104,16 +103,6 @@ static double min_positive_step(const std::vector<double>& v_sorted) {
     return 1.0;
   }
   return dmin;
-}
-
-static void set_diverging_palette_red_white_green() {
-  const int nRGBs     = 3;
-  double stops[nRGBs] = {0.0, 0.5, 1.0};
-  double red[nRGBs]   = {1.0, 1.0, 0.0};
-  double green[nRGBs] = {0.0, 1.0, 1.0};
-  double blue[nRGBs]  = {0.0, 1.0, 0.0};
-  TColor::CreateGradientColorTable(nRGBs, stops, red, green, blue, 255);
-  gStyle->SetNumberContours(255);
 }
 
 int main(int argc, char** argv) {
@@ -223,9 +212,6 @@ int main(int argc, char** argv) {
                    x1_min - dx1 / 2.0, x1_max + dx1 / 2.0, n_bins_x2, x2_min - dx2 / 2.0,
                    x2_max + dx2 / 2.0);
 
-  double best_abs = std::numeric_limits<double>::infinity();
-  std::pair<double, double> best_xy{0.0, 0.0};
-
   double max_abs_err = 0.0;
   for (const auto& r : rows) {
     double err     = r.M - m_target;
@@ -235,10 +221,6 @@ int main(int argc, char** argv) {
     h_M_error.SetBinContent(bx, by, err);
     h_M_abs_err.SetBinContent(bx, by, abs_err);
     max_abs_err = std::max(max_abs_err, abs_err);
-    if (abs_err < best_abs) {
-      best_abs = abs_err;
-      best_xy  = {r.x1, r.x2};
-    }
   }
 
   if (!(max_abs_err > 0.0)) {
@@ -250,36 +232,20 @@ int main(int argc, char** argv) {
   auto save_map = [&](TH2D& h, const std::string& name, const std::string& title,
                       const std::function<void()>& set_palette) {
     set_palette();
-    TCanvas c(("c_" + name).c_str(), name.c_str(), 1100, 900);
-    c.SetLeftMargin(0.10);
-    c.SetBottomMargin(0.14);
-    c.SetRightMargin(0.16);
-    c.SetTopMargin(0.10);
-    c.SetGridx();
-    c.SetGridy();
-    h.GetZaxis()->CenterTitle(kTRUE);
-    h.GetZaxis()->SetTitleOffset(1.6);
+    TCanvas* c = make_map_canvas(name);
+    apply_zaxis_style(&h);
     h.Draw("COLZ");
-    c.Update();
-    TMarker m(best_xy.first, best_xy.second, 29);
-    m.SetMarkerSize(2.0);
-    m.SetMarkerColor(kBlack);
-    m.Draw("same");
-    TLatex tit;
-    tit.SetNDC();
-    tit.SetTextFont(42);
-    tit.SetTextSize(0.042);
-    tit.SetTextAlign(22);
-    tit.DrawLatex(0.50, 0.955, title.c_str());
+    c->Update();
+    draw_map_title(title);
     std::string out = (std::filesystem::path(cli.output_dir) / (name + ".png")).string();
-    c.SaveAs(out.c_str());
+    c->SaveAs(out.c_str());
   };
 
   save_map(h_M_error, "magnification_M_error_map", "Errore di magnificazione  M#minusM_{tgt}",
-           set_diverging_palette_red_white_green);
+           set_diverging_palette_blue_white_orange);
   save_map(h_M_abs_err, "magnification_M_abs_error_map",
            "Errore assoluto magnificazione  |M#minusM_{tgt}|",
-           [] { gStyle->SetPalette(kViridis); });
+           [] { set_viridis_palette(true); });
 
   return 0;
 }

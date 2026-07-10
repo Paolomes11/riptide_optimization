@@ -1,3 +1,5 @@
+#include "plot_style_common.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <TBox.h>
@@ -107,24 +109,6 @@ static CliConfig parse_args(int argc, char** argv) {
     }
   }
   return cfg;
-}
-
-static void set_root_style() {
-  gStyle->Reset();
-  gStyle->SetTextFont(42);
-  gStyle->SetLabelFont(42, "XYZ");
-  gStyle->SetTitleFont(42, "XYZ");
-  gStyle->SetTitleFont(42, "");
-  gStyle->SetStatFont(42);
-  gStyle->SetOptStat(0);
-  gStyle->SetCanvasColor(0);
-  gStyle->SetPadColor(0);
-  gStyle->SetFrameBorderMode(0);
-  gStyle->SetCanvasBorderMode(0);
-  gStyle->SetPadBorderMode(0);
-  gStyle->SetPadTickX(1);
-  gStyle->SetPadTickY(1);
-  gStyle->SetNumberContours(255);
 }
 
 struct ConfigInfo {
@@ -341,11 +325,11 @@ int main(int argc, char** argv) {
     }
     std::string hdr;
     std::getline(tf, hdr);
-    double x1_v, x2_v, dof_v, ee80_v;
-    int cid_v, n_dof_v, n_ee80_v;
+    double x1_v, x2_v, dof_v, delta_y_min_v, ee80_v;
+    int cid_v, n_dof_v, n_delta_y_v, n_ee80_v;
     // In disk-guard mode i config_id si ripetono tra batch: usa ID sintetico progressivo
     int synthetic_id = 0;
-    while (tf >> x1_v >> x2_v >> dof_v >> ee80_v >> cid_v >> n_dof_v >> n_ee80_v) {
+    while (tf >> x1_v >> x2_v >> dof_v >> delta_y_min_v >> ee80_v >> cid_v >> n_dof_v >> n_delta_y_v >> n_ee80_v) {
       config_map[synthetic_id] = {synthetic_id, x1_v, x2_v, 0.0};
       Aggregated& a  = agg[synthetic_id];
       a.n_dof        = n_dof_v;
@@ -719,32 +703,23 @@ int main(int argc, char** argv) {
       {"resolution_EE80_mean_map",      "Diametro EE80 medio (EE80_{mean})"},
   };
 
-  auto save_map = [&](TH2D& h, TH2D& h_mask, const std::string& name, int palette) {
-    gStyle->SetPalette(palette);
-    TCanvas c(("c_" + name).c_str(), name.c_str(), 1100, 900);
-    c.SetLeftMargin(0.16);
-    c.SetBottomMargin(0.14);
-    c.SetRightMargin(0.16);
-    c.SetTopMargin(0.10);
-    h.GetZaxis()->CenterTitle(kTRUE);
-    h.GetZaxis()->SetTitleOffset(1.6);
+  auto save_map = [&](TH2D& h, TH2D& h_mask, const std::string& name, bool invert) {
+    set_viridis_palette(invert);
+    TCanvas* c = make_map_canvas(name);
+    apply_zaxis_style(&h);
     h.Draw("COLZ");
+    c->Update();
     auto boxes = build_mask_boxes(h_mask);
     auto it = kMapTitles.find(name);
     if (it != kMapTitles.end()) {
-      TLatex tit;
-      tit.SetNDC();
-      tit.SetTextFont(42);
-      tit.SetTextSize(0.042);
-      tit.SetTextAlign(22);
-      tit.DrawLatex(0.50, 0.955, it->second.c_str());
+      draw_map_title(it->second);
     }
     std::string out = (std::filesystem::path(cli.output_dir) / (name + ".png")).string();
-    c.SaveAs(out.c_str());
+    c->SaveAs(out.c_str());
   };
 
-  save_map(h_dof_mean, h_mask_cfg, "resolution_dof_mean_map", kViridis);
-  save_map(h_EE80_mean, h_mask_EE80, "resolution_EE80_mean_map", kViridis);
+  save_map(h_dof_mean, h_mask_cfg, "resolution_dof_mean_map", false);
+  save_map(h_EE80_mean, h_mask_EE80, "resolution_EE80_mean_map", true);
 
   if (!cli.tsv_out.empty()) {
     std::filesystem::path tsv_path = cli.tsv_out;

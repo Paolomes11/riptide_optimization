@@ -12,12 +12,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include "plot_style_common.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <TCanvas.h>
+#include <TColor.h>
 #include <TFile.h>
 #include <TH2D.h>
-#include <TPaletteAxis.h>
 #include <TStyle.h>
 #include <TTree.h>
 
@@ -103,6 +105,7 @@ int main(int argc, char** argv) {
   using json = nlohmann::json;
 
   CliConfig cli = parse_args(argc, argv);
+  set_root_style();
 
   // ===============================
   // Lettura configurazione
@@ -276,10 +279,8 @@ int main(int argc, char** argv) {
   int n_bins_x1 = std::round((x1_max_all - x1_min_all) / dx) + 1;
   int n_bins_x2 = std::round((x2_max_all - x2_min_all) / dx) + 1;
 
-  TH2D h_efficiency("h_efficiency",
-                    Form("Efficiency: %s + %s;X1 [mm];X2 [mm]", sel_l1.c_str(), sel_l2.c_str()),
-                    n_bins_x1, x1_min_all - dx / 2.0, x1_max_all + dx / 2.0, n_bins_x2,
-                    x2_min_all - dx / 2.0, x2_max_all + dx / 2.0);
+  TH2D h_efficiency("h_efficiency", ";X1 [mm];X2 [mm]", n_bins_x1, x1_min_all - dx / 2.0,
+                    x1_max_all + dx / 2.0, n_bins_x2, x2_min_all - dx / 2.0, x2_max_all + dx / 2.0);
 
   TH2D h_invalid("h_invalid", "", n_bins_x1, x1_min_all - dx / 2.0, x1_max_all + dx / 2.0,
                  n_bins_x2, x2_min_all - dx / 2.0, x2_max_all + dx / 2.0);
@@ -360,56 +361,32 @@ int main(int argc, char** argv) {
   h_efficiency.SetMaximum(actual_max);
 
   // ===============================
-  // Plot con margini, color bar e griglia leggera
+  // Plot con canvas e palette condivisi
   // ===============================
-  gStyle->SetOptStat(0);
+  set_viridis_palette(false);
 
-  // colori della griglia molto leggeri
-  gStyle->SetGridColor(kGray + 2); // grigio chiaro
-  gStyle->SetGridStyle(2);         // linee tratteggiate
-  gStyle->SetGridWidth(1);
+  TCanvas* canvas = make_map_canvas("efficiency2D");
 
-  // ===============================
-  // Margini e griglia
-  // ===============================
-  TCanvas canvas("canvas", "Efficiency map", 900, 700);
-  canvas.SetLeftMargin(0.12);
-  canvas.SetRightMargin(0.15);
-  canvas.SetTopMargin(0.08);
-  canvas.SetBottomMargin(0.12);
-
-  canvas.SetGridx();
-  canvas.SetGridy();
-
-  // disegna l'istogramma con COLZ
   h_efficiency.GetZaxis()->SetTitle("Efficienza [a.d.]");
-  h_efficiency.GetZaxis()->SetTitleSize(0.04);
-  h_efficiency.GetZaxis()->SetTitleOffset(1.1);
+  apply_zaxis_style(&h_efficiency);
   h_efficiency.Draw("COLZ");
+  canvas->Update();
 
-  // forza ROOT a creare la palette
-  canvas.Update();
-
-  // ottieni la palette generata da COLZ
-  TPaletteAxis* palette = (TPaletteAxis*)h_efficiency.GetListOfFunctions()->FindObject("palette");
-  if (palette) {
-    palette->SetX1NDC(0.86);
-    palette->SetX2NDC(0.91);
-    palette->SetLabelSize(0.03);
-  }
-
-  // disegna celle invalide (fuoco troppo vicino alla lente) in grigio
+  const Int_t invalid_color = TColor::GetColor(80, 80, 80);
   if (h_invalid.GetEntries() > 0) {
-    h_invalid.SetFillColor(kGray + 1);
-    h_invalid.SetLineColor(kGray + 1);
+    h_invalid.SetFillColor(invalid_color);
+    h_invalid.SetLineColor(invalid_color);
     h_invalid.Draw("BOX SAME");
+    draw_na_legend(&h_efficiency, invalid_color);
   }
+
+  draw_map_title("Efficienza: " + sel_l1 + " + " + sel_l2);
 
   // aggiorna canvas e salva (solo se non in modalità ranking-only)
   if (!cli.ranking_only) {
-    canvas.Modified();
-    canvas.Update();
-    canvas.SaveAs(cli.output_png.c_str());
+    canvas->Modified();
+    canvas->Update();
+    canvas->SaveAs(cli.output_png.c_str());
     std::cout << "Mappa salvata in " << cli.output_png << "\n";
   }
 

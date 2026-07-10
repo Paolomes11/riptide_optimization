@@ -18,15 +18,14 @@
  *            della posizione sorgente (x_src, y_src).
  */
 
+#include "plot_style_common.hpp"
 #include "psf_interpolator.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <TAxis.h>
-#include <TBox.h>
 #include <TCanvas.h>
 #include <TColor.h>
-#include <TGaxis.h>
 #include <TH2D.h>
 #include <TLatex.h>
 #include <TStyle.h>
@@ -126,41 +125,6 @@ static CliConfig parse_args(int argc, char** argv) {
     }
   }
   return cfg;
-}
-
-// Stile ROOT
-static void apply_style() {
-  gStyle->Reset();
-  gStyle->SetTextFont(42);
-  gStyle->SetLabelFont(42, "XYZ");
-  gStyle->SetTitleFont(42, "XYZ");
-  gStyle->SetTitleFont(42, "");
-  gStyle->SetStatFont(42);
-  gStyle->SetTextSize(0.040);
-  gStyle->SetLabelSize(0.038, "XYZ");
-  gStyle->SetTitleSize(0.044, "XYZ");
-  gStyle->SetTitleSize(0.046, "");
-  gStyle->SetTitleOffset(1.50, "Y");
-  gStyle->SetTitleOffset(1.20, "X");
-  gStyle->SetTitleOffset(1.40, "Z");
-  gStyle->SetTickLength(0.018, "X");
-  gStyle->SetTickLength(0.018, "Y");
-  gStyle->SetPadTickX(1);
-  gStyle->SetPadTickY(1);
-  gStyle->SetGridColor(kGray + 1);
-  gStyle->SetGridStyle(3);
-  gStyle->SetGridWidth(1);
-  gStyle->SetOptStat(0);
-  gStyle->SetOptTitle(0);
-  gStyle->SetCanvasColor(0);
-  gStyle->SetPadColor(0);
-  gStyle->SetFrameLineWidth(2);
-  gStyle->SetFrameBorderMode(0);
-  gStyle->SetCanvasBorderMode(0);
-  gStyle->SetPadBorderMode(0);
-  gStyle->SetNdivisions(505, "X");
-  gStyle->SetNdivisions(505, "Y");
-  gStyle->SetNumberContours(255);
 }
 
 static std::string fmt(double v, int n = 1) {
@@ -355,95 +319,6 @@ static double compute_chi2_target(double rho, int N_x, int N_y) {
   const double wy = 1.0 - wx;
   const double t  = wx * tx + wy * ty;
   return std::isfinite(t) ? t : 1.0;
-}
-
-struct PadLayout {
-  TCanvas* canvas;
-  TPad* pad_plot;
-  TPad* pad_cb;
-};
-
-static PadLayout make_canvas(bool log_z) {
-  PadLayout pl;
-  pl.canvas = new TCanvas("canvas", "chi2_map", 1200, 1000);
-  pl.canvas->SetLeftMargin(0.0);
-  pl.canvas->SetRightMargin(0.0);
-  pl.canvas->SetTopMargin(0.0);
-  pl.canvas->SetBottomMargin(0.0);
-
-  pl.pad_plot = new TPad("pad_plot", "", 0.00, 0.00, 0.80, 1.00);
-  pl.pad_cb   = new TPad("pad_cb", "", 0.80, 0.00, 0.99, 1.00);
-
-  pl.pad_plot->SetLeftMargin(0.16);
-  pl.pad_plot->SetRightMargin(0.015);
-  pl.pad_plot->SetTopMargin(0.11);
-  pl.pad_plot->SetBottomMargin(0.13);
-  pl.pad_plot->SetGridx();
-  pl.pad_plot->SetGridy();
-  pl.pad_plot->SetFrameLineWidth(2);
-  if (log_z)
-    pl.pad_plot->SetLogz();
-
-  pl.pad_cb->SetLeftMargin(0.25);
-  pl.pad_cb->SetRightMargin(0.65);
-  pl.pad_cb->SetTopMargin(0.11);
-  pl.pad_cb->SetBottomMargin(0.13);
-
-  pl.canvas->cd();
-  pl.pad_plot->Draw();
-  pl.pad_cb->Draw();
-
-  return pl;
-}
-
-static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, bool log_scale,
-                          const std::string& title, Int_t invalid_color) {
-  pad_cb->cd();
-  pad_cb->Range(0.0, 0.0, 1.0, 1.0);
-
-  const int NB = 255;
-  double cb_x0 = pad_cb->GetLeftMargin();
-  double cb_x1 = 1.0 - pad_cb->GetRightMargin();
-  double cb_y0 = pad_cb->GetBottomMargin();
-  double cb_y1 = 1.0 - pad_cb->GetTopMargin();
-
-  for (int i = 0; i < NB; ++i) {
-    double f0  = static_cast<double>(i) / NB;
-    double f1  = static_cast<double>(i + 1) / NB;
-    double yb0 = cb_y0 + f0 * (cb_y1 - cb_y0);
-    double yb1 = cb_y0 + f1 * (cb_y1 - cb_y0);
-    TBox* box  = new TBox(cb_x0, yb0, cb_x1, yb1);
-    box->SetFillColor(gStyle->GetColorPalette(i));
-    box->SetLineWidth(0);
-    box->Draw();
-  }
-
-  double inv_y0 = std::max(0.0, cb_y0 - 0.09);
-  double inv_y1 = cb_y0 - 0.01;
-  TBox* inv_box = new TBox(cb_x0, inv_y0, cb_x1, inv_y1);
-  inv_box->SetFillColor(invalid_color);
-  inv_box->SetLineColor(invalid_color);
-  inv_box->Draw();
-  TLatex inv_lbl;
-  inv_lbl.SetNDC();
-  inv_lbl.SetTextFont(42);
-  inv_lbl.SetTextSize(0.12);
-  inv_lbl.SetTextAlign(12);
-  inv_lbl.SetTextColor(kWhite);
-  inv_lbl.DrawLatex(cb_x0 + 0.04, (inv_y0 + inv_y1) / 2.0, "N/A");
-
-  TGaxis* cb_axis =
-      new TGaxis(cb_x1, cb_y0, cb_x1, cb_y1, vmin, vmax, 505, log_scale ? "+LG" : "+L");
-  cb_axis->SetLabelFont(42);
-  cb_axis->SetLabelSize(0.13);
-  cb_axis->SetTickSize(0.35);
-  cb_axis->SetLabelOffset(0.03);
-  cb_axis->SetTitle(title.c_str());
-  cb_axis->SetTitleFont(42);
-  cb_axis->SetTitleSize(0.12);
-  cb_axis->CenterTitle(kTRUE);
-  cb_axis->SetTitleOffset(1.8);
-  cb_axis->Draw();
 }
 
 int main(int argc, char** argv) {
@@ -694,8 +569,8 @@ int main(int argc, char** argv) {
       z_min = 1e-6;
   }
 
-  apply_style();
-  gStyle->SetPalette(kBird);
+  set_root_style();
+  set_viridis_palette(!cli.corr_map);
 
   TH2D h_chi2("h_chi2", "", bins_x, ax_x1_lo, ax_x1_hi, bins_y, ax_x2_lo, ax_x2_hi);
   TH2D h_inv("h_inv", "", bins_x, ax_x1_lo, ax_x1_hi, bins_y, ax_x2_lo, ax_x2_hi);
@@ -714,29 +589,6 @@ int main(int argc, char** argv) {
   h_chi2.GetXaxis()->SetTitle("x_{1} [mm]");
   h_chi2.GetYaxis()->SetTitle("x_{2} [mm]");
 
-  auto pl = make_canvas(cli.log_scale);
-  pl.pad_plot->cd();
-  h_chi2.Draw("COL");
-  h_inv.SetFillColor(TColor::GetColor(80, 80, 80));
-  h_inv.Draw("BOX same");
-
-  TLatex title;
-  title.SetNDC();
-  title.SetTextFont(42);
-  title.SetTextSize(0.046);
-  title.SetTextAlign(22);
-  if (cli.corr_map) {
-    title.DrawLatex(0.535, 0.953, "Correlazione residui (fit piano #mu_{y,z})");
-  } else if (cli.adaptive_target) {
-    title.DrawLatex(0.535, 0.953, "Linearit#grave{a} della risposta  -  distanza da target");
-  } else if (cli.dist_to_n) {
-    title.DrawLatex(
-        0.535, 0.953,
-        ("Distanza da #chi^{2}/ndof = " + fmt(cli.dist_n, 3) + "  (fit piano #mu_{y,z})").c_str());
-  } else {
-    title.DrawLatex(0.535, 0.953, "Linearit#grave{a} della risposta (fit piano #mu_{y,z})");
-  }
-
   std::string cb_title = "#chi^{2}";
   if (cli.corr_map) {
     cb_title = "#rho  [a.d.]";
@@ -747,11 +599,30 @@ int main(int argc, char** argv) {
   } else if (cli.use_reduced) {
     cb_title = "#chi^{2}/ndof";
   }
-  draw_colorbar(pl.pad_cb, z_min, z_max, cli.log_scale, cb_title, TColor::GetColor(80, 80, 80));
+  h_chi2.GetZaxis()->SetTitle(cb_title.c_str());
+  apply_zaxis_style(&h_chi2);
 
-  pl.canvas->Update();
+  const Int_t invalid_color = TColor::GetColor(80, 80, 80);
+  TCanvas* c                = make_map_canvas("chi2_map", cli.log_scale);
+  h_chi2.Draw("COLZ");
+  h_inv.SetFillColor(invalid_color);
+  h_inv.Draw("BOX same");
+  c->Update();
+  draw_na_legend(&h_chi2, invalid_color);
+
+  if (cli.corr_map) {
+    draw_map_title("Correlazione residui (fit piano #mu_{y,z})");
+  } else if (cli.adaptive_target) {
+    draw_map_title("Linearit#grave{a} della risposta  -  distanza da target");
+  } else if (cli.dist_to_n) {
+    draw_map_title("Distanza da #chi^{2}/ndof = " + fmt(cli.dist_n, 3)
+                    + "  (fit piano #mu_{y,z})");
+  } else {
+    draw_map_title("Linearit#grave{a} della risposta (fit piano #mu_{y,z})");
+  }
+
   std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());
-  pl.canvas->Print(cli.output_path.c_str());
+  c->Print(cli.output_path.c_str());
 
   return 0;
 }

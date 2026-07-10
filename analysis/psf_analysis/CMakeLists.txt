@@ -43,10 +43,11 @@ add_executable(q_map
     q_map.cpp
 )
 target_link_libraries(q_map
-    PRIVATE psf_analysis ${ROOT_LIBRARIES} spdlog::spdlog OpenMP::OpenMP_CXX
+    PRIVATE psf_analysis ${ROOT_LIBRARIES} ROOT::HistPainter spdlog::spdlog OpenMP::OpenMP_CXX
 )
 target_include_directories(q_map
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${ROOT_INCLUDE_DIRS}
     ${JSON_INCLUDE_DIR}
 )
@@ -57,10 +58,11 @@ add_executable(chi2_map
     chi2_map.cpp
 )
 target_link_libraries(chi2_map
-    PRIVATE psf_analysis ${ROOT_LIBRARIES} spdlog::spdlog OpenMP::OpenMP_CXX
+    PRIVATE psf_analysis ${ROOT_LIBRARIES} ROOT::HistPainter spdlog::spdlog OpenMP::OpenMP_CXX
 )
 target_include_directories(chi2_map
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${ROOT_INCLUDE_DIRS}
     ${JSON_INCLUDE_DIR}
 )

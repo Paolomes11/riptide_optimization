@@ -7,5 +7,5 @@ add_executable(resolution_map
 )
 
 target_link_libraries(resolution_map PRIVATE ${ROOT_LIBRARIES} OpenMP::OpenMP_CXX)
-target_include_directories(resolution_map PRIVATE ${ROOT_INCLUDE_DIRS})
+target_include_directories(resolution_map PRIVATE ${ROOT_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/..)
 

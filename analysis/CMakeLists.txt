@@ -36,7 +36,7 @@ find_package(ROOT REQUIRED COMPONENTS
 include(${ROOT_USE_FILE})
 
 # Link delle librerie ROOT agli eseguibili
-target_link_libraries(plot2D PRIVATE ${ROOT_LIBRARIES})
+target_link_libraries(plot2D PRIVATE ${ROOT_LIBRARIES} ROOT::HistPainter)
 target_link_libraries(plot3D PRIVATE ${ROOT_LIBRARIES})
 target_link_libraries(beam_scan_plot PRIVATE ${ROOT_LIBRARIES})
 target_link_libraries(m_c_creator PRIVATE ${ROOT_LIBRARIES})

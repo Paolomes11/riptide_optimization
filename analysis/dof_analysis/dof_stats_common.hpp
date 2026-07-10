@@ -1,6 +1,6 @@
 #pragma once
 
-#include <TStyle.h>
+#include "plot_style_common.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,32 +9,10 @@
 #include <optional>
 #include <vector>
 
-// Funzioni statistiche/stile condivise byte-identiche tra dof_map.cpp,
-// dof_plot.cpp e magnification_map.cpp. set_root_style() qui e' la versione
-// "completa" usata da dof_map.cpp/magnification_map.cpp; dof_plot.cpp ha una
-// propria variante piu' corta e resta locale a quel file.
-
-inline void set_root_style() {
-  gStyle->Reset();
-  gStyle->SetTextFont(42);
-  gStyle->SetLabelFont(42, "XYZ");
-  gStyle->SetTitleFont(42, "XYZ");
-  gStyle->SetTitleFont(42, "");
-  gStyle->SetStatFont(42);
-  gStyle->SetOptStat(0);
-  gStyle->SetOptTitle(0);
-  gStyle->SetCanvasColor(0);
-  gStyle->SetPadColor(0);
-  gStyle->SetFrameBorderMode(0);
-  gStyle->SetCanvasBorderMode(0);
-  gStyle->SetPadBorderMode(0);
-  gStyle->SetPadTickX(1);
-  gStyle->SetPadTickY(1);
-  gStyle->SetNumberContours(255);
-  gStyle->SetGridColor(kGray + 1);
-  gStyle->SetGridStyle(3);
-  gStyle->SetGridWidth(1);
-}
+// Funzioni statistiche condivise byte-identiche tra dof_map.cpp,
+// dof_plot.cpp e magnification_map.cpp. Lo stile ROOT condiviso vive in
+// plot_style_common.hpp; dof_plot.cpp ha una propria variante piu' corta e
+// resta locale a quel file.
 
 inline double weighted_std(const std::vector<double>& x, const std::vector<double>& w) {
   double sum_w = 0.0;
