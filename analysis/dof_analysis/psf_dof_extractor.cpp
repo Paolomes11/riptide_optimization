@@ -1,6 +1,6 @@
 /*
  * psf_dof_extractor — legge PsfDofConfigs + PsfDofRuns da psf_dof.root,
- * calcola DoF / EE80 / delta_y_min per config_id e scrive:
+ * calcola DoF / EE80 per config_id e scrive:
  *   - <output_data.root>  : TTree "PsfDofSummary" compatto
  *   - <output.tsv>        : stesso formato di resolution_map.tsv
  *
@@ -52,7 +52,6 @@ struct RunRow {
 
 struct Aggregated {
   double sum_dof     = 0.0; int n_dof     = 0;
-  double sum_delta_y = 0.0; int n_delta_y = 0;
   double sum_EE80    = 0.0; int n_EE80    = 0;
 };
 
@@ -108,19 +107,6 @@ static double compute_dof(const RunRow& r, const ConfigInfo& c,
   while (i_lo - 1 >= 0 && sigma[static_cast<size_t>(i_lo-1)] < thr) --i_lo;
   while (i_hi + 1 < static_cast<int>(sigma.size()) && sigma[static_cast<size_t>(i_hi+1)] < thr) ++i_hi;
   return x_scan[static_cast<size_t>(i_hi)] - x_scan[static_cast<size_t>(i_lo)];
-}
-
-static std::optional<double> compute_delta_y(const RunRow& r, const ConfigInfo& c,
-                                              const std::vector<double>& x_scan, double k) {
-  auto [sigma_min, x_focus] = sigma_z_min_and_focus(r, c, x_scan);
-  if (!std::isfinite(sigma_min) || !std::isfinite(x_focus)) return std::nullopt;
-  if (!(std::abs(r.y_src) > 1e-12)) return std::nullopt;
-  double dx    = x_focus - c.x_virtual;
-  double y_bar = r.mu_y + r.mu_dy * dx;
-  if (!std::isfinite(y_bar) || std::abs(y_bar) < 1e-9) return std::nullopt;
-  double Mbar  = y_bar / r.y_src;
-  if (!std::isfinite(Mbar) || std::abs(Mbar) < 1e-18) return std::nullopt;
-  return k * sigma_min / std::abs(Mbar);
 }
 
 static std::optional<double> compute_EE80(const RunRow& r, const ConfigInfo& c,
@@ -237,11 +223,6 @@ int main(int argc, char** argv) {
       agg[rr.config_id].sum_dof += dof_val;
       agg[rr.config_id].n_dof  += 1;
     }
-    auto delta = compute_delta_y(rr, c, xs, k);
-    if (delta.has_value() && std::isfinite(*delta) && *delta > 0.0) {
-      agg[rr.config_id].sum_delta_y += *delta;
-      agg[rr.config_id].n_delta_y  += 1;
-    }
     auto ee80 = compute_EE80(rr, c, xs);
     if (ee80.has_value() && std::isfinite(*ee80) && *ee80 > 0.0) {
       agg[rr.config_id].sum_EE80 += *ee80;
@@ -258,18 +239,16 @@ int main(int argc, char** argv) {
   if (!fout || fout->IsZombie()) {
     std::cerr << "Errore: impossibile creare " << out_root << "\n"; return 1;
   }
-  TTree* tSumm = new TTree("PsfDofSummary", "Aggregated DoF/EE80/delta_y per config_id");
+  TTree* tSumm = new TTree("PsfDofSummary", "Aggregated DoF/EE80 per config_id");
   int    o_config_id;
-  double o_x1, o_x2, o_dof_mean, o_delta_y_mean, o_EE80_mean;
-  int    o_n_dof, o_n_delta_y, o_n_EE80;
+  double o_x1, o_x2, o_dof_mean, o_EE80_mean;
+  int    o_n_dof, o_n_EE80;
   tSumm->Branch("config_id",        &o_config_id,    "config_id/I");
   tSumm->Branch("x1",               &o_x1,            "x1/D");
   tSumm->Branch("x2",               &o_x2,            "x2/D");
   tSumm->Branch("dof_mean",         &o_dof_mean,      "dof_mean/D");
-  tSumm->Branch("delta_y_min_mean", &o_delta_y_mean,  "delta_y_min_mean/D");
   tSumm->Branch("EE80_mean",        &o_EE80_mean,     "EE80_mean/D");
   tSumm->Branch("n_runs_dof",       &o_n_dof,         "n_runs_dof/I");
-  tSumm->Branch("n_runs_delta_y",   &o_n_delta_y,     "n_runs_delta_y/I");
   tSumm->Branch("n_runs_EE80",      &o_n_EE80,        "n_runs_EE80/I");
 
   // Scrivi TSV di output
@@ -277,8 +256,8 @@ int main(int argc, char** argv) {
   if (!tsv.is_open()) {
     std::cerr << "Errore: impossibile creare " << out_tsv << "\n"; return 1;
   }
-  tsv << "x1\tx2\tdof_mean\tdelta_y_min_mean\tEE80_mean\t"
-         "config_id\tn_runs_dof\tn_runs_delta_y\tn_runs_EE80\n";
+  tsv << "x1\tx2\tdof_mean\tEE80_mean\t"
+         "config_id\tn_runs_dof\tn_runs_EE80\n";
 
   constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
@@ -287,22 +266,17 @@ int main(int argc, char** argv) {
 
     double dof_mean  = (it != agg.end() && it->second.n_dof > 0)
                        ? it->second.sum_dof / it->second.n_dof : 0.0;
-    double dy_mean   = (it != agg.end() && it->second.n_delta_y > 0)
-                       ? it->second.sum_delta_y / it->second.n_delta_y : kNaN;
     double ee80_mean = (it != agg.end() && it->second.n_EE80 > 0)
                        ? it->second.sum_EE80 / it->second.n_EE80 : kNaN;
     int n_dof_out   = (it != agg.end()) ? it->second.n_dof     : 0;
-    int n_delta_out = (it != agg.end()) ? it->second.n_delta_y : 0;
     int n_EE80_out  = (it != agg.end()) ? it->second.n_EE80    : 0;
 
     o_config_id    = id;
     o_x1           = c.x1;
     o_x2           = c.x2;
     o_dof_mean     = dof_mean;
-    o_delta_y_mean = dy_mean;
     o_EE80_mean    = ee80_mean;
     o_n_dof        = n_dof_out;
-    o_n_delta_y    = n_delta_out;
     o_n_EE80       = n_EE80_out;
     tSumm->Fill();
 
@@ -314,10 +288,9 @@ int main(int argc, char** argv) {
     };
     tsv << c.x1 << "\t" << c.x2 << "\t"
         << fmt(dof_mean) << "\t"
-        << fmt(dy_mean)  << "\t"
         << fmt(ee80_mean) << "\t"
         << id << "\t"
-        << n_dof_out << "\t" << n_delta_out << "\t" << n_EE80_out << "\n";
+        << n_dof_out << "\t" << n_EE80_out << "\n";
   }
 
   fout->cd();

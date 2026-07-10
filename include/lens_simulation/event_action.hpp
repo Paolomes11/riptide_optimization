@@ -47,8 +47,6 @@ struct VirtualPlaneMoments {
 };
 
 class EventAction : public G4UserEventAction {
-  // Buffer legacy (un run = uno spot)
-  std::vector<PhotonHit> eventHits;
   double m_lastRunHitCount = 0;
 
   // Buffer spot-mode (un run = tutti gli spot)
@@ -79,9 +77,6 @@ class EventAction : public G4UserEventAction {
  public:
   EventAction()          = default;
   virtual ~EventAction() = default;
-
-  // Legacy: hit senza spot_id (usato da optimizer e da SD in legacy mode)
-  void AddPhotonHit(double y, double z, double weight = 1.0);
 
   // Spot-mode: hit con spot_id pre-calcolato
   void AddPhotonHit(int spot_id, double y, double z, double weight);
@@ -141,13 +136,6 @@ class EventAction : public G4UserEventAction {
     return m_spotVirtualHitsZ;
   }
 
-  // Getter legacy
-  const std::vector<PhotonHit>& GetEventHits() const {
-    return eventHits;
-  }
-  void ClearEventHits() {
-    eventHits.clear();
-  }
   double GetLastRunHitCount() const {
     return m_lastRunHitCount;
   }
@@ -161,8 +149,6 @@ class EventAction : public G4UserEventAction {
   static EventAction* GetEventAction() {
     return s_currentEventAction;
   }
-
-  int runID = -1;
 };
 
 } // namespace riptide

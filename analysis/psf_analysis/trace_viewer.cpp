@@ -22,7 +22,6 @@
 
 #include "psf_interpolator.hpp"
 
-#include <TAttFill.h>
 #include <TCanvas.h>
 #include <TColor.h>
 #include <TEllipse.h>
@@ -122,14 +121,6 @@ Ellipse cov_to_ellipse(double cy, double cz, const riptide::Cov2& cov, double n_
   if (std::abs(cov.yz) > 1e-12 || std::abs(cov.yy - l1) > 1e-12)
     theta = std::atan2(l1 - cov.yy, cov.yz);
   return {cy, cz, a, b, theta * 180.0 / M_PI};
-}
-
-//  Palette sequenziale personalizzata
-
-Int_t create_trace_palette() {
-  gStyle->SetPalette(kRainBow);
-  gStyle->SetNumberContours(255);
-  return 0;
 }
 
 // Restituisce il colore interpolato nella palette custom per t in [0,1]
@@ -522,13 +513,6 @@ int main(int argc, char** argv) {
   std::string title_str = "Traccia sul Detector";
   // Y = 1 - TopMargin/2  →  1 - 0.055 = 0.945, ben dentro il margine
   title_lat.DrawLatex(0.535, 0.945, title_str.c_str());
-
-  // Etichette inizio/fine traccia
-  TLatex lbl;
-  lbl.SetNDC(false); // coordinate world
-  lbl.SetTextFont(42);
-  lbl.SetTextSize(0.030);
-  lbl.SetTextColor(kBlack);
 
   pad_plot->RedrawAxis();
 

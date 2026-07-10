@@ -19,11 +19,6 @@
 
 namespace riptide {
 
-void EventAction::AddPhotonHit(double y, double z, double weight) {
-  eventHits.push_back({static_cast<float>(y), static_cast<float>(z)});
-  m_lastRunHitCount += weight;
-}
-
 void EventAction::AddPhotonHit(int spot_id, double y, double z, double weight) {
   if (spot_id >= 0 && spot_id < static_cast<int>(m_spotHits.size())) {
     m_spotHits[spot_id].push_back({static_cast<float>(y), static_cast<float>(z)});
@@ -104,8 +99,7 @@ void EventAction::BeginOfEventAction(const G4Event* /*event*/) {
 }
 
 void EventAction::EndOfEventAction(const G4Event* /*event*/) {
-  // Gli hit si accumulano nel run (sia legacy che spot-mode).
-  // La pulizia è esplicita: ClearEventHits() o ResetSpotAccumulators().
+  // Gli hit si accumulano nel run. La pulizia è esplicita: ResetSpotAccumulators().
 }
 
 } // namespace riptide

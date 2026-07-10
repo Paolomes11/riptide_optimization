@@ -43,7 +43,6 @@ TIMEOUTS_SEC = {
     "opt":               60  * 60,
     "lens":              210 * 60,
     "dof":               90  * 60,
-    "psf-dof":           90  * 60,
     "psf_dof_extractor": 30  * 60,
     "resolution_map":    30  * 60,
     "analysis":          10  * 60,
@@ -371,7 +370,7 @@ def generate_pairs(cfg: dict, l1_id: str, l2_id: str,
     thorlabs = _load_thorlabs_data()
     h1     = thorlabs.get(l1_id, {}).get('h', cfg.get('h1', 12.5))
     h2     = thorlabs.get(l2_id, {}).get('h', cfg.get('h2', 16.3))
-    margin = 3.0 if mode in ('lens', 'psf-dof') else 1.0
+    margin = 3.0 if mode == 'lens' else 1.0
 
     x_min = cfg['x_min']
     x_max = cfg['x_max']
@@ -643,7 +642,7 @@ def run_simulation_step(mode: str, cfg_path: Path, out_dir: Path,
                         ssd_mount: Path, jobs: int, l1_id: str, l2_id: str,
                         use_local: bool, dry_run: bool,
                         focus_tsv: Path | None = None) -> Path | None:
-    out_names = {"opt": "events", "lens": "lens", "dof": "focal", "psf-dof": "psf_dof"}
+    out_names = {"opt": "events", "lens": "lens", "dof": "focal"}
     prefix = out_names[mode]
 
     run_target = "local" if use_local else "ssd"
@@ -694,7 +693,7 @@ def run_pipeline(cfg_path: Path, out_dir: Path, ssd_mount: Path, jobs: int,
                  l1_id: str, l2_id: str, ap: dict,
                  dry_run: bool, use_local: bool,
                  mobile_focus: bool,
-                 keep_lens: bool, keep_psf_dof: bool,
+                 keep_lens: bool,
                  skip_opt: bool, skip_lens: bool,
                  skip_dof: bool, skip_psf_dof: bool,
                  disk_guard_gb: float = 200.0) -> dict | None:
@@ -1091,7 +1090,6 @@ Esempi:
     opt = parser.add_argument_group("opzioni avanzate")
     opt.add_argument("--dry-run",       action="store_true", help="Stampa comandi senza eseguire")
     opt.add_argument("--keep-lens",     action="store_true", help="Non eliminare lens.root dopo psf_extractor")
-    opt.add_argument("--keep-psf-dof",  action="store_true", help="Non eliminare psf_dof.root dopo psf_dof_extractor")
     opt.add_argument("--skip-opt",      action="store_true", help="Salta opt (usa data/events.root esistente)")
     opt.add_argument("--skip-lens",     action="store_true", help="Salta lens+psf_extractor (usa data/psf_data.root)")
     opt.add_argument("--skip-dof",      action="store_true", help="Salta dof+dof_map (usa data/dof_map.tsv)")
@@ -1152,7 +1150,6 @@ Esempi:
         use_local        = args.local,
         mobile_focus     = args.mobile_focus,
         keep_lens        = args.keep_lens,
-        keep_psf_dof     = args.keep_psf_dof,
         skip_opt         = args.skip_opt,
         skip_lens        = args.skip_lens,
         skip_dof         = args.skip_dof,

@@ -22,9 +22,6 @@
 namespace riptide {
 
 class EventAction : public G4UserEventAction {
-  // Variabili da salvare per ogni fotone
-  int config_id; // Identificatore della configurazione delle lenti
-
   // Per contare gli hit totali di un run (una configurazione)
   double m_lastRunHitCount = 0;
 
@@ -37,9 +34,6 @@ class EventAction : public G4UserEventAction {
 
   // Funzione che viene chiamata dal SensitiveDetector per registrare un hit
   void AddPhotonHit(double weight = 1.0);
-
-  // Funzione per impostare l'identificatore della configurazione
-  void SetConfigId(int config_id);
 
   // n_hits getter e resetter
   double GetLastRunHitCount() const {

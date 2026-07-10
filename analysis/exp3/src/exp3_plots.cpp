@@ -127,76 +127,10 @@ static TH2D* rebin_for_display(TH2D* h) {
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
-// Exp3: Q_exp(r) per d_ax fisso
+// Exp3: Q_exp(d_ax) per r_idx fisso
 // ---------------------------------------------------------------------------
 namespace riptide::exp3 {
 
-void produce_q_vs_r(const std::vector<QResult>& good,
-                    const std::vector<QResult>& bad,
-                    double d_ax_mm,
-                    const fs::path& output_path) {
-    apply_riptide_style();
-
-    // Filtra per d_ax
-    auto pick = [&](const std::vector<QResult>& v) {
-        std::vector<double> xs, ys;
-        for (const auto& r : v)
-            if (std::abs(r.d_ax_mm - d_ax_mm) < 0.6) {
-                xs.push_back(r.r_mm);
-                ys.push_back(r.chi2_ndof);
-            }
-        return std::make_pair(xs, ys);
-    };
-
-    auto [gx, gy] = pick(good);
-    auto [bx, by] = pick(bad);
-
-    if (gx.empty() && bx.empty()) return;
-
-    auto* c = new TCanvas("qvsr", ("Q(r) d_{ax}=" + fmt(d_ax_mm) + " mm").c_str(), 800, 600);
-    c->SetLeftMargin(0.16f);
-    c->SetBottomMargin(0.14f);
-    set_pad_margins();
-
-    auto* leg = new TLegend(0.60, 0.75, 0.95, 0.95);
-    leg->SetBorderSize(0);
-    leg->SetFillStyle(0);
-    leg->SetTextFont(42);
-
-    bool first = true;
-    auto draw_graph = [&](std::vector<double>& xs, std::vector<double>& ys,
-                           int color, int style, const char* label) {
-        if (xs.empty()) return;
-        auto* gr = new TGraph(static_cast<int>(xs.size()), xs.data(), ys.data());
-        gr->SetTitle(";r [mm];Q = #chi^{2}/ndof");
-        gr->SetMarkerStyle(style);
-        gr->SetMarkerColor(color);
-        gr->SetLineColor(color);
-        gr->SetLineWidth(2);
-        gr->SetMarkerSize(1.2f);
-        gr->Draw(first ? "AP" : "P SAME");
-        leg->AddEntry(gr, label, "P");
-        first = false;
-    };
-
-    draw_graph(gx, gy, kBlue + 1, 21, "good");
-    draw_graph(bx, by, kRed,      25, "bad");
-    leg->Draw();
-
-    auto* pave = new TPaveText(0.16, 0.88, 0.58, 0.98, "NDC");
-    pave->SetFillColor(0); pave->SetBorderSize(0); pave->SetTextFont(42);
-    pave->SetTextSize(0.035f);
-    pave->AddText(("d_{ax} = " + fmt(d_ax_mm) + " mm").c_str());
-    pave->Draw();
-
-    fs::create_directories(output_path.parent_path());
-    c->SaveAs(output_path.c_str());
-    delete c;
-}
-
-// ---------------------------------------------------------------------------
-// Exp3: Q_exp(d_ax) per r_idx fisso
-// ---------------------------------------------------------------------------
 void produce_q_vs_dax(const std::vector<QResult>& good,
                       const std::vector<QResult>& bad,
                       int r_idx,

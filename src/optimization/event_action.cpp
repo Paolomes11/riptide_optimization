@@ -24,11 +24,6 @@ void EventAction::AddPhotonHit(double weight) {
   m_lastRunHitCount += weight;
 }
 
-// Funzione per impostare l'identificatore della configurazione
-void EventAction::SetConfigId(int config_id) {
-  this->config_id = config_id;
-}
-
 void EventAction::BeginOfEventAction(const G4Event* /*event*/) {
   s_currentEventAction = this; // imposta il puntatore statico
 }

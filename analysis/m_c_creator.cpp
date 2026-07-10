@@ -15,7 +15,6 @@
 #include <TCanvas.h>
 #include <TFile.h>
 #include <TH2D.h>
-#include <TLegend.h>
 #include <TStyle.h>
 #include <TTree.h>
 

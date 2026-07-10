@@ -149,14 +149,6 @@ void write_q_results_tsv(const std::string& config,
 // ---------------------------------------------------------------------------
 
 /**
- * Produce q_vs_r_d{dist}.png: Q_exp(r) per distanza fissa, good vs bad.
- */
-void produce_q_vs_r(const std::vector<QResult>& good,
-                    const std::vector<QResult>& bad,
-                    double d_ax_mm,
-                    const std::filesystem::path& output_path);
-
-/**
  * Produce q_vs_dax_r{r}.png: Q_exp(d_ax) per r_idx fisso, good vs bad.
  */
 void produce_q_vs_dax(const std::vector<QResult>& good,

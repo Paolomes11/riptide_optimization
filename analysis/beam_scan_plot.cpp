@@ -18,9 +18,7 @@
 #include <TFile.h>
 #include <TGraph2DErrors.h>
 #include <TGraphErrors.h>
-#include <TLegend.h>
 #include <TMultiGraph.h>
-#include <TPaveText.h>
 #include <TStyle.h>
 #include <TTree.h>
 
@@ -32,11 +30,6 @@
 #include <map>
 #include <sstream>
 #include <vector>
-
-struct HitWithRun {
-  int run_id;
-  double y, z;
-};
 
 struct Point3D {
   double x_src, y_src;
@@ -283,7 +276,6 @@ int main(int argc, char** argv) {
                   g_y->GetXaxis()->GetXmax(), g_y->GetYaxis()->GetXmax());
   fit_y->SetLineColorAlpha(kOrange + 1, 0.1); // 0.4 di trasparenza
   fit_y->SetFillColorAlpha(kOrange + 1, 0.05);
-  // fit_y->Draw("SURF4 SAME");
 
   // Grafico Z
   c->cd(2);
@@ -321,7 +313,6 @@ int main(int argc, char** argv) {
                   g_z->GetXaxis()->GetXmax(), g_z->GetYaxis()->GetXmax());
   fit_z->SetLineColorAlpha(kCyan + 1, 0.1);
   fit_z->SetFillColorAlpha(kCyan + 1, 0.05);
-  // fit_z->Draw("SURF4 SAME");
 
   // Stampa parametri sul terminale
   auto print_fit = [](const char* name, TF2* f) {
@@ -360,8 +351,6 @@ int main(int argc, char** argv) {
                     + ", x2=" + format_double(found_x2) + ");y_{0} sorgente [mm];z detector [mm]")
                        .c_str());
 
-    TLegend* leg = new TLegend(0.1, 0.7, 0.3, 0.9);
-
     int colors[]  = {kRed,        kBlue,     kGreen + 2, kMagenta,
                      kOrange + 7, kCyan + 2, kAzure + 1, kGray + 2};
     int color_idx = 0;
@@ -398,20 +387,16 @@ int main(int argc, char** argv) {
         g2z->SetMarkerColor(color);
         g2z->SetLineColor(color);
         mg_z->Add(g2z, "PL");
-
-        leg->AddEntry(g2y, ("x0 = " + format_double(x0_target)).c_str(), "PL");
       }
     }
 
     c2d->cd(1);
     gPad->SetLeftMargin(0.15);
     mg_y->Draw("A");
-    // leg->Draw();
 
     c2d->cd(2);
     gPad->SetLeftMargin(0.15);
     mg_z->Draw("A");
-    // leg->Draw();
 
     std::string filename_2d = (output_dir
                                / ("beam_scan_2D_x1_" + format_double(found_x1, 2) + "_x2_"

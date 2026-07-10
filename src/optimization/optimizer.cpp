@@ -327,7 +327,6 @@ void run_optimization(G4RunManager* run_manager, const std::filesystem::path& ma
         auto* eventAction = dynamic_cast<EventAction*>(
             const_cast<G4UserEventAction*>(run_manager->GetUserEventAction()));
         if (eventAction) {
-          eventAction->SetConfigId(config_counter);
           eventAction->ResetLastRunHitCount();
         }
 

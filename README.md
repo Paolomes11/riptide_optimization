@@ -762,7 +762,7 @@ Genera una mappa di calore 2D dell'efficienza in funzione delle posizioni (x₁,
 Visualizzazione 3D multi-lente per la scansione `--all-lenses`. Mostra un canvas con un plot 3D per ogni modello di prima lente: asse X = modello seconda lente, asse Y = x₁, asse Z = x₂, colore = efficienza. Una linea rossa traccia il valor medio pesato (x̄₁, x̄₂) per ogni seconda lente.
 ```bash
 ./build/analysis/Release/plot3D -i output/events.root --low 0.1 --high 0.1
-./build/analysis/Release/plot3D -i output/events.root --lens1 LB4553 --2d
+./build/analysis/Release/plot3D -i output/events.root --lens1 LB4553
 ```
 
 ---
@@ -858,7 +858,6 @@ Calcola le metriche ottiche standardizzate **al piano di fuoco** da `psf_dof.roo
     --k      1.414 \
     --tsv    output/resolution_analysis/resolution_map.tsv
 # → output/resolution_analysis/resolution_DoF_mean_map.png
-# → output/resolution_analysis/resolution_delta_y_min_mean_map.png
 # → output/resolution_analysis/resolution_EE80_mean_map.png
 # → output/resolution_analysis/resolution_map.tsv
 ```
@@ -868,14 +867,14 @@ Calcola le metriche ottiche standardizzate **al piano di fuoco** da `psf_dof.roo
 | `-i`, `--input` | `output/psf_dof_simulation/psf_dof.root` | File ROOT di input |
 | `-c`, `--config` | `config/config.json` | Configurazione |
 | `-o`, `--output` | `output/resolution_analysis/` | Cartella di output |
-| `--k` | `dof_k_threshold` da config | Costante per calcolo DoF e Δy_min |
+| `--k` | `dof_k_threshold` da config | Costante per calcolo DoF |
 | `--scan-min`, `--scan-max`, `--scan-step` | da config | Range scansione x_det [mm] |
 | `--low`, `--high` | 0.0 | Percentili per scala colori PNG |
 | `--tsv` | (disabilitato) | Esportazione TSV |
 | `--dump-csv` | (disabilitato) | Dump dati raw |
 | `--max-entries`, `--entry-stride`, `--entry-offset` | — | Limitatori dataset (debug) |
 
-**Colonne TSV**: `x1 x2 dof_mean delta_y_min_mean EE80_mean config_id n_runs_dof n_runs_delta_y n_runs_EE80`
+**Colonne TSV**: `x1 x2 dof_mean EE80_mean config_id n_runs_dof n_runs_EE80`
 
 ---
 

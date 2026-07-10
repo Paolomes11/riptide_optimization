@@ -153,14 +153,11 @@ struct RunRow {
 struct Aggregated {
   double sum_dof      = 0.0;
   int n_dof           = 0;
-  double sum_delta_y  = 0.0;
-  int n_delta_y       = 0;
   double sum_focus    = 0.0;
   int    n_focus      = 0;
   double sum_EE80     = 0.0;
   int    n_EE80       = 0;
   double dof_mean     = 0.0;
-  double delta_y_mean = 0.0;
   double focus_mean   = std::numeric_limits<double>::quiet_NaN();
   double EE80_mean    = std::numeric_limits<double>::quiet_NaN();
 };
@@ -267,32 +264,6 @@ static double compute_dof_from_curve(const RunRow& r, const ConfigInfo& cfg,
   return x_scan[static_cast<size_t>(i_hi)] - x_scan[static_cast<size_t>(i_lo)];
 }
 
-static std::optional<double> compute_delta_y_min_at_focus(const RunRow& r, const ConfigInfo& cfg,
-                                                          const std::vector<double>& x_scan,
-                                                          double k) {
-  auto [sigma_min, x_focus] = compute_sigma_z_min_and_focus(r, cfg, x_scan);
-  if (!std::isfinite(sigma_min) || !std::isfinite(x_focus)) {
-    return std::nullopt;
-  }
-
-  double dx = x_focus - cfg.x_virtual;
-  if (!(std::abs(r.y_src) > 1e-12)) {
-    return std::nullopt;
-  }
-
-  double y_bar_focus = r.mu_y + r.mu_dy * dx;
-  if (!std::isfinite(y_bar_focus) || std::abs(y_bar_focus) < 1e-9) {
-    return std::nullopt;
-  }
-
-  double Mbar = y_bar_focus / r.y_src;
-  if (!std::isfinite(Mbar) || std::abs(Mbar) < 1e-18) {
-    return std::nullopt;
-  }
-
-  return k * sigma_min / std::abs(Mbar);
-}
-
 static std::optional<double> compute_EE80_at_focus(const RunRow& r, const ConfigInfo& cfg,
                                                     const std::vector<double>& x_scan) {
   auto [sigma_z_min, x_focus] = compute_sigma_z_min_and_focus(r, cfg, x_scan);
@@ -370,17 +341,15 @@ int main(int argc, char** argv) {
     }
     std::string hdr;
     std::getline(tf, hdr);
-    double x1_v, x2_v, dof_v, dy_v, ee80_v;
-    int cid_v, n_dof_v, n_dy_v, n_ee80_v;
+    double x1_v, x2_v, dof_v, ee80_v;
+    int cid_v, n_dof_v, n_ee80_v;
     // In disk-guard mode i config_id si ripetono tra batch: usa ID sintetico progressivo
     int synthetic_id = 0;
-    while (tf >> x1_v >> x2_v >> dof_v >> dy_v >> ee80_v >> cid_v >> n_dof_v >> n_dy_v >> n_ee80_v) {
+    while (tf >> x1_v >> x2_v >> dof_v >> ee80_v >> cid_v >> n_dof_v >> n_ee80_v) {
       config_map[synthetic_id] = {synthetic_id, x1_v, x2_v, 0.0};
       Aggregated& a  = agg[synthetic_id];
       a.n_dof        = n_dof_v;
       a.dof_mean     = (n_dof_v > 0) ? dof_v : 0.0;
-      a.n_delta_y    = n_dy_v;
-      a.delta_y_mean = (n_dy_v > 0) ? dy_v : 0.0;
       a.n_EE80       = n_ee80_v;
       a.EE80_mean    = (n_ee80_v > 0) ? ee80_v : std::numeric_limits<double>::quiet_NaN();
       a.focus_mean   = std::numeric_limits<double>::quiet_NaN();
@@ -490,7 +459,6 @@ int main(int argc, char** argv) {
     bool dof_valid;
     double focus;
     bool focus_valid;
-    std::optional<double> delta;
     std::optional<double> ee80;
     // campi per --dump-csv
     double x_focus_analytical;
@@ -524,7 +492,6 @@ int main(int argc, char** argv) {
       }
     }
 
-    res.delta = compute_delta_y_min_at_focus(r, c, xs, k);
     res.ee80  = compute_EE80_at_focus(r, c, xs);
 
     res.x_focus_analytical = res.focus;
@@ -556,7 +523,7 @@ int main(int argc, char** argv) {
               << "run_id\ty_src\tn_hits\t"
               << "sigma_z\tsigma_dz\tcov_z_dz\t"
               << "x_focus_analytical\tfocus_in_scan\t"
-              << "sigma_min_computed\tdof\tdelta_y\tmag_M\n";
+              << "sigma_min_computed\tdof\tmag_M\n";
   }
 
   for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
@@ -572,10 +539,6 @@ int main(int argc, char** argv) {
       agg[res.config_id].sum_focus += res.focus;
       agg[res.config_id].n_focus  += 1;
     }
-    if (res.delta.has_value() && std::isfinite(*res.delta) && *res.delta > 0.0) {
-      agg[res.config_id].sum_delta_y += *res.delta;
-      agg[res.config_id].n_delta_y  += 1;
-    }
     if (res.ee80.has_value() && std::isfinite(*res.ee80) && *res.ee80 > 0.0) {
       agg[res.config_id].sum_EE80 += *res.ee80;
       agg[res.config_id].n_EE80  += 1;
@@ -588,14 +551,12 @@ int main(int argc, char** argv) {
                 << res.x_focus_analytical << "\t" << (res.focus_in_scan ? 1 : 0) << "\t"
                 << res.sigma_min_comp << "\t"
                 << (std::isfinite(res.dof) ? res.dof : std::numeric_limits<double>::quiet_NaN()) << "\t"
-                << (res.delta.has_value() ? *res.delta : std::numeric_limits<double>::quiet_NaN()) << "\t"
                 << res.mag_M << "\n";
     }
   }
 
   for (auto& [id, a] : agg) {
     a.dof_mean     = (a.n_dof > 0) ? (a.sum_dof / static_cast<double>(a.n_dof)) : 0.0;
-    a.delta_y_mean = (a.n_delta_y > 0) ? (a.sum_delta_y / static_cast<double>(a.n_delta_y)) : 0.0;
     a.focus_mean   = (a.n_focus > 0) ? (a.sum_focus / static_cast<double>(a.n_focus))
                                       : std::numeric_limits<double>::quiet_NaN();
     a.EE80_mean    = (a.n_EE80 > 0) ? (a.sum_EE80 / static_cast<double>(a.n_EE80))
@@ -623,9 +584,6 @@ int main(int argc, char** argv) {
   TH2D h_dof_mean("h_dof_mean", ";x1 [mm];x2 [mm];DoF_{mean} [mm]", n_bins_x1,
                   x1_min_data - dx_grid / 2.0, x1_max_data + dx_grid / 2.0, n_bins_x2,
                   x2_min_data - dx_grid / 2.0, x2_max_data + dx_grid / 2.0);
-  TH2D h_delta_y_mean("h_delta_y_mean", ";x1 [mm];x2 [mm];#delta y_{min,mean} [mm]", n_bins_x1,
-                      x1_min_data - dx_grid / 2.0, x1_max_data + dx_grid / 2.0, n_bins_x2,
-                      x2_min_data - dx_grid / 2.0, x2_max_data + dx_grid / 2.0);
   TH2D h_EE80_mean("h_EE80_mean", ";x1 [mm];x2 [mm];EE80_{mean} [mm]", n_bins_x1,
                    x1_min_data - dx_grid / 2.0, x1_max_data + dx_grid / 2.0, n_bins_x2,
                    x2_min_data - dx_grid / 2.0, x2_max_data + dx_grid / 2.0);
@@ -636,9 +594,6 @@ int main(int argc, char** argv) {
   TH2D h_mask_dof("h_mask_dof", "", n_bins_x1, x1_min_data - dx_grid / 2.0,
                   x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
                   x2_max_data + dx_grid / 2.0);
-  TH2D h_mask_delta("h_mask_delta", "", n_bins_x1, x1_min_data - dx_grid / 2.0,
-                    x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
-                    x2_max_data + dx_grid / 2.0);
   TH2D h_mask_EE80("h_mask_EE80", "", n_bins_x1, x1_min_data - dx_grid / 2.0,
                    x1_max_data + dx_grid / 2.0, n_bins_x2, x2_min_data - dx_grid / 2.0,
                    x2_max_data + dx_grid / 2.0);
@@ -649,7 +604,6 @@ int main(int argc, char** argv) {
     for (int by = 1; by <= n_bins_x2; ++by) {
       h_mask_cfg.SetBinContent(bx, by, 1.0);
       h_mask_dof.SetBinContent(bx, by, 1.0);
-      h_mask_delta.SetBinContent(bx, by, 1.0);
       h_mask_EE80.SetBinContent(bx, by, 1.0);
     }
   }
@@ -676,8 +630,6 @@ int main(int argc, char** argv) {
 
   double dof_min = std::numeric_limits<double>::infinity();
   double dof_max  = -std::numeric_limits<double>::infinity();
-  double dy_min   = std::numeric_limits<double>::infinity();
-  double dy_max   = -std::numeric_limits<double>::infinity();
   double ee80_min = std::numeric_limits<double>::infinity();
   double ee80_max = -std::numeric_limits<double>::infinity();
 
@@ -701,12 +653,6 @@ int main(int argc, char** argv) {
       dof_min = std::min(dof_min, it->second.dof_mean);
       dof_max = std::max(dof_max, it->second.dof_mean);
     }
-    if (it->second.n_delta_y > 0) {
-      h_delta_y_mean.SetBinContent(bx, by, it->second.delta_y_mean);
-      h_mask_delta.SetBinContent(bx, by, 0.0);
-      dy_min = std::min(dy_min, it->second.delta_y_mean);
-      dy_max = std::max(dy_max, it->second.delta_y_mean);
-    }
     if (it->second.n_EE80 > 0 && std::isfinite(it->second.EE80_mean)) {
       h_EE80_mean.SetBinContent(bx, by, it->second.EE80_mean);
       h_mask_EE80.SetBinContent(bx, by, 0.0);
@@ -719,10 +665,6 @@ int main(int argc, char** argv) {
     h_dof_mean.SetMinimum(dof_min);
     h_dof_mean.SetMaximum(dof_max);
   }
-  if (std::isfinite(dy_min) && std::isfinite(dy_max)) {
-    h_delta_y_mean.SetMinimum(dy_min);
-    h_delta_y_mean.SetMaximum(dy_max);
-  }
   if (std::isfinite(ee80_min) && std::isfinite(ee80_max)) {
     h_EE80_mean.SetMinimum(ee80_min);
     h_EE80_mean.SetMaximum(ee80_max);
@@ -731,8 +673,6 @@ int main(int argc, char** argv) {
   {
     std::vector<double> dof_vals;
     dof_vals.reserve(static_cast<size_t>(n_bins_x1 * n_bins_x2));
-    std::vector<double> dy_vals;
-    dy_vals.reserve(static_cast<size_t>(n_bins_x1 * n_bins_x2));
 
     for (int by = 1; by <= n_bins_x2; ++by) {
       for (int bx = 1; bx <= n_bins_x1; ++bx) {
@@ -742,12 +682,6 @@ int main(int argc, char** argv) {
             dof_vals.push_back(v);
           }
         }
-        if (h_mask_delta.GetBinContent(bx, by) < 0.5) {
-          double v = h_delta_y_mean.GetBinContent(bx, by);
-          if (std::isfinite(v)) {
-            dy_vals.push_back(v);
-          }
-        }
       }
     }
 
@@ -755,12 +689,6 @@ int main(int argc, char** argv) {
     if (r_dof.has_value() && r_dof->second > r_dof->first) {
       h_dof_mean.SetMinimum(r_dof->first);
       h_dof_mean.SetMaximum(r_dof->second);
-    }
-
-    auto r_dy = percentile_range(std::move(dy_vals), lower_percentile, upper_percentile);
-    if (r_dy.has_value() && r_dy->second > r_dy->first) {
-      h_delta_y_mean.SetMinimum(r_dy->first);
-      h_delta_y_mean.SetMaximum(r_dy->second);
     }
   }
 
@@ -788,7 +716,6 @@ int main(int argc, char** argv) {
 
   static const std::unordered_map<std::string, std::string> kMapTitles = {
       {"resolution_dof_mean_map",       "Profondit#grave{a} di campo media (DoF_{mean})"},
-      {"resolution_delta_y_min_mean_map", "#delta y_{min} medio"},
       {"resolution_EE80_mean_map",      "Diametro EE80 medio (EE80_{mean})"},
   };
 
@@ -817,7 +744,6 @@ int main(int argc, char** argv) {
   };
 
   save_map(h_dof_mean, h_mask_cfg, "resolution_dof_mean_map", kViridis);
-  save_map(h_delta_y_mean, h_mask_delta, "resolution_delta_y_min_mean_map", kViridis);
   save_map(h_EE80_mean, h_mask_EE80, "resolution_EE80_mean_map", kViridis);
 
   if (!cli.tsv_out.empty()) {
@@ -826,15 +752,15 @@ int main(int argc, char** argv) {
       std::filesystem::create_directories(tsv_path.parent_path());
     }
     std::ofstream out(tsv_path);
-    out << "x1\tx2\tdof_mean\tdelta_y_min_mean\tEE80_mean\tconfig_id\tn_runs_dof\tn_runs_delta_y\tn_runs_EE80\n";
+    out << "x1\tx2\tdof_mean\tEE80_mean\tconfig_id\tn_runs_dof\tn_runs_EE80\n";
     for (const auto& [id, c] : config_map) {
       auto it = agg.find(id);
       if (it == agg.end()) {
         continue;
       }
-      out << c.x1 << "\t" << c.x2 << "\t" << it->second.dof_mean << "\t" << it->second.delta_y_mean
+      out << c.x1 << "\t" << c.x2 << "\t" << it->second.dof_mean
           << "\t" << it->second.EE80_mean << "\t" << id << "\t" << it->second.n_dof << "\t"
-          << it->second.n_delta_y << "\t" << it->second.n_EE80 << "\n";
+          << it->second.n_EE80 << "\n";
     }
   }
 

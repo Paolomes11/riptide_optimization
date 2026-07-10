@@ -96,8 +96,6 @@ def main() -> int:
             row[f"{f}_norm"]  = delta / shot if shot > 1e-15 else 0.0
         rows.append(row)
 
-    mean_n = float(np.mean([r.get("n_hits_emb", emb[k]["n_hits"]) for k in common
-                             for r in [{"n_hits_emb": emb[k]["n_hits"]}]]))
     mean_n = float(np.mean([emb[k]["n_hits"] for k in common]))
     print(f"N_hits medio per spot: {mean_n:.0f}")
     if mean_n < 1000:

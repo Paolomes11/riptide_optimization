@@ -43,13 +43,9 @@ G4bool SensitivePhotocathode::ProcessHits(G4Step* step, G4TouchableHistory* /*hi
   auto pos      = pre->GetPosition();
   double weight = track->GetWeight();
 
-  if (eventAction->IsSpotMode()) {
-    G4ThreeVector vtx = track->GetVertexPosition();
-    int spot_id = eventAction->CalcSpotId(vtx.x() / CLHEP::mm, vtx.y() / CLHEP::mm);
-    eventAction->AddPhotonHit(spot_id, pos.y(), pos.z(), weight);
-  } else {
-    eventAction->AddPhotonHit(pos.y(), pos.z(), weight);
-  }
+  G4ThreeVector vtx = track->GetVertexPosition();
+  int spot_id = eventAction->CalcSpotId(vtx.x() / CLHEP::mm, vtx.y() / CLHEP::mm);
+  eventAction->AddPhotonHit(spot_id, pos.y(), pos.z(), weight);
 
   // Kill the photon after detection to stop tracking
   track->SetTrackStatus(fStopAndKill);

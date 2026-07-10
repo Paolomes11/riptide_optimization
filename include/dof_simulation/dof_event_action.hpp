@@ -16,10 +16,6 @@ class DofEventAction : public G4UserEventAction {
     m_configId = config_id;
   }
 
-  int GetConfigId() const {
-    return m_configId;
-  }
-
   void AddRay(double y, double z, double dy, double dz, double w, double y_source);
   void ClearRays();
 
