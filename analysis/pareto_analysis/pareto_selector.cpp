@@ -268,7 +268,7 @@ static void draw_colorbar(TPad* pad_cb, double vmin, double vmax, const std::str
     TLatex lbl;
     lbl.SetNDC();
     lbl.SetTextFont(42);
-    lbl.SetTextSize(0.1);
+    lbl.SetTextSize(0.15);
     lbl.SetTextColor(kWhite);
     lbl.SetTextAlign(22);
     lbl.SetTextAngle(90.0);
@@ -603,43 +603,44 @@ static void draw_secondary_map(const std::vector<ConfigData>& front,
     // Legenda: spiegazione fissa del significato di colori/marker/sfondo, non
     // elenco per categoria (con n_cat~15-20 l'elenco sarebbe illeggibile; questo
     // plot e pareto_ternary.png si spiegano a vicenda in tesi tramite lo stesso
-    // mapping categoria->colore).
+    // mapping categoria->colore). Stile TLegend coerente con quella di
+    // draw_pareto_frontier (SetBorderSize(0)+SetFillStyle(0)); swatch grigio
+    // neutro per il marker pieno (non un colore specifico: il colore reale
+    // varia per categoria, v. categorical_color).
     pad_leg->cd();
-    const double leg_text_size = 0.11;
 
-    TMarker* mk = new TMarker(0.025, 0.80, kFullCircle);
-    mk->SetNDC();
-    mk->SetMarkerColor(kAzure + 2);
-    mk->SetMarkerSize(1.6);
-    mk->Draw();
-    TLatex leg;
-    leg.SetNDC();
-    leg.SetTextFont(42);
-    leg.SetTextAlign(12);
-    leg.SetTextSize(leg_text_size);
-    leg.DrawLatex(0.05, 0.80,
-        "Pallino pieno colorato = configurazione (x_{1},x_{2}) vincente per almeno una combinazione di pesi (colore = categoria, v. pareto_ternary).");
+    TGraph* proxy_winner = new TGraph(1);
+    proxy_winner->SetPoint(0, 0, 0);
+    proxy_winner->SetMarkerStyle(kFullCircle);
+    proxy_winner->SetMarkerColor(kGray + 2);
+    proxy_winner->SetMarkerSize(1.6);
 
-    TMarker* mk2 = new TMarker(0.025, 0.55, kOpenCircle);
-    mk2->SetNDC();
-    mk2->SetMarkerColor(kBlack);
-    mk2->SetMarkerSize(1.4);
-    mk2->Draw();
-    leg.DrawLatex(0.05, 0.55, "Cerchio vuoto = sul fronte di Pareto, mai vincente nello sweep dei pesi.");
+    TGraph* proxy_front = new TGraph(1);
+    proxy_front->SetPoint(0, 0, 0);
+    proxy_front->SetMarkerStyle(kOpenCircle);
+    proxy_front->SetMarkerColor(kBlack);
+    proxy_front->SetMarkerSize(1.4);
 
-    TBox* sw_valid = new TBox(0.01, 0.22, 0.04, 0.32);
-    sw_valid->SetFillColor(valid_color);
-    sw_valid->SetLineColor(kBlack);
-    sw_valid->SetLineWidth(1);
-    sw_valid->Draw();
-    leg.DrawLatex(0.05, 0.27, "Grigio chiaro = dominio simulato valido.");
+    TBox* proxy_valid = new TBox(0, 0, 0, 0);
+    proxy_valid->SetFillColor(valid_color);
+    proxy_valid->SetLineColor(kBlack);
 
-    TBox* sw_inv = new TBox(0.01, 0.02, 0.04, 0.12);
-    sw_inv->SetFillColor(invalid_color);
-    sw_inv->SetLineColor(kBlack);
-    sw_inv->SetLineWidth(1);
-    sw_inv->Draw();
-    leg.DrawLatex(0.05, 0.07, "Nero = dominio non valido (fuori vincoli geometrici della lente).");
+    TBox* proxy_invalid = new TBox(0, 0, 0, 0);
+    proxy_invalid->SetFillColor(invalid_color);
+    proxy_invalid->SetLineColor(kBlack);
+
+    TLegend* leg = new TLegend(0.02, 0.03, 0.99, 0.97);
+    leg->SetTextFont(42);
+    leg->SetTextAlign(12);
+    leg->SetTextSize(0.11);
+    leg->SetBorderSize(0);
+    leg->SetFillStyle(0);
+    leg->SetMargin(0.05);
+    leg->AddEntry(proxy_winner, "Configurazione (x_{1},x_{2}) vincente in almeno una combinazione di pesi (colore = categoria, v. pareto_ternary)", "p");
+    leg->AddEntry(proxy_front, "Sul fronte di Pareto, mai vincente nello sweep dei pesi", "p");
+    leg->AddEntry(proxy_valid, "Dominio simulato valido", "f");
+    leg->AddEntry(proxy_invalid, "Dominio non valido (vincoli geometrici della lente)", "f");
+    leg->Draw();
 
     std::filesystem::create_directories(std::filesystem::path(out_path).parent_path());
     canvas->SaveAs(out_path.c_str());
@@ -1014,9 +1015,8 @@ int main(int argc, char** argv) {
     canvas->SetTopMargin(0.0);
     canvas->SetBottomMargin(0.0);
 
-    TPad* pad_top = new TPad("pad_top", "", 0.00, 0.30, 0.84, 1.0);
-    TPad* pad_cb  = new TPad("pad_cb",  "", 0.84, 0.30, 1.00, 1.0);
-    TPad* pad_bot = new TPad("pad_bot", "", 0.00, 0.00, 1.00, 0.30);
+    TPad* pad_top = new TPad("pad_top", "", 0.00, 0.00, 0.84, 1.0);
+    TPad* pad_cb  = new TPad("pad_cb",  "", 0.84, 0.00, 1.00, 1.0);
 
     pad_top->SetLeftMargin(0.12);
     pad_top->SetRightMargin(0.02);
@@ -1030,15 +1030,9 @@ int main(int argc, char** argv) {
     pad_cb->SetTopMargin(0.08);
     pad_cb->SetBottomMargin(0.14);
 
-    pad_bot->SetLeftMargin(0.02);
-    pad_bot->SetRightMargin(0.02);
-    pad_bot->SetTopMargin(0.05);
-    pad_bot->SetBottomMargin(0.05);
-
     canvas->cd();
     pad_top->Draw();
     pad_cb->Draw();
-    pad_bot->Draw();
 
     // ── Pad superiore: scatter plot ───────────────────────────────────────────
     pad_top->cd();
@@ -1095,22 +1089,29 @@ int main(int argc, char** argv) {
         g_bg_list.push_back(gp);
     }
 
-    // Punti sul fronte (viridis per |M-1|) — tutti tranne il best
+    // Punti sul fronte (viridis per M assoluto) — tutti tranne il best
     gStyle->SetPalette(kViridis);
     const int ncolors = gStyle->GetNumberOfColors();
 
-    double M_diff_max = 0.0;
-    for (const auto* p : front)
-        M_diff_max = std::max(M_diff_max, p->M_abs_err);
-    if (M_diff_max <= 0.0) M_diff_max = 1.0;
+    double M_min = std::numeric_limits<double>::max();
+    double M_max = -std::numeric_limits<double>::max();
+    for (const auto* p : front) {
+        M_min = std::min(M_min, p->M);
+        M_max = std::max(M_max, p->M);
+    }
+    if (M_max <= M_min) { M_min -= 0.5; M_max += 0.5; }
+
+    auto m_color = [&](double m) {
+        double frac = (m - M_min) / (M_max - M_min);
+        int    cidx = static_cast<int>(std::clamp(frac, 0.0, 1.0) * (ncolors - 1));
+        return gStyle->GetColorPalette(cidx);
+    };
 
     std::vector<TGraph*> g_front_list;
     for (const auto* p : front) {
         if (p->pareto_rank == 1) continue;  // best disegnato dopo
         if (p->Q <= 0.0) continue;
-        double frac      = p->M_abs_err / M_diff_max;
-        int    cidx      = static_cast<int>(frac * (ncolors - 1));
-        Int_t  root_col  = gStyle->GetColorPalette(cidx);
+        Int_t root_col = m_color(p->M);
 
         TGraph* gp = new TGraph(1);
         gp->SetPoint(0, p->eta / eta_max, Q_min / p->Q);
@@ -1123,7 +1124,11 @@ int main(int argc, char** argv) {
         g_front_list.push_back(gp);
     }
 
-    // Punto best — stella rossa
+    // Punto best — stella con interno colorato per M e bordo rosso spesso e ben
+    // visibile: stella rossa piena leggermente più grande disegnata sotto, e
+    // stella colorata per M più piccola sopra (il bordo rosso e' l'anello
+    // visibile tra le due dimensioni — piu' robusto di kOpenStar, il cui
+    // contorno ROOT disegna con una linea troppo sottile per essere notata).
     TGraph* g_best = nullptr;
     if (!front.empty() && front[0]->Q > 0.0) {
         const ConfigData& best = *front[0];
@@ -1131,8 +1136,15 @@ int main(int argc, char** argv) {
         g_best->SetPoint(0, best.eta / eta_max, Q_min / best.Q);
         g_best->SetMarkerStyle(kFullStar);
         g_best->SetMarkerColor(kRed);
-        g_best->SetMarkerSize(3.0);
+        g_best->SetMarkerSize(4.6);
         g_best->Draw("P SAME");
+
+        TGraph* g_best_fill = new TGraph(1);
+        g_best_fill->SetPoint(0, best.eta / eta_max, Q_min / best.Q);
+        g_best_fill->SetMarkerStyle(kFullStar);
+        g_best_fill->SetMarkerColor(m_color(best.M));
+        g_best_fill->SetMarkerSize(3.2);
+        g_best_fill->Draw("P SAME");
     }
 
     // Legenda — angolo in alto a destra per non intersecare i dati (concentrati
@@ -1150,36 +1162,9 @@ int main(int argc, char** argv) {
         leg->AddEntry(g_best, "Raccomandato", "p");
     leg->Draw();
 
-    // ── Color bar |M−1| ───────────────────────────────────────────────────────
-    draw_colorbar(pad_cb, 0.0, M_diff_max, "|M#minusM_{tgt}|  [a.d.]");
+    // ── Color bar M ──────────────────────────────────────────────────────────
+    draw_colorbar(pad_cb, M_min, M_max, "M  [a.d.]");
     pad_top->cd();
-
-    // ── Pad inferiore: tabella top-5 ──────────────────────────────────────────
-    pad_bot->cd();
-
-    TPaveText* table = new TPaveText(0.01, 0.01, 0.99, 0.99, "NDC");
-    table->SetFillColor(0);
-    table->SetBorderSize(0);
-    table->SetTextFont(42);
-    table->SetTextSize(0.070);
-    table->SetTextAlign(12);
-    table->AddText("Top-3 configurazioni sul fronte di Pareto (per Mtot):");
-
-    int shown = 0;
-    for (const auto* p : front) {
-        if (shown >= 3) break;
-        table->AddText(Form(
-            "#%d  x1=%.1f mm  x2=%.1f mm  |  Mtot=%.3f",
-            p->pareto_rank, p->x1, p->x2, p->Mtot));
-        std::string row2 = Form(
-            "    #eta=%.3f  #DeltaQ/min=%.3f  DoF=%.1f mm  M=%.3f  #DeltaM=%.4f",
-            p->eta, p->Q / Q_min, p->DoF, p->M, p->M_abs_err);
-        if (std::isfinite(p->EE80))
-            row2 += Form("  EE80=%.3f mm", p->EE80);
-        table->AddText(row2.c_str());
-        ++shown;
-    }
-    table->Draw();
 
     // ── Salva ────────────────────────────────────────────────────────────────
     std::filesystem::create_directories(
