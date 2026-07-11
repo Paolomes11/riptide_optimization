@@ -1293,10 +1293,12 @@ Verifica se la PSF (hit non troncati dal piano virtuale, Tecnica E — `PsfDofRu
     --output output/psf_analysis/psf_gaussianity_analysis.png
 ```
 
+Genera tre immagini separate, una per grafico (titoli/assi/legenda a piena larghezza): `psf_gaussianity_analysis_scatter.png` (hit sul detector + ellissi 1/2/3σ), `psf_gaussianity_analysis_marginal.png` (profilo marginale + fit gaussiano), `psf_gaussianity_analysis_qq.png` (Q-Q plot vs χ²₂). I valori numerici (cutoff Bonferroni, contaminazione, Mardia γ₂, Henze-Zirkler) sono riportati solo su console/log, non nei grafici.
+
 | Opzione | Default | Descrizione |
 |---|---|---|
 | `--input` | — | **Obbligatorio.** File ROOT con `Configurations`+`Runs`/`PsfDofRuns` |
-| `--output` | auto | PNG di output |
+| `--output` | auto | Percorso base per i 3 PNG di output (suffissi `_scatter`/`_marginal`/`_qq`) |
 | `--sigma-cut` | 3.0 | Cutoff σ del filtro Mahalanobis iterativo (`compute_psf`) |
 | `--n-iter` | 4 | Iterazioni del filtro |
 | `--min-hits` | — | Hit minime per run valido |

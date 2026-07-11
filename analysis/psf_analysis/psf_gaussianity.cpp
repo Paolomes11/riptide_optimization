@@ -42,6 +42,7 @@
  */
 
 #include "psf_common.hpp"
+#include "../plot_style_common.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -53,10 +54,10 @@
 #include <TH1D.h>
 #include <TH2F.h>
 #include <TLatex.h>
+#include <TLegend.h>
+#include <TLegendEntry.h>
 #include <TLine.h>
 #include <TMath.h>
-#include <TPad.h>
-#include <TPaveText.h>
 #include <TStyle.h>
 #include <TTree.h>
 
@@ -66,11 +67,10 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
-#include <map>
 #include <random>
+#include <set>
 #include <sstream>
 #include <string>
-#include <tuple>
 #include <vector>
 
 // Densita' chi^2 con 2 gradi di liberta' (forma chiusa: f(x) = 0.5*exp(-x/2))
@@ -313,21 +313,12 @@ int main(int argc, char** argv) {
   }
 
   int cfg_id;
-  double cfg_x1, cfg_x2;
-  char cfg_l1_id[256] = {}, cfg_l2_id[256] = {};
   tConfig->SetBranchAddress("config_id", &cfg_id);
-  tConfig->SetBranchAddress("x1", &cfg_x1);
-  tConfig->SetBranchAddress("x2", &cfg_x2);
-  bool has_cfg_ids = (tConfig->GetBranch("l1_id") && tConfig->GetBranch("l2_id"));
-  if (has_cfg_ids) {
-    tConfig->SetBranchAddress("l1_id", cfg_l1_id);
-    tConfig->SetBranchAddress("l2_id", cfg_l2_id);
-  }
 
-  std::map<int, std::tuple<double, double, std::string, std::string>> config_map;
+  std::set<int> known_configs;
   for (Long64_t i = 0; i < tConfig->GetEntries(); ++i) {
     tConfig->GetEntry(i);
-    config_map[cfg_id] = {cfg_x1, cfg_x2, has_cfg_ids ? cfg_l1_id : "", has_cfg_ids ? cfg_l2_id : ""};
+    known_configs.insert(cfg_id);
   }
 
   int run_id_r, run_cfg_id;
@@ -349,14 +340,11 @@ int main(int argc, char** argv) {
   // 2D e l'istogramma marginale (mostra la PSF meglio popolata).
   std::vector<Hit> best_hits;
   PSFResult best_res{};
-  double best_x1 = 0.0, best_x2 = 0.0;
-  std::string best_l1, best_l2;
 
   Long64_t n_runs = tHits->GetEntries();
   for (Long64_t r = 0; r < n_runs; ++r) {
     tHits->GetEntry(r);
-    auto it = config_map.find(run_cfg_id);
-    if (it == config_map.end())
+    if (known_configs.find(run_cfg_id) == known_configs.end())
       continue;
 
     std::vector<Hit> hits_buf;
@@ -387,10 +375,6 @@ int main(int argc, char** argv) {
     if (hits_buf.size() > best_hits.size()) {
       best_hits = hits_buf;
       best_res  = res;
-      best_x1   = std::get<0>(it->second);
-      best_x2   = std::get<1>(it->second);
-      best_l1   = std::get<2>(it->second);
-      best_l2   = std::get<3>(it->second);
     }
   }
 
@@ -459,49 +443,34 @@ int main(int argc, char** argv) {
   else
     std::cout << "Henze-Zirkler: sottocampione insufficiente o degenere, saltato\n";
 
-  // --- Canvas ---
+  // --- Canvas: tre immagini separate (scatter, profilo marginale, Q-Q plot) ---
   apply_style();
-  TCanvas* c = new TCanvas("c", "psf_gaussianity", 1500, 750);
-  c->SetLeftMargin(0.0);
-  c->SetRightMargin(0.0);
-  c->SetTopMargin(0.0);
-  c->SetBottomMargin(0.0);
 
-  TPad* pad_scatter = new TPad("pad_scatter", "", 0.00, 0.24, 0.42, 1.00);
-  TPad* pad_marg    = new TPad("pad_marg", "", 0.42, 0.24, 0.70, 1.00);
-  TPad* pad_qq      = new TPad("pad_qq", "", 0.70, 0.24, 1.00, 1.00);
-  TPad* pad_info    = new TPad("pad_info", "", 0.00, 0.00, 1.00, 0.24);
+  std::filesystem::path out_base(cli.output_path);
+  std::string out_stem = out_base.stem().string();
+  std::string out_ext   = out_base.extension().string();
+  std::filesystem::path out_dir = out_base.parent_path();
+  std::filesystem::create_directories(out_dir);
+  auto out_path = [&](const std::string& suffix) {
+    return (out_dir / (out_stem + suffix + out_ext)).string();
+  };
 
-  pad_scatter->SetLeftMargin(0.16);
-  pad_scatter->SetRightMargin(0.03);
-  pad_scatter->SetTopMargin(0.10);
-  pad_scatter->SetBottomMargin(0.14);
-
-  // Margine sinistro maggiore di pad_scatter: pad_marg e pad_qq sono piu' stretti
-  // (larghezza 0.28 e 0.30 del canvas contro 0.42 di pad_scatter), quindi a parita' di
-  // frazione avrebbero meno spazio assoluto in pixel per titolo+numeri dell'asse Y,
-  // causando sovrapposizione (specialmente con notazione scientifica sui conteggi).
-  pad_marg->SetLeftMargin(0.24);
-  pad_marg->SetRightMargin(0.03);
-  pad_marg->SetTopMargin(0.10);
-  pad_marg->SetBottomMargin(0.14);
-
-  pad_qq->SetLeftMargin(0.22);
-  pad_qq->SetRightMargin(0.04);
-  pad_qq->SetTopMargin(0.10);
-  pad_qq->SetBottomMargin(0.14);
-
-  pad_info->SetLeftMargin(0.02);
-  pad_info->SetRightMargin(0.02);
-
-  c->cd();
-  pad_scatter->Draw();
-  pad_marg->Draw();
-  pad_qq->Draw();
-  pad_info->Draw();
+  auto make_legend = [](double x1, double y1, double x2, double y2) {
+    TLegend* leg = new TLegend(x1, y1, x2, y2);
+    leg->SetBorderSize(0);
+    leg->SetFillColorAlpha(kWhite, 0.55);
+    leg->SetTextFont(42);
+    leg->SetTextSize(0.032);
+    return leg;
+  };
 
   // --- Pannello 1: scatter 2D con ellissi 1/2/3 sigma ---
-  pad_scatter->cd();
+  TCanvas* c_scatter = new TCanvas("c_scatter", "psf_gaussianity_scatter", 900, 750);
+  c_scatter->SetLeftMargin(0.14);
+  c_scatter->SetRightMargin(0.04);
+  c_scatter->SetTopMargin(0.12);
+  c_scatter->SetBottomMargin(0.13);
+
   std::vector<double> ys(best_hits.size()), zs(best_hits.size());
   for (size_t i = 0; i < best_hits.size(); ++i) {
     ys[i] = best_hits[i].y;
@@ -552,6 +521,7 @@ int main(int argc, char** argv) {
   g_scatter->Draw("P same");
 
   int colors[3] = {kGreen + 2, kOrange + 1, kRed + 1};
+  TEllipse* ellipses[3];
   for (int n = 1; n <= 3; ++n) {
     TEllipse* el = new TEllipse(best_res.mean_y, best_res.mean_z, ep.a1 * n, ep.a2 * n, 0, 360,
                                 ep.angle_deg);
@@ -559,17 +529,38 @@ int main(int argc, char** argv) {
     el->SetLineColor(colors[n - 1]);
     el->SetLineWidth(2);
     el->Draw("same");
+    ellipses[n - 1] = el;
   }
 
-  TLatex tl1;
-  tl1.SetNDC();
-  tl1.SetTextFont(42);
-  tl1.SetTextSize(0.045);
-  tl1.SetTextAlign(22);
-  tl1.DrawLatex(0.55, 0.955, "Distribuzione hit sul detector");
+  draw_map_title("Distribuzione hit sul detector");
+
+  TLegend* leg_scatter = make_legend(0.72, 0.62, 0.97, 0.87);
+  // Il marker del grafico (stile 6, puntino singolo pixel) e' pensato per uno scatter denso
+  // ma sarebbe quasi invisibile nello swatch della legenda. TLegend ignora gli attributi
+  // impostati sull'entry se le viene passato l'oggetto stesso (usa sempre quelli del grafico) -
+  // per questo l'entry va creata senza oggetto associato, cosi' i suoi attributi restano validi.
+  TLegendEntry* le_scatter = leg_scatter->AddEntry((TObject*)nullptr, "Hit rilevati", "p");
+  le_scatter->SetMarkerStyle(20);
+  le_scatter->SetMarkerSize(1.2);
+  le_scatter->SetMarkerColor(kAzure + 2);
+  leg_scatter->AddEntry(ellipses[0], "1#sigma", "l");
+  leg_scatter->AddEntry(ellipses[1], "2#sigma", "l");
+  leg_scatter->AddEntry(ellipses[2], "3#sigma", "l");
+  leg_scatter->Draw();
+
+  c_scatter->Update();
+  c_scatter->Print(out_path("_scatter").c_str());
+  std::cout << "Output salvato in: " << out_path("_scatter") << "\n";
 
   // --- Pannello 2: istogramma marginale (asse y) con fit gaussiano ---
-  pad_marg->cd();
+  TCanvas* c_marg = new TCanvas("c_marg", "psf_gaussianity_marginal", 900, 750);
+  // Margine sinistro maggiore dello scatter: la notazione scientifica sui conteggi
+  // dell'asse Y richiede piu' spazio del semplice "y_hit [mm]".
+  c_marg->SetLeftMargin(0.18);
+  c_marg->SetRightMargin(0.04);
+  c_marg->SetTopMargin(0.12);
+  c_marg->SetBottomMargin(0.13);
+
   // Range dal nucleo (best_core), non dall'intero best_hits, per lo stesso motivo del
   // pannello 1 (zoom sulla gaussiana invece che sulla contaminazione). L'istogramma
   // riempie comunque tutti gli hit di best_hits.
@@ -593,15 +584,23 @@ int main(int argc, char** argv) {
   h_marg->Fit(f_gaus, "QR");
   f_gaus->Draw("same");
 
-  TLatex tl2;
-  tl2.SetNDC();
-  tl2.SetTextFont(42);
-  tl2.SetTextSize(0.045);
-  tl2.SetTextAlign(22);
-  tl2.DrawLatex(0.55, 0.955, "Profilo marginale + fit gaussiano");
+  draw_map_title("Profilo marginale + fit gaussiano");
+
+  TLegend* leg_marg = make_legend(0.62, 0.74, 0.94, 0.87);
+  leg_marg->AddEntry(h_marg, "Dati", "l");
+  leg_marg->AddEntry(f_gaus, "Fit gaussiano", "l");
+  leg_marg->Draw();
+
+  c_marg->Update();
+  c_marg->Print(out_path("_marginal").c_str());
+  std::cout << "Output salvato in: " << out_path("_marginal") << "\n";
 
   // --- Pannello 3: Q-Q plot D^2 vs chi^2_2 ---
-  pad_qq->cd();
+  TCanvas* c_qq = new TCanvas("c_qq", "psf_gaussianity_qq", 900, 750);
+  c_qq->SetLeftMargin(0.16);
+  c_qq->SetRightMargin(0.04);
+  c_qq->SetTopMargin(0.12);
+  c_qq->SetBottomMargin(0.13);
 
   // Banda di confidenza 95% puntuale (asintotica, delta method sulle statistiche
   // d'ordine): se(q_theory_(i)) = sqrt(p_i(1-p_i)/n) / f_chi2_2(q_theory_(i)).
@@ -665,46 +664,18 @@ int main(int argc, char** argv) {
   line_cutoff->SetLineWidth(2);
   line_cutoff->Draw("same");
 
-  TLatex tl3;
-  tl3.SetNDC();
-  tl3.SetTextFont(42);
-  tl3.SetTextSize(0.045);
-  tl3.SetTextAlign(22);
-  tl3.DrawLatex(0.55, 0.955, "Q-Q plot vs #chi^{2}_{2}");
+  draw_map_title("Q-Q plot vs #chi^{2}_{2}");
 
-  // --- Pannello metadati ---
-  pad_info->cd();
-  TPaveText* pt = new TPaveText(0.02, 0.05, 0.98, 0.95, "NDC");
-  pt->SetFillColor(0);
-  pt->SetBorderSize(0);
-  pt->SetTextFont(42);
-  pt->SetTextAlign(12);
-  pt->SetTextSize(0.15);
+  TLegend* leg_qq = make_legend(0.58, 0.14, 0.94, 0.39);
+  leg_qq->AddEntry(g_qq, "Quantili campionari", "p");
+  leg_qq->AddEntry(g_band, "Banda IC 95%", "f");
+  leg_qq->AddEntry(line_id, "Retta identit#grave{a}", "l");
+  leg_qq->AddEntry(line_cutoff, "Cutoff Bonferroni", "l");
+  leg_qq->Draw();
 
-  std::ostringstream line;
-  line << "Coppia: " << best_l1 << " + " << best_l2 << "   x_{1}=" << best_x1
-       << " mm, x_{2}=" << best_x2 << " mm    |    N_{run}=" << n_runs_used
-       << ", N_{hit} pooled=" << N;
-  pt->AddText(line.str().c_str());
+  c_qq->Update();
+  c_qq->Print(out_path("_qq").c_str());
+  std::cout << "Output salvato in: " << out_path("_qq") << "\n";
 
-  std::ostringstream line_contam;
-  line_contam << "Cutoff Bonferroni D^{2} > " << std::fixed << std::setprecision(2) << d2_cutoff
-              << " (#alpha_{fw}=" << cli.contamination_alpha << ")   |   Contaminazione: "
-              << n_contaminated << "/" << N << " (" << std::setprecision(3) << contam_frac * 100.0
-              << "%)";
-  pt->AddText(line_contam.str().c_str());
-
-  std::ostringstream line3;
-  line3 << "Mardia #gamma_{2} nucleo (N_{core}=" << n_core << ") = " << std::fixed
-        << std::setprecision(4) << mardia_core.gamma2 << " #pm " << mardia_core.se_gamma2
-        << "   (atteso 0 per gaussiana bivariata)";
-  pt->AddText(line3.str().c_str());
-  pt->Draw();
-
-  c->Update();
-  std::filesystem::create_directories(std::filesystem::path(cli.output_path).parent_path());
-  c->Print(cli.output_path.c_str());
-
-  std::cout << "Output salvato in: " << cli.output_path << "\n";
   return 0;
 }
