@@ -35,7 +35,7 @@
     }
   ],
   "weight_sweep": {
-    "step": 0.05,
+    "step": 0.005,
     "ee80_max": 30.0,
     "dof_min": 20.0,
     "mobile_focus": true

@@ -903,7 +903,7 @@ Seleziona la configurazione ottica ottimale aggregando i risultati di tutti gli 
    Mtot = w_η·(η/η_max) + w_Q·(1−Q/Q_max) + w_dof·(DoF/DoF_max) + w_M·(1−M_abs_err/M_abs_err_max)
    ```
    I pesi sono normalizzati automaticamente se non sommano a 1 (con warning su stderr).
-4. Fronte di Pareto su `(η, Q)`: A domina B se `A.η ≥ B.η AND A.Q ≤ B.Q` con almeno una disuguaglianza stretta
+4. Fronte di Pareto su tutte e 4 le metriche `(η, Q, DoF, M_abs_err)`: A domina B se `A.η ≥ B.η AND A.Q ≤ B.Q AND A.DoF ≥ B.DoF AND A.M_abs_err ≤ B.M_abs_err` con almeno una disuguaglianza stretta
 5. Ranking dei punti sul fronte per `Mtot` decrescente
 
 | Opzione | Default | Descrizione |
@@ -948,7 +948,7 @@ Invece del singolo peso `(w_eta, w_Q, w_dof, w_M)`, calcola quale configurazione
     --dofmap   output/dof_analysis/dof_map.tsv \
     --resolution output/resolution_analysis/resolution_map.tsv \
     --ee80-max 10.0 \
-    --weight-sweep --weight-step 0.05 \
+    --weight-sweep --weight-step 0.005 \
     --weight-sweep-tsv output/pareto_analysis/weight_sweep_results.tsv \
     --output   output/pareto_analysis/pareto_ternary.png
 ```
@@ -956,7 +956,7 @@ Invece del singolo peso `(w_eta, w_Q, w_dof, w_M)`, calcola quale configurazione
 | Opzione | Default | Descrizione |
 |---|---|---|
 | `--weight-sweep` | off | Attiva la modalità sweep pesi invece del plot singolo-peso |
-| `--weight-step` | `0.05` | Passo della griglia baricentrica dei 4 pesi (per `0.05` → 1771 combinazioni) |
+| `--weight-step` | `0.05` (`0.005` in `pareto_runner.py`) | Passo della griglia baricentrica dei 4 pesi (per `0.05` → 1771 combinazioni; per `0.005` → 1'373'701 combinazioni). Il passo più fine usato dalla pipeline `pareto_runner.py` elimina l'artefatto visivo dei triangoli nel plot ternario (verificato: a `0.002`, 15× più costoso, la tassellazione è visivamente indistinguibile da `0.005` — rendimenti decrescenti); il costo resta contenuto (~4s, ~94MB di TSV) perché lo sweep ricalcola `Mtot` solo sui punti del fronte (tipicamente poche centinaia), non sull'intero set filtrato. |
 | `--weight-sweep-tsv` | `output/pareto_analysis/weight_sweep_results.tsv` | TSV aggregato con un vincitore per combinazione di pesi |
 
 **Colonne TSV**: `w_eta w_Q w_dof w_M x1_winner x2_winner Mtot_winner category_id` (una riga per punto della griglia dei pesi).
@@ -969,7 +969,7 @@ Invece del singolo peso `(w_eta, w_Q, w_dof, w_M)`, calcola quale configurazione
 
 Invocabile anche per l'intera pipeline via `scripts/pareto_runner.py`, aggiungendo la sezione `"weight_sweep"` a `config/pareto_runs.json`:
 ```json
-"weight_sweep": {"step": 0.05, "ee80_max": 10.0}
+"weight_sweep": {"step": 0.005, "ee80_max": 10.0}
 ```
 Output in `output/lens_simulations/{l1_id}_{l2_id}/pareto/weight_sweep/`.
 
@@ -1801,7 +1801,7 @@ python3 scripts/pareto_runner.py --l1-id LA4464 --l2-id LA4464R
 
 ### Selezione multi-criterio (Pareto)
 
-- **Pareto optimality** — Concetto classico dell'ottimizzazione multi-obiettivo: una soluzione è non-dominata se non esiste nessuna altra soluzione migliore su tutti gli obiettivi simultaneamente. Il fronte di Pareto su `(η, Q)` raccoglie le configurazioni dove migliorare η richiede peggiorare Q e viceversa. Implementato in `analysis/pareto_analysis/pareto_core.hpp`.
+- **Pareto optimality** — Concetto classico dell'ottimizzazione multi-obiettivo: una soluzione è non-dominata se non esiste nessuna altra soluzione migliore su tutti gli obiettivi simultaneamente. Il fronte di Pareto è calcolato su tutte e 4 le metriche `(η, Q, DoF, M_abs_err)`: raccoglie le configurazioni dove migliorare una di esse richiede peggiorarne almeno un'altra. Implementato in `analysis/pareto_analysis/pareto_core.hpp`.
 
 ---
 

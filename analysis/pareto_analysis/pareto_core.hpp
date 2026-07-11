@@ -60,12 +60,12 @@ inline int64_t coord_key(double x1, double x2) {
     return static_cast<int64_t>((u1 << 32) | u2);
 }
 
-// A domina B nel senso di Pareto (η↑, Q↓, ΔM↓):
-// A.eta >= B.eta AND A.Q <= B.Q AND A.M_abs_err <= B.M_abs_err
+// A domina B nel senso di Pareto (η↑, Q↓, DoF↑, ΔM↓):
+// A.eta >= B.eta AND A.Q <= B.Q AND A.DoF >= B.DoF AND A.M_abs_err <= B.M_abs_err
 // con almeno una disuguaglianza stretta
 inline bool pareto_dominates(const ConfigData& A, const ConfigData& B) {
-    return (A.eta >= B.eta && A.Q <= B.Q && A.M_abs_err <= B.M_abs_err)
-        && (A.eta > B.eta  || A.Q < B.Q  || A.M_abs_err < B.M_abs_err);
+    return (A.eta >= B.eta && A.Q <= B.Q && A.DoF >= B.DoF && A.M_abs_err <= B.M_abs_err)
+        && (A.eta > B.eta  || A.Q < B.Q  || A.DoF > B.DoF  || A.M_abs_err < B.M_abs_err);
 }
 
 inline std::vector<ConfigData> apply_eta_filter(const std::vector<ConfigData>& configs,
@@ -183,7 +183,7 @@ inline void compute_mtot(std::vector<ConfigData>& configs, const WeightConfig& w
     apply_mtot(configs, compute_mtot_normalizers(configs), wc);
 }
 
-// Marca on_pareto=true per i punti non dominati. Dipende solo da eta/Q/M_abs_err,
+// Marca on_pareto=true per i punti non dominati. Dipende solo da eta/Q/DoF/M_abs_err,
 // non dai pesi: può essere calcolato una sola volta e riusato per qualunque sweep di pesi.
 inline void mark_pareto_front(std::vector<ConfigData>& configs) {
     const size_t n = configs.size();

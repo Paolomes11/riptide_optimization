@@ -18,6 +18,8 @@
  *      a due a due a distanza esatta 2.0 (tassellazione senza buchi/sovrapposizioni)
  * T15: solve_face_affine — vertici canonici locali mappati esattamente sui
  *      vertici globali noti
+ * T16: pareto_dominates include DoF — un punto con eta/Q/M identici ma DoF
+ *      peggiore viene escluso dal fronte (regressione bug 4a metrica mancante)
  *
  * Ritorna 0 se tutti i test passano, 1 altrimenti.
  */
@@ -463,6 +465,28 @@ static void test_T15() {
     near(p2.second, G2.second, 1e-9, "L2.y -> G2.y");
 }
 
+// ── T16: pareto_dominates include DoF ────────────────────────────────────────
+
+static void test_T16() {
+    std::cout << "\n[T16] pareto_dominates include DoF (regressione bug 4a metrica)\n";
+
+    // P:    eta=0.5, Q=0.5, DoF=10,  Merr=0.5 — dominato da Q_pt (stesso eta/Q/M, DoF peggiore)
+    // Q_pt: eta=0.5, Q=0.5, DoF=50,  Merr=0.5 — domina P, sul fronte
+    // R:    eta=0.3, Q=0.3, DoF=100, Merr=0.9 — nessuno lo domina (DoF troppo alto), sul fronte
+    std::vector<ConfigData> cfgs = {
+        make_config(1.0, 1.0, 0.5, 0.5, 180.0, 10.0,  1.0, 0.5),  // P
+        make_config(2.0, 2.0, 0.5, 0.5, 180.0, 50.0,  1.0, 0.5),  // Q_pt
+        make_config(3.0, 3.0, 0.3, 0.3, 180.0, 100.0, 1.0, 0.9),  // R
+    };
+
+    WeightConfig wc;
+    compute_pareto_front(cfgs, wc);
+
+    check(!cfgs[0].on_pareto, "P dominato da Q_pt via DoF (bug pre-fix: P restava sul fronte)");
+    check(cfgs[1].on_pareto,  "Q_pt sul fronte");
+    check(cfgs[2].on_pareto,  "R sul fronte (DoF alto lo protegge dalla dominanza)");
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 int main() {
@@ -483,6 +507,7 @@ int main() {
     test_T13();
     test_T14();
     test_T15();
+    test_T16();
 
     std::cout << "\nTEST SUMMARY: " << g_n_pass << " PASS, " << g_n_fail << " FAIL\n";
     return (g_n_fail == 0) ? 0 : 1;
